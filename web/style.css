@@ -89,8 +89,28 @@ h1, h2, .sectionTitle {
   letter-spacing: 0.3px;
 }
 
-h1 { margin: 0 0 6px; font-size: 26px; font-family: "Orbitron", var(--font-head); }
+h1 {
+  margin: 0 0 6px;
+  font-size: 26px;
+  font-family: "Press Start 2P", var(--font-head);
+}
+
+.titlePrimary{
+  color: #ff4fd8;
+  text-shadow: 0 2px 14px rgba(255, 79, 216, 0.45);
+}
+
+.titleAccent{
+  color: #22d3ee;
+  text-shadow: 0 2px 14px rgba(34, 211, 238, 0.45);
+}
 .subtitle { color: var(--ink-muted); margin: 0 0 18px; }
+.subtitle{
+  font-family: "Oxanium", var(--font-head);
+  font-size: 14.3px;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+}
 
 .card {
   background: linear-gradient(180deg, rgba(24, 16, 40, 1), rgba(12, 8, 24, 1));
@@ -694,6 +714,21 @@ tbody tr:nth-child(even){
   gap:12px;
   flex-wrap:wrap;
   margin-bottom:12px;
+}
+
+.tabsHead .sectionTitle{
+  font-size: 20px;
+}
+
+.card .sectionHead .sectionTitle{
+  font-size: 20px;
+}
+
+#tab-achievements .sectionHead .sectionTitle,
+#tab-times .sectionHead .sectionTitle,
+.tabsCard #tab-achievements .sectionHead .sectionTitle,
+.tabsCard #tab-times .sectionHead .sectionTitle{
+  font-size: 18px;
 }
 
 .tabButtons{
