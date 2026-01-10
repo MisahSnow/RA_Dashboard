@@ -1,0 +1,426 @@
+import express from "express";
+import path from "path";
+import fs from "fs";
+import { fileURLToPath } from "url";
+import dotenv from "dotenv";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Load .env from the same folder as server.js (NOT the working directory)
+const envPath = path.join(__dirname, ".env");
+if (fs.existsSync(envPath)) {
+  dotenv.config({ path: envPath });
+} else {
+  console.warn("WARNING: .env not found next to server.js");
+}
+
+const app = express();
+
+const PORT = Number(process.env.PORT || 5179);
+const RA_API_KEY = process.env.RA_API_KEY;
+
+if (!RA_API_KEY) {
+  console.warn("WARNING: RA_API_KEY is not set. Check .env next to server.js.");
+}
+
+
+// --- tiny in-memory cache (avoid 429s) ---
+const _cache = new Map();
+/**
+ * cacheGet(key): returns { value, expiresAt } or null
+ */
+function cacheGet(key) {
+  const hit = _cache.get(key);
+  if (!hit) return null;
+  if (Date.now() > hit.expiresAt) { _cache.delete(key); return null; }
+  return hit.value;
+}
+function cacheSet(key, value, ttlMs) {
+  _cache.set(key, { value, expiresAt: Date.now() + ttlMs });
+}
+const DEFAULT_CACHE_TTL_MS = 180 * 1000; // 3 minutes
+
+// simple concurrency limiter
+function createLimiter(max) {
+  let active = 0;
+  const queue = [];
+  const runNext = () => {
+    if (active >= max) return;
+    const job = queue.shift();
+    if (!job) return;
+    active++;
+    job().finally(() => {
+      active--;
+      runNext();
+    });
+  };
+  return (fn) => new Promise((resolve, reject) => {
+    queue.push(() => fn().then(resolve, reject));
+    runNext();
+  });
+}
+const limitLb = createLimiter(2); // only 2 leaderboard requests at a time
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// --- helpers ---
+function toEpochSeconds(date) {
+  return Math.floor(date.getTime() / 1000);
+}
+
+function getMonthRange(now = new Date()) {
+  const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+  const end = new Date(now);
+  return { start, end };
+}
+
+async function raFetchJson(url, { retries = 2 } = {}) {
+  let attempt = 0;
+  while (true) {
+    const res = await fetch(url, { headers: { Accept: "application/json" } });
+
+    if (res.status === 429 && attempt < retries) {
+      // RetroAchievements rate limit: back off a bit and retry
+      const delay = 750 * Math.pow(2, attempt); // 750ms, 1500ms, ...
+      await sleep(delay);
+      attempt++;
+      continue;
+    }
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`RA API error ${res.status}: ${text || res.statusText}`);
+    }
+    return res.json();
+  }
+}
+
+async function raGetAchievementsEarnedBetween(username, fromDate, toDate) {
+  if (!RA_API_KEY) throw new Error("Missing RA_API_KEY in .env");
+
+  const f = toEpochSeconds(fromDate);
+  const t = toEpochSeconds(toDate);
+
+  const url = new URL("https://retroachievements.org/API/API_GetAchievementsEarnedBetween.php");
+  url.searchParams.set("u", username);
+  url.searchParams.set("f", String(f));
+  url.searchParams.set("t", String(t));
+  url.searchParams.set("y", RA_API_KEY);
+
+  const data = await raFetchJson(url.toString());
+  if (!Array.isArray(data)) throw new Error("Unexpected RA response (expected an array).");
+  return data;
+}
+
+async function raGetUserRecentAchievements(username, minutes = 10080) {
+  if (!RA_API_KEY) throw new Error("Missing RA_API_KEY in .env");
+
+  const url = new URL("https://retroachievements.org/API/API_GetUserRecentAchievements.php");
+  url.searchParams.set("u", username);
+  url.searchParams.set("m", String(minutes));
+  url.searchParams.set("y", RA_API_KEY);
+
+  const data = await raFetchJson(url.toString());
+  if (!Array.isArray(data)) throw new Error("Unexpected RA response (expected an array).");
+  return data;
+}
+
+async function raGetUserRecentlyPlayedGames(username, count = 10, offset = 0) {
+  if (!RA_API_KEY) throw new Error("Missing RA_API_KEY in .env");
+
+  const url = new URL("https://retroachievements.org/API/API_GetUserRecentlyPlayedGames.php");
+  url.searchParams.set("u", username);
+  url.searchParams.set("c", String(count));
+  url.searchParams.set("o", String(offset));
+  url.searchParams.set("y", RA_API_KEY);
+
+  // Retry a few times on transient failures (network hiccups / 5xx / 429 backoff handled in raFetchJson too).
+  const MAX_TRIES = 4; // total attempts
+  for (let attempt = 0; attempt < MAX_TRIES; attempt++) {
+    try {
+      const data = await raFetchJson(url.toString(), { retries: 3 });
+      if (!Array.isArray(data)) throw new Error("Unexpected RA response (expected an array).");
+      return data;
+    } catch (err) {
+      const msg = String(err?.message || err || "");
+      const isTransient =
+        msg.includes("fetch failed") ||
+        msg.includes("ETIMEDOUT") ||
+        msg.includes("ECONNRESET") ||
+        msg.includes("EAI_AGAIN") ||
+        msg.includes("RA API error 5") ||   // 500-599
+        msg.includes("RA API error 429");
+
+      if (!isTransient || attempt === MAX_TRIES - 1) throw err;
+
+      const delay = 500 * Math.pow(2, attempt); // 500ms, 1s, 2s...
+      await sleep(delay);
+    }
+  }
+
+  return [];
+}
+
+async function raGetUserGameLeaderboards(username, gameId, count = 200) {
+  if (!RA_API_KEY) throw new Error("Missing RA_API_KEY in .env");
+
+  const url = new URL("https://retroachievements.org/API/API_GetUserGameLeaderboards.php");
+  url.searchParams.set("u", username);
+  url.searchParams.set("i", String(gameId));
+  url.searchParams.set("c", String(count));
+  url.searchParams.set("y", RA_API_KEY);
+
+  // This endpoint returns 422 for games with no leaderboards.
+  // Treat that as "no results" instead of failing the whole feed.
+  const res = await fetch(url.toString(), { headers: { Accept: "application/json" } });
+
+  if (res.status === 429) {
+    // reuse our backoff logic by delegating to raFetchJson
+    const data = await raFetchJson(url.toString());
+    const results = data?.Results || data?.results;
+    return Array.isArray(results) ? results : [];
+  }
+
+  if (res.status === 422) {
+    // Typical bodies include:
+    // ["Game has no leaderboards"]
+    // ["User has no leaderboards on this game"]
+    // Treat any 422 here as "no results" so the feed can continue.
+    return [];
+  }
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`RA API error ${res.status}: ${text || res.statusText}`);
+  }
+
+  const data = await res.json();
+  const results = data?.Results || data?.results;
+  return Array.isArray(results) ? results : [];
+}
+
+// --- API routes ---
+app.get("/api/health", (_req, res) => res.json({ ok: true }));
+
+// Monthly points gained (this month)
+app.get("/api/monthly/:username", async (req, res) => {
+  try {
+    const username = String(req.params.username || "").trim();
+    if (!username) return res.status(400).json({ error: "Missing username" });
+
+    const { start, end } = getMonthRange();
+
+    // optional overrides: ?from=YYYY-MM-DD&to=YYYY-MM-DD
+    const fromQ = typeof req.query.from === "string" ? req.query.from : null;
+    const toQ = typeof req.query.to === "string" ? req.query.to : null;
+
+    const fromDate = fromQ ? new Date(fromQ + "T00:00:00") : start;
+    const toDate = toQ ? new Date(toQ + "T23:59:59") : end;
+
+    const unlocks = await raGetAchievementsEarnedBetween(username, fromDate, toDate);
+
+    let retroPoints = 0;
+    let points = 0;
+
+    for (const u of unlocks) {
+      retroPoints += Number(u.trueRatio ?? u.TrueRatio ?? 0);
+      points += Number(u.points ?? u.Points ?? 0);
+    }
+
+    res.json({
+      username,
+      fromDate: fromDate.toISOString(),
+      toDate: toDate.toISOString(),
+      retroPoints,
+      points,
+      unlockCount: unlocks.length
+    });
+  } catch (err) {
+    res.status(500).json({ error: err?.message || "Failed to fetch monthly data" });
+  }
+});
+
+// Recent achievements for a user
+app.get("/api/recent-achievements/:username", async (req, res) => {
+  try {
+    const username = String(req.params.username || "").trim();
+    if (!username) return res.status(400).json({ error: "Missing username" });
+
+    const minutes = typeof req.query.m === "string" ? Number(req.query.m) : 10080; // default 7 days
+    const limit = typeof req.query.limit === "string" ? Number(req.query.limit) : 20;
+
+    const items = await raGetUserRecentAchievements(username, Number.isFinite(minutes) ? minutes : 10080);
+
+    // normalize + trim
+    const normalized = items.slice(0, Math.max(0, limit)).map(a => ({
+      username,
+      date: a.Date ?? a.date,
+      hardcore: Boolean(a.HardcoreMode ?? a.hardcoreMode),
+      achievementId: a.AchievementID ?? a.achievementId,
+      title: a.Title ?? a.title,
+      description: a.Description ?? a.description,
+      points: a.Points ?? a.points,
+      trueRatio: a.TrueRatio ?? a.trueRatio,
+      gameId: a.GameID ?? a.gameId,
+      gameTitle: a.GameTitle ?? a.gameTitle,
+      consoleName: a.ConsoleName ?? a.consoleName,
+      badgeUrl: a.BadgeURL ?? a.badgeUrl,
+      gameIcon: a.GameIcon ?? a.gameIcon
+    }));
+
+    res.json({ username, minutes, count: normalized.length, results: normalized });
+  } catch (err) {
+    res.status(500).json({ error: err?.message || "Failed to fetch recent achievements" });
+  }
+});
+
+// Recent leaderboard "times/scores" for a user (derived from recently played games + user game leaderboards)
+app.get("/api/recent-times/:username", async (req, res) => {
+  try {
+    const username = String(req.params.username || "").trim();
+    if (!username) return res.status(400).json({ error: "Missing username" });
+
+    const gamesWanted = typeof req.query.games === "string" ? Number(req.query.games) : 5;
+    const limit = typeof req.query.limit === "string" ? Number(req.query.limit) : 20;
+
+    const targetGames = Math.max(1, Math.min(200, Number.isFinite(gamesWanted) ? gamesWanted : 5));
+    const safeLimit = Math.max(1, Math.min(50, Number.isFinite(limit) ? limit : 20));
+
+    // cache key includes params
+    const cacheKey = `recent-times:${username}:${targetGames}:${safeLimit}`;
+    const cached = cacheGet(cacheKey);
+    if (cached) return res.json({ ...cached, cached: true });
+
+    const chunkSize = 50; // API max per page
+    const pages = Math.ceil(targetGames / chunkSize);
+
+    const recentlyPlayedPages = await Promise.all(
+      Array.from({ length: pages }, async (_v, idx) => {
+        const offset = idx * chunkSize;
+        const count = Math.min(chunkSize, targetGames - offset);
+        return raGetUserRecentlyPlayedGames(username, count, offset);
+      })
+    );
+
+    const recentlyPlayed = recentlyPlayedPages.flat();
+
+    const gameIds = recentlyPlayed
+      .map(g => g.GameID ?? g.gameId)
+      .filter(Boolean);
+
+    // fetch leaderboards with a limiter to avoid bursts
+    const perGame = await Promise.all(gameIds.map(async (gid) => limitLb(async () => {
+      try {
+        const lbs = await raGetUserGameLeaderboards(username, gid, 200);
+        const gameMeta = recentlyPlayed.find(g => (g.GameID ?? g.gameId) == gid) || {};
+        const gameTitle = gameMeta.Title ?? gameMeta.title ?? `Game ${gid}`;
+        const consoleName = gameMeta.ConsoleName ?? gameMeta.consoleName ?? "";
+        const imageIcon = gameMeta.ImageIcon ?? gameMeta.imageIcon ?? "";
+
+        return lbs
+          .map(lb => {
+            const ue = lb.UserEntry ?? lb.userEntry;
+            if (!ue) return null;
+            return {
+              username,
+              gameId: gid,
+              gameTitle,
+              consoleName,
+              imageIcon,
+              leaderboardId: lb.ID ?? lb.id,
+              leaderboardTitle: lb.Title ?? lb.title,
+              format: lb.Format ?? lb.format,
+              rankAsc: lb.RankAsc ?? lb.rankAsc,
+              score: ue.Score ?? ue.score,
+              formattedScore: ue.FormattedScore ?? ue.formattedScore,
+              rank: ue.Rank ?? ue.rank,
+              dateUpdated: ue.DateUpdated ?? ue.dateUpdated
+            };
+          })
+          .filter(Boolean);
+      } catch (e) {
+        // If any single game fails (including 422 variants), ignore and continue.
+        return [];
+      }
+    })));
+    const flattened = perGame.flat();
+
+    flattened.sort((a, b) => {
+      const da = Date.parse(a.dateUpdated || "") || 0;
+      const db = Date.parse(b.dateUpdated || "") || 0;
+      return db - da;
+    });
+
+    const payload = {
+      username,
+      gamesRequested: targetGames,
+      gamesChecked: gameIds.length,
+      count: Math.min(flattened.length, safeLimit),
+      results: flattened.slice(0, safeLimit)
+    };
+
+    cacheSet(cacheKey, payload, DEFAULT_CACHE_TTL_MS);
+    res.json(payload);
+  } catch (err) {
+    res.status(500).json({ error: err?.message || "Failed to fetch recent times" });
+  }
+});
+
+
+// "Now playing" (best-effort): use most recent LastPlayed from Recently Played Games.
+// If LastPlayed is within `windowSeconds` (default 60), treat as "currently playing".
+app.get("/api/now-playing/:username", async (req, res) => {
+  try {
+    const username = String(req.params.username || "").trim();
+    if (!username) return res.status(400).json({ error: "Missing username" });
+
+    const windowSeconds = typeof req.query.window === "string" ? Number(req.query.window) : 120;
+    const win = Number.isFinite(windowSeconds) ? Math.max(5, Math.min(600, windowSeconds)) : 60;
+
+    const cacheKey = `now-playing:${username}:${win}`;
+    const cached = cacheGet(cacheKey);
+    if (cached) return res.json({ ...cached, cached: true });
+
+    // only need the most recent game
+    const [latest] = await raGetUserRecentlyPlayedGames(username, 1, 0);
+
+    if (!latest) {
+      const payload = { username, nowPlaying: false, reason: "no recent games" };
+      cacheSet(cacheKey, payload, 30 * 1000);
+      return res.json(payload);
+    }
+
+    const lastPlayedRaw = latest.LastPlayed ?? latest.lastPlayed;
+    const lastPlayed = lastPlayedRaw ? String(lastPlayedRaw) : "";
+    const ts = Date.parse(lastPlayed.replace(" ", "T") + "Z"); // best effort
+    const ageSeconds = ts ? Math.floor((Date.now() - ts) / 1000) : null;
+
+    const payload = {
+      username,
+      nowPlaying: ageSeconds !== null ? ageSeconds <= win : false,
+      ageSeconds,
+      windowSeconds: win,
+      gameId: latest.GameID ?? latest.gameId,
+      consoleName: latest.ConsoleName ?? latest.consoleName,
+      title: latest.Title ?? latest.title,
+      imageIcon: latest.ImageIcon ?? latest.imageIcon,
+      lastPlayed
+    };
+
+    cacheSet(cacheKey, payload, 30 * 1000); // refreshable "presence" cache
+    res.json(payload);
+  } catch (err) {
+    res.status(500).json({ error: err?.message || "Failed to fetch now playing" });
+  }
+});
+
+// --- static site ---
+const webPath = path.join(__dirname, "web");
+app.use(express.static(webPath));
+app.get("/", (_req, res) => res.sendFile(path.join(webPath, "index.html")));
+
+app.listen(PORT, () => {
+  console.log(`Server running: http://localhost:${PORT}`);
+  console.log(`Health check : http://localhost:${PORT}/api/health`);
+});
