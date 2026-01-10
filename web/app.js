@@ -89,10 +89,12 @@ const ACHIEVEMENTS_STEP_HOURS = 24;
 const ACHIEVEMENTS_MAX_HOURS = 720;
 const ACHIEVEMENTS_DEFAULT_MAX = 30;
 const ACHIEVEMENTS_STEP_MAX = 30;
+const ACHIEVEMENTS_MAX_SHOW_MORE = 6;
 let achievementsLookbackHours = ACHIEVEMENTS_DEFAULT_HOURS;
 let achievementsMaxResults = ACHIEVEMENTS_DEFAULT_MAX;
 const ACHIEVEMENTS_MIN_WAIT_MS = 5000;
 const achievementsLoadStart = Date.now();
+let achievementsShowMoreCount = 0;
 
 function clampUsername(s) {
   return (s || "").trim().replace(/\s+/g, "");
@@ -1036,8 +1038,9 @@ function renderRecentAchievements(items) {
 
   if (recentAchievementsToggleBtn) {
     const canLoadMore =
-      achievementsLookbackHours < ACHIEVEMENTS_MAX_HOURS ||
-      items.length >= achievementsMaxResults;
+      achievementsShowMoreCount < ACHIEVEMENTS_MAX_SHOW_MORE &&
+      (achievementsLookbackHours < ACHIEVEMENTS_MAX_HOURS ||
+      items.length >= achievementsMaxResults);
     recentAchievementsToggleBtn.hidden = !canLoadMore;
     recentAchievementsToggleBtn.textContent = "Show more";
   }
@@ -1216,6 +1219,7 @@ async function refreshRecentAchievements({ reset = true } = {}) {
     achievementsLookbackHours = ACHIEVEMENTS_DEFAULT_HOURS;
     recentAchievementsVisible = RECENT_DEFAULT_ROWS;
     achievementsMaxResults = ACHIEVEMENTS_DEFAULT_MAX;
+    achievementsShowMoreCount = 0;
   }
 
   setLoading(recentAchievementsLoadingEl, true);
@@ -1298,6 +1302,10 @@ if (profileGameSearchEl) {
 
 if (recentAchievementsToggleBtn) {
   recentAchievementsToggleBtn.addEventListener("click", () => {
+    if (achievementsShowMoreCount >= ACHIEVEMENTS_MAX_SHOW_MORE) {
+      recentAchievementsToggleBtn.hidden = true;
+      return;
+    }
     const elapsed = Date.now() - achievementsLoadStart;
     if (elapsed < ACHIEVEMENTS_MIN_WAIT_MS) {
       setLoading(recentAchievementsLoadingEl, true);
@@ -1306,6 +1314,7 @@ if (recentAchievementsToggleBtn) {
       }, ACHIEVEMENTS_MIN_WAIT_MS - elapsed);
       return;
     }
+    achievementsShowMoreCount += 1;
     achievementsLookbackHours = Math.min(ACHIEVEMENTS_MAX_HOURS, achievementsLookbackHours + ACHIEVEMENTS_STEP_HOURS);
     achievementsMaxResults += ACHIEVEMENTS_STEP_MAX;
     recentAchievementsVisible = Math.min(
@@ -1320,6 +1329,7 @@ if (recentAchievementsShowLessBtn) {
   recentAchievementsShowLessBtn.addEventListener("click", () => {
     recentAchievementsVisible = RECENT_DEFAULT_ROWS;
     achievementsMaxResults = Math.max(ACHIEVEMENTS_DEFAULT_MAX, achievementsMaxResults);
+    achievementsShowMoreCount = 0;
     renderRecentAchievements(recentAchievementsItems);
   });
 }
