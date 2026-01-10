@@ -34,6 +34,8 @@ const profileTitleNameEl = document.getElementById("profileTitleName");
 const profileSummaryEl = document.getElementById("profileSummary");
 const profileSharedGamesEl = document.getElementById("profileSharedGames");
 const profileCloseBtn = document.getElementById("profileCloseBtn");
+const profileShowMoreBtn = document.getElementById("profileShowMoreBtn");
+const profileGamesNoteEl = document.getElementById("profileGamesNote");
 
 const comparePanel = document.getElementById("comparePanel");
 const compareTitleGameEl = document.getElementById("compareTitleGame");
@@ -49,6 +51,8 @@ const tabButtons = document.querySelectorAll(".tabBtn");
 const tabPanels = document.querySelectorAll(".tabPanel");
 
 let currentProfileUser = "";
+let profileSharedGames = [];
+let profileAllGamesLoaded = false;
 
 function clampUsername(s) {
   return (s || "").trim().replace(/\s+/g, "");
@@ -262,11 +266,11 @@ function achievementUrl(id) {
 }
 
 
-function renderSharedGames(games) {
+function renderSharedGames(games, emptyMessage = "No shared games found in recent play history.") {
   profileSharedGamesEl.innerHTML = "";
 
   if (!games.length) {
-    profileSharedGamesEl.innerHTML = `<div class="meta">No shared games found in recent play history.</div>`;
+    profileSharedGamesEl.innerHTML = `<div class="meta">${safeText(emptyMessage)}</div>`;
     return;
   }
 
@@ -294,6 +298,55 @@ function renderSharedGames(games) {
     tile.addEventListener("keydown", (e) => {
       if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
     });
+  }
+}
+
+function mergeGameLists(primary, secondary) {
+  const seen = new Set();
+  const merged = [];
+  for (const list of [primary, secondary]) {
+    for (const g of list) {
+      const key = String(g.gameId ?? "");
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      merged.push({
+        gameId: g.gameId,
+        title: g.title || `Game ${safeText(g.gameId)}`,
+        imageIcon: g.imageIcon
+      });
+    }
+  }
+  return merged;
+}
+
+async function loadAllProfileGames() {
+  const target = clampUsername(currentProfileUser);
+  if (!target || !profileShowMoreBtn) return;
+
+  profileShowMoreBtn.disabled = true;
+  profileShowMoreBtn.textContent = "Loading...";
+
+  try {
+    const theirs = await fetchRecentGames(target, 200);
+    const allGames = (theirs.results || []).map(g => ({
+      gameId: g.gameId,
+      title: g.title,
+      imageIcon: g.imageIcon
+    }));
+
+    const combined = mergeGameLists(profileSharedGames, allGames);
+    renderSharedGames(combined, "No games found for this user.");
+
+    if (profileGamesNoteEl) {
+      profileGamesNoteEl.textContent = "Shared games plus their full recent list.";
+    }
+
+    profileAllGamesLoaded = true;
+    profileShowMoreBtn.textContent = "All games loaded";
+  } catch (e) {
+    profileShowMoreBtn.disabled = false;
+    profileShowMoreBtn.textContent = "Show more";
+    setStatus(e?.message || "Failed to load more games.");
   }
 }
 
@@ -352,6 +405,15 @@ async function openProfile(username) {
   profileSummaryEl.innerHTML = `<div class="meta">Loading profile summary...</div>`;
   profileSharedGamesEl.innerHTML = `<div class="meta">Loading shared games...</div>`;
   currentProfileUser = target;
+  profileSharedGames = [];
+  profileAllGamesLoaded = false;
+  if (profileShowMoreBtn) {
+    profileShowMoreBtn.disabled = false;
+    profileShowMoreBtn.textContent = "Show more";
+  }
+  if (profileGamesNoteEl) {
+    profileGamesNoteEl.textContent = "Shows recently played games you both have in common.";
+  }
 
   try {
     const count = 60;
@@ -390,6 +452,7 @@ async function openProfile(username) {
       return true;
     });
 
+    profileSharedGames = unique;
     renderSharedGames(unique);
     profilePanel.scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (e) {
@@ -868,6 +931,12 @@ compareTabButtons.forEach(btn => {
   btn.addEventListener("click", () => setActiveCompareTab(btn.dataset.tab));
 });
 
+if (profileShowMoreBtn) {
+  profileShowMoreBtn.addEventListener("click", () => {
+    if (!profileAllGamesLoaded) loadAllProfileGames();
+  });
+}
+
 if (tabButtons.length) {
   setActiveTab(tabButtons[0].dataset.tab);
 }
@@ -900,6 +969,15 @@ if (profileCloseBtn) {
     profileTitleNameEl.textContent = "";
     profileSummaryEl.innerHTML = "";
     profileSharedGamesEl.innerHTML = "";
+    profileSharedGames = [];
+    profileAllGamesLoaded = false;
+    if (profileShowMoreBtn) {
+      profileShowMoreBtn.disabled = false;
+      profileShowMoreBtn.textContent = "Show more";
+    }
+    if (profileGamesNoteEl) {
+      profileGamesNoteEl.textContent = "";
+    }
     comparePanel.hidden = true;
     compareTitleGameEl.textContent = "";
     compareMetaEl.textContent = "";

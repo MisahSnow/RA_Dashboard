@@ -347,6 +347,17 @@ tbody tr:nth-child(even){
   margin-bottom: 12px;
 }
 
+.profileActions{
+  display:flex;
+  justify-content:flex-end;
+  margin-top: 10px;
+}
+
+.profileActions button[disabled]{
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
 .summaryCard{
   background:#120b22;
   border:1px solid #2c2448;
