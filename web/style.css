@@ -1,174 +1,108 @@
+/* RETRO PIXEL THEME */
+:root {
+  --bg: #05060a;
+  --panel: #0b0f1b;
+  --border: #2cff9e;
+  --border-dim: #1a8f63;
+  --text: #eafff6;
+  --muted: #7bdcb5;
+  --accent: #ff3c81;
+  --warning: #ffd166;
+}
+
+* {
+  box-sizing: border-box;
+  image-rendering: pixelated;
+}
+
 body {
-  font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-  background: #0b0d12;
-  color: #eaeaea;
+  font-family: "Press Start 2P", monospace;
+  background: repeating-linear-gradient(0deg,#05060a,#05060a 2px,#070812 3px);
+  color: var(--text);
   margin: 0;
   padding: 24px;
+  font-size: 12px;
 }
 
 .wrap { max-width: 1100px; margin: 0 auto; }
 
-h1 { margin: 0 0 6px; }
-.subtitle { color: #aab1c7; margin: 0 0 18px; }
-
 .card {
-  background: #0f1320;
-  border: 1px solid #23283a;
-  border-radius: 14px;
-  padding: 14px;
-  margin-bottom: 14px;
+  background: var(--panel);
+  border: 2px solid var(--border);
+  padding: 16px;
+  margin-bottom: 16px;
 }
 
-.sectionHead{
-  display:flex;
-  align-items:flex-end;
-  justify-content:space-between;
-  gap:12px;
-  flex-wrap:wrap;
-  margin-bottom:10px;
+h1 {
+  color: var(--border);
+  font-size: 18px;
 }
 
-.sectionTitle{
-  margin:0;
-  font-size:18px;
-  color:#cdd4ee;
+.subtitle {
+  font-size: 10px;
+  color: var(--muted);
 }
-
-.sectionControls{
-  display:flex;
-  gap:10px;
-  align-items:flex-end;
-  flex-wrap:wrap;
-}
-
-.controls {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-  align-items: end;
-}
-
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 240px;
-  flex: 1;
-}
-
-label { color: #cdd4ee; font-size: 13px; }
-label.tiny{ font-size:12px; color:#aab1c7; }
 
 input, button {
-  border-radius: 10px;
-  border: 1px solid #2a3150;
-  background: #0b0f1b;
-  color: #eaeaea;
-  padding: 10px 12px;
+  font-family: inherit;
+  background: #000;
+  color: var(--text);
+  border: 2px solid var(--border-dim);
+  padding: 8px;
 }
 
-input[type="number"]{ width:110px; }
-
-button { cursor: pointer; }
-button:hover { border-color: #3b4aa0; }
-
-.buttons { display: flex; gap: 10px; }
-
-.status { width: 100%; color: #aab1c7; font-size: 13px; padding-top: 6px; }
-
-table { width: 100%; border-collapse: collapse; overflow: hidden; border-radius: 12px; }
-th, td { padding: 10px 8px; border-bottom: 1px solid #1e2436; text-align: left; }
-th { background: #0b0f1b; color: #cdd4ee; font-size: 13px; }
-
-.delta-pos { color: #72ff9a; }
-.delta-neg { color: #ff7a7a; }
-.delta-zero { color: #cdd4ee; }
-
-.smallBtn { padding: 8px 10px; font-size: 12px; }
-
-.note { margin: 10px 0 0; font-size: 12px; color: #8d96b5; }
-
-.feed{
-  display:flex;
-  flex-direction:column;
-  gap:8px;
+button:hover {
+  background: var(--border);
+  color: #000;
 }
 
-.item{
-  display:flex;
-  gap:10px;
-  align-items:flex-start;
-  padding:10px;
-  background:#0b0f1b;
-  border:1px solid #1e2436;
-  border-radius:12px;
+table {
+  width: 100%;
+  border-collapse: collapse;
 }
 
-.badge{
-  width:48px;
-  height:48px;
-  border-radius:10px;
-  object-fit:cover;
-  border:1px solid #1e2436;
-  background:#0b0d12;
+th {
+  color: var(--warning);
+  border-bottom: 2px solid var(--border);
 }
 
-.itemMain{
-  flex:1;
-  min-width:0;
+td {
+  border-bottom: 1px dashed #1a8f63;
 }
 
-.itemTitle{
-  display:flex;
-  gap:8px;
-  flex-wrap:wrap;
-  align-items:baseline;
-  margin-bottom:2px;
+.feed {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
-.itemTitle strong{ color:#eaeaea; }
-.meta{ color:#aab1c7; font-size:12px; }
-
-.pill{
-  font-size:11px;
-  padding:2px 8px;
-  border-radius:999px;
-  border:1px solid #2a3150;
-  color:#cdd4ee;
+.item {
+  background: #000;
+  border: 2px solid var(--border-dim);
+  padding: 10px;
+  display: flex;
+  gap: 10px;
 }
 
-.pill.hc{ border-color:#3b4aa0; }
+.badge {
+  width: 48px;
+  height: 48px;
+  border: 2px solid var(--border);
+}
 
-.mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.note {
+  font-size: 8px;
+  color: var(--muted);
+}
 
-/* Two-column layout for activity panels */
-.grid2{
+.grid2 {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 14px;
-  margin-bottom: 14px;
+  gap: 16px;
 }
-@media (min-width: 980px){
-  .grid2{
+
+@media (min-width: 980px) {
+  .grid2 {
     grid-template-columns: 1fr 1fr;
-    align-items: start;
   }
-  .grid2 .card{
-    margin-bottom: 0; /* gap handles spacing */
-  }
-}
-
-.link{ color: inherit; text-decoration: underline; text-underline-offset: 2px; }
-.link:hover{ text-decoration-thickness: 2px; }
-
-.clickable{
-  cursor: pointer;
-}
-.clickable:focus{
-  outline: 2px solid rgba(141, 150, 181, 0.65);
-  outline-offset: 2px;
-  border-radius: 10px;
-}
-.clickable:hover{
-  background: rgba(255,255,255,0.03);
 }
