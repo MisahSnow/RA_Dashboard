@@ -16,6 +16,8 @@ const addFriendModal = document.getElementById("addFriendModal");
 const addFriendConfirmBtn = document.getElementById("addFriendConfirmBtn");
 const addFriendCloseBtn = document.getElementById("addFriendCloseBtn");
 const addFriendCancelBtn = document.getElementById("addFriendCancelBtn");
+const addFriendErrorEl = document.getElementById("addFriendError");
+const addFriendLoadingEl = document.getElementById("addFriendLoading");
 const refreshBtn = document.getElementById("refreshBtn");
 const tbody = document.querySelector("#leaderboard tbody");
 const statusEl = document.getElementById("status");
@@ -114,7 +116,7 @@ function saveState() {
   localStorage.setItem(LS_FRIENDS, JSON.stringify(friends));
 }
 
-async function fetchJson(url) {
+async function fetchJson(url, { silent = false } = {}) {
   const apiKey = (apiKeyInput?.value || "").trim();
   const headers = apiKey ? { "x-ra-api-key": apiKey } : {};
   const maxRetries = 2;
@@ -123,7 +125,7 @@ async function fetchJson(url) {
       const res = await fetch(url, { headers });
       if (res.status === 429 && attempt < maxRetries) {
         const delayMs = 750 * Math.pow(2, attempt);
-        setStatus(`Rate limited by RA API. Retrying in ${Math.round(delayMs / 1000)}s...`);
+        if (!silent) setStatus(`Rate limited by RA API. Retrying in ${Math.round(delayMs / 1000)}s...`);
         await sleep(delayMs);
         continue;
       }
@@ -131,12 +133,12 @@ async function fetchJson(url) {
         const text = await res.text().catch(() => "");
         throw new Error(text || `Request failed: ${res.status}`);
       }
-      if (attempt > 0) setStatus("");
+      if (attempt > 0 && !silent) setStatus("");
       return res.json();
     } catch (e) {
       if (attempt >= maxRetries) throw e;
       const delayMs = 750 * Math.pow(2, attempt);
-      setStatus(`Connection issue. Retrying in ${Math.round(delayMs / 1000)}s...`);
+      if (!silent) setStatus(`Connection issue. Retrying in ${Math.round(delayMs / 1000)}s...`);
       await sleep(delayMs);
     }
   }
@@ -167,9 +169,9 @@ async function fetchRecentGames(username, count) {
   return fetchJson(`/api/recent-games/${u}?count=${encodeURIComponent(count)}`);
 }
 
-async function fetchUserSummary(username) {
+async function fetchUserSummary(username, opts) {
   const u = encodeURIComponent(username);
-  return fetchJson(`/api/user-summary/${u}`);
+  return fetchJson(`/api/user-summary/${u}`, opts);
 }
 
 async function fetchGameAchievements(username, gameId) {
@@ -231,6 +233,8 @@ function resetRefreshCountdown() {
 function openAddFriendModal() {
   if (!addFriendModal) return;
   addFriendModal.hidden = false;
+  if (addFriendErrorEl) addFriendErrorEl.textContent = "";
+  if (addFriendLoadingEl) addFriendLoadingEl.hidden = true;
   friendInput.focus();
 }
 
@@ -238,19 +242,37 @@ function closeAddFriendModal() {
   if (!addFriendModal) return;
   addFriendModal.hidden = true;
   if (friendInput) friendInput.value = "";
+  if (addFriendErrorEl) addFriendErrorEl.textContent = "";
+  if (addFriendLoadingEl) addFriendLoadingEl.hidden = true;
 }
 
-function addFriendFromModal() {
+async function addFriendFromModal() {
   const me = ensureUsername();
   const u = clampUsername(friendInput.value);
   if (!me) return setStatus("Set your username first.");
   if (!u) return;
   if (u.toLowerCase() === me.toLowerCase()) return setStatus("That's you. Add someone else.");
 
+  try {
+    if (addFriendLoadingEl) addFriendLoadingEl.hidden = false;
+    await fetchUserSummary(u, { silent: true });
+  } catch (e) {
+    const msg = String(e?.message || "");
+    const notFound = msg.includes("404") || msg.toLowerCase().includes("not found");
+    const apiKeyMissing = msg.toLowerCase().includes("missing ra api key");
+    const label = apiKeyMissing
+      ? "API key required to validate this user."
+      : notFound ? `User not found: ${u}` : `Could not verify user: ${u}`;
+    if (addFriendErrorEl) addFriendErrorEl.textContent = label;
+    if (addFriendLoadingEl) addFriendLoadingEl.hidden = true;
+    return;
+  }
+
   if (!friends.includes(u)) friends.push(u);
   friendInput.value = "";
   saveState();
   closeAddFriendModal();
+  if (addFriendLoadingEl) addFriendLoadingEl.hidden = true;
 
   refreshLeaderboard();
   refreshRecentAchievements();
@@ -320,7 +342,7 @@ tr.innerHTML = `
       <td><strong>${Math.round(r.points)}</strong></td>
       <td class="${cls}"><strong>${delta > 0 ? "+" : ""}${Math.round(delta)}</strong></td>
       <td>${r.unlocks}</td>
-      <td>${r.nowPlayingText || ""}</td>
+      <td>${r.nowPlayingHtml || r.nowPlayingText || ""}</td>
       <td style="text-align:right;">
         ${isMe ? "" : `<button class="smallBtn" data-remove="${safeText(r.username)}">Remove</button>`}
       </td>
@@ -1105,7 +1127,7 @@ async function refreshLeaderboard() {
       points: map[u]?.points ?? 0,
       deltaVsYou: (map[u]?.points ?? 0) - myPoints,
       unlocks: map[u]?.unlockCount ?? 0,
-      nowPlayingText: "Loading..."
+      nowPlayingHtml: "Loading..."
     }));
 
     rows.sort((a, b) => (b.points - a.points) || a.username.localeCompare(b.username));
@@ -1144,7 +1166,7 @@ async function refreshLeaderboard() {
             onRetry: (attempt) => {
               const row = rows.find(r => r.username === u);
               if (row) {
-                row.nowPlayingText = `Loading... (retry ${attempt}/4)`;
+                row.nowPlayingHtml = `Loading... (retry ${attempt}/4)`;
                 renderLeaderboard(rows, me);
               }
             }
@@ -1162,9 +1184,14 @@ async function refreshLeaderboard() {
           const age = (typeof p.ageSeconds === "number")
             ? (p.ageSeconds < 60 ? `${p.ageSeconds}s ago` : `${Math.floor(p.ageSeconds/60)}m ago`)
             : "";
-          r.nowPlayingText = p.nowPlaying ? `&#9654; ${p.title}` : `${p.title}${age ? ` (${age})` : ""}`;
+          if (p.nowPlaying) {
+            const icon = p.imageIcon ? `<img class="nowPlayingIcon" src="${iconUrl(p.imageIcon)}" alt="game" loading="lazy" />` : "";
+            r.nowPlayingHtml = `<span class="nowPlaying">${icon}<span>&#9654; ${safeText(p.title)}</span></span>`;
+          } else {
+            r.nowPlayingHtml = `${safeText(p.title)}${age ? ` (${age})` : ""}`;
+          }
         } else {
-          r.nowPlayingText = "";
+          r.nowPlayingHtml = "";
         }
       }
 
@@ -1321,7 +1348,9 @@ if (addFriendCancelBtn) {
   addFriendCancelBtn.addEventListener("click", closeAddFriendModal);
 }
 if (addFriendConfirmBtn) {
-  addFriendConfirmBtn.addEventListener("click", addFriendFromModal);
+  addFriendConfirmBtn.addEventListener("click", () => {
+    addFriendFromModal();
+  });
 }
 
 refreshBtn.addEventListener("click", () => {

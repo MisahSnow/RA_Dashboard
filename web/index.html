@@ -52,14 +52,16 @@
           <h2 class="sectionTitle">Add Friend</h2>
           <button id="addFriendCloseBtn" class="smallBtn">Close</button>
         </div>
-        <div class="field">
-          <label for="friendInput">Friend username</label>
-          <input id="friendInput" placeholder="RetroAchievements username" autocomplete="off" />
-        </div>
-        <div class="buttons">
-          <button id="addFriendConfirmBtn">Add</button>
-          <button id="addFriendCancelBtn" class="smallBtn">Cancel</button>
-        </div>
+      <div class="field">
+        <label for="friendInput">Friend username</label>
+        <input id="friendInput" placeholder="RetroAchievements username" autocomplete="off" />
+      </div>
+      <div id="addFriendLoading" class="loadingWheel" hidden aria-label="Loading"></div>
+      <div id="addFriendError" class="note errorText" role="alert"></div>
+      <div class="buttons">
+        <button id="addFriendConfirmBtn">Add</button>
+        <button id="addFriendCancelBtn" class="smallBtn">Cancel</button>
+      </div>
       </div>
     </div>
 

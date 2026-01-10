@@ -272,6 +272,10 @@ tbody tr:nth-child(even){
 
 .note { margin: 10px 0 0; font-size: 12px; color: var(--ink-muted); }
 
+.errorText{
+  color: #fb7185;
+}
+
 #profileGamesNote{
   text-align:center;
 }
@@ -317,13 +321,15 @@ tbody tr:nth-child(even){
   font-family: inherit;
   font-size: inherit;
   text-decoration: underline;
+  box-shadow: none;
 }
 .linkBtn:hover{
-  color: #2dd4bf;
+  color: #0cf0d0;
+  box-shadow: none;
 }
 .linkBtn:focus{
-  outline:1px solid var(--accent);
-  outline-offset:2px;
+  outline:none;
+  box-shadow:none;
 }
 
 .tileGrid{
@@ -412,6 +418,12 @@ tbody tr:nth-child(even){
 
 .profileLegend .legend.them{
   background: var(--accent-2);
+}
+
+#addFriendModal .loadingWheel{
+  position: static;
+  margin-left: auto;
+  margin-top: 8px;
 }
 
 .feed{
@@ -567,6 +579,21 @@ tbody tr:nth-child(even){
   position: relative;
   top: -5px;
   font-size: 16px;
+}
+
+.nowPlaying{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+}
+
+.nowPlayingIcon{
+  width:40px;
+  height:40px;
+  border-radius:4px;
+  border:1px solid #2b3650;
+  object-fit:cover;
+  background:#090f1e;
 }
 
 #recentTimes .itemMain{
