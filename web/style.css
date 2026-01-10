@@ -89,6 +89,7 @@ h1 { margin: 0 0 6px; font-size: 26px; }
   padding: var(--space-5);
   margin-bottom: 16px;
   box-shadow: 0 14px 28px var(--shadow);
+  position: relative;
 }
 
 .sectionHead{
@@ -169,6 +170,19 @@ button:hover {
   box-shadow: 0 0 0 1px rgba(0, 245, 212, 0.4), 0 0 18px rgba(0, 245, 212, 0.2);
 }
 
+.loadingWheel{
+  width:16px;
+  height:16px;
+  border-radius:50%;
+  border:2px solid rgba(148, 163, 184, 0.4);
+  border-top-color: var(--accent);
+  animation: spin 0.8s linear infinite;
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  pointer-events: none;
+}
+
 .primaryBtn{
   background: linear-gradient(180deg, #0cf0d0, #00bfa5);
   color: #02150f;
@@ -218,6 +232,7 @@ button:hover {
 
 table { width: 100%; border-collapse: collapse; overflow: hidden; border-radius: var(--radius); }
 th, td { padding: 12px 10px; border-bottom: 1px solid var(--border); text-align: left; }
+th { border-bottom: none; }
 
 th {
   background: #101a33;
@@ -239,6 +254,10 @@ tbody tr:nth-child(even){
 .smallBtn { padding: 8px 10px; font-size: 12px; }
 
 .note { margin: 10px 0 0; font-size: 12px; color: var(--ink-muted); }
+
+#profileGamesNote{
+  text-align:center;
+}
 
 .profilePanel[hidden]{
   display:none;
@@ -276,14 +295,14 @@ tbody tr:nth-child(even){
   background:none;
   border:none;
   padding:0;
-  color: var(--accent);
+  color: var(--name-color, var(--accent));
   cursor:pointer;
   font-family: inherit;
   font-size: inherit;
   text-decoration: underline;
 }
 .linkBtn:hover{
-  color: var(--accent-2);
+  color: #2dd4bf;
 }
 .linkBtn:focus{
   outline:1px solid var(--accent);
@@ -334,10 +353,60 @@ tbody tr:nth-child(even){
   color:#e2e8f0;
 }
 
+.tileMeta{
+  font-size:12px;
+  color: var(--ink-muted);
+}
+
+.tileMeta .me{
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.tileMeta .them{
+  color: var(--accent-2);
+  font-weight: 600;
+}
+
+.tileMeta .sep{
+  color: var(--ink-muted);
+  margin: 0 4px;
+}
+
+.profileLegend{
+  display:flex;
+  gap:10px;
+  align-items:center;
+  justify-content:flex-start;
+  margin-top: 6px;
+}
+
+.profileLegend .legend{
+  display:inline-block;
+  width:10px;
+  height:10px;
+  border-radius:50%;
+  margin-right:6px;
+}
+
+.profileLegend .legend.me{
+  background: var(--accent);
+}
+
+.profileLegend .legend.them{
+  background: var(--accent-2);
+}
+
 .feed{
   display:flex;
   flex-direction:column;
   gap:10px;
+}
+
+.feedActions{
+  display:flex;
+  justify-content:flex-end;
+  margin-top: 20px;
 }
 
 .profileSummary{
@@ -351,6 +420,41 @@ tbody tr:nth-child(even){
   display:flex;
   justify-content:flex-end;
   margin-top: 10px;
+}
+
+.profileFilters{
+  display:flex;
+  gap:8px;
+  align-items:flex-end;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+
+.profileFilters input{
+  min-width: 220px;
+}
+
+.profilePanel .sectionHead{
+  align-items:center;
+}
+
+.profilePanel .profileFilters{
+  flex: 1;
+  margin: 0 8px;
+}
+
+.profilePanel .profileFilters input{
+  width: 100%;
+}
+
+.profilePanel .profileFilters input{
+  height:28px;
+  padding:4px 12px;
+}
+
+.profilePanel #profileCloseBtn{
+  height:28px;
+  padding:0 12px;
 }
 
 .profileActions button[disabled]{
@@ -536,6 +640,7 @@ tbody tr:nth-child(even){
 
 .tabPanel{
   display:none;
+  position: relative;
 }
 
 .tabPanel.active{
@@ -546,6 +651,10 @@ tbody tr:nth-child(even){
 @keyframes tabFade{
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes spin{
+  to { transform: rotate(360deg); }
 }
 
 /* Achievement description text */

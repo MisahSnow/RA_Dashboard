@@ -1,0 +1,3 @@
+run-server.bat
+.env
+node_modules/

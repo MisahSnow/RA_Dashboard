@@ -3,15 +3,15 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>RA Friends Leaderboard</title>
+  <title>Competetive RetroAchievements</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <div class="wrap">
     <div class="panelHeader">
       <div class="panelTitle">
-        <h1>dY?+ RetroAchievements Friends Dashboard</h1>
-        <p class="subtitle">Monthly Points gained + friends activity</p>
+        <h1>Competetive RetroAchievements</h1>
+        <p class="subtitle">Group Leaderboard and Achievement Tracking</p>
       </div>
       <div class="panelActions">
         <button id="settingsBtn" class="smallBtn">Settings</button>
@@ -63,6 +63,7 @@
         <h2 class="sectionTitle">Leaderboard (this month)</h2>
         <div class="sectionControls">
           <button id="addFriendOpenBtn" class="smallBtn primaryBtn">Add Friend</button>
+          <div id="leaderboardLoading" class="loadingWheel" hidden aria-label="Loading"></div>
         </div>
       </div>
       <table id="leaderboard">
@@ -78,12 +79,15 @@
         </thead>
         <tbody></tbody>
       </table>
-      <p class="note">Friends are saved in your browser (localStorage).</p>
     </section>
 
     <section class="card profilePanel" id="profilePanel" hidden>
       <div class="sectionHead">
         <h2 class="sectionTitle">Profile: <span id="profileTitleName"></span></h2>
+        <div class="profileFilters">
+          <input id="profileGameSearch" type="text" placeholder="Search games..." autocomplete="off" />
+        </div>
+        <div id="profileLoading" class="loadingWheel" hidden aria-label="Loading"></div>
         <button id="profileCloseBtn" class="smallBtn">Close</button>
       </div>
       <div id="profileSummary" class="profileSummary"></div>
@@ -92,11 +96,13 @@
       <div class="profileActions">
         <button id="profileShowMoreBtn" class="smallBtn">Show more</button>
       </div>
+      <p class="note profileLegend"><span class="legend me"></span> <span id="profileLegendMe">You</span> <span class="legend them"></span> <span id="profileLegendThem">Friend</span></p>
     </section>
 
     <section class="card comparePanel" id="comparePanel" hidden>
       <div class="sectionHead">
         <h2 class="sectionTitle">Compare: <span id="compareTitleGame"></span></h2>
+        <div id="compareLoading" class="loadingWheel" hidden aria-label="Loading"></div>
         <button id="compareBackBtn" class="smallBtn">Back</button>
       </div>
         <div class="tabButtons" role="tablist" aria-label="Compare tabs">
@@ -131,10 +137,13 @@
               <input id="recentHours" type="number" min="1" max="720" value="72" />
             </label>
             <button id="refreshRecentAchBtn" class="smallBtn">Refresh</button>
+            <div id="recentAchievementsLoading" class="loadingWheel" hidden aria-label="Loading"></div>
           </div>
         </div>
         <div id="recentAchievements" class="feed"></div>
-        <p class="note">Shows unlocks within the lookback window. Data from API_GetUserRecentAchievements.</p>
+        <div class="feedActions">
+          <button id="recentAchievementsToggleBtn" class="smallBtn" hidden>Show more</button>
+        </div>
       </div>
 
       <div id="tab-times" class="tabPanel" role="tabpanel">
@@ -146,10 +155,14 @@
               <input id="recentGames" type="number" min="1" max="200" value="5" />
             </label>
             <button id="refreshTimesBtn" class="smallBtn">Refresh</button>
+            <div id="recentTimesLoading" class="loadingWheel" hidden aria-label="Loading"></div>
           </div>
         </div>
         <div id="recentTimes" class="feed"></div>
         <p class="note">Derived from recently played games + user game leaderboards.</p>
+        <div class="feedActions">
+          <button id="recentTimesToggleBtn" class="smallBtn" hidden>Show more</button>
+        </div>
       </div>
     </section>
   </div>
