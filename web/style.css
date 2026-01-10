@@ -278,6 +278,21 @@ button:hover {
 }
 
 table { width: 100%; border-collapse: collapse; overflow: hidden; border-radius: var(--radius); }
+
+#leaderboard{
+  width: 100%;
+}
+
+.leaderboardTableWrap{
+  overflow-x: auto;
+  width: 100%;
+}
+
+#leaderboard thead,
+#leaderboard tbody,
+#leaderboard tr{
+  width: 100%;
+}
 th, td { padding: 12px 10px; border-bottom: 1px solid var(--border); text-align: left; }
 th { border-bottom: none; }
 
