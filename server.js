@@ -96,8 +96,8 @@ async function raFetchJson(url, { retries = 2 } = {}) {
   }
 }
 
-async function raGetAchievementsEarnedBetween(username, fromDate, toDate) {
-  if (!RA_API_KEY) throw new Error("Missing RA_API_KEY in .env");
+async function raGetAchievementsEarnedBetween(username, fromDate, toDate, apiKey) {
+  if (!apiKey) throw new Error("Missing RA API key.");
 
   const f = toEpochSeconds(fromDate);
   const t = toEpochSeconds(toDate);
@@ -106,34 +106,34 @@ async function raGetAchievementsEarnedBetween(username, fromDate, toDate) {
   url.searchParams.set("u", username);
   url.searchParams.set("f", String(f));
   url.searchParams.set("t", String(t));
-  url.searchParams.set("y", RA_API_KEY);
+  url.searchParams.set("y", apiKey);
 
   const data = await raFetchJson(url.toString());
   if (!Array.isArray(data)) throw new Error("Unexpected RA response (expected an array).");
   return data;
 }
 
-async function raGetUserRecentAchievements(username, minutes = 10080) {
-  if (!RA_API_KEY) throw new Error("Missing RA_API_KEY in .env");
+async function raGetUserRecentAchievements(username, minutes = 10080, apiKey) {
+  if (!apiKey) throw new Error("Missing RA API key.");
 
   const url = new URL("https://retroachievements.org/API/API_GetUserRecentAchievements.php");
   url.searchParams.set("u", username);
   url.searchParams.set("m", String(minutes));
-  url.searchParams.set("y", RA_API_KEY);
+  url.searchParams.set("y", apiKey);
 
   const data = await raFetchJson(url.toString());
   if (!Array.isArray(data)) throw new Error("Unexpected RA response (expected an array).");
   return data;
 }
 
-async function raGetUserRecentlyPlayedGames(username, count = 10, offset = 0) {
-  if (!RA_API_KEY) throw new Error("Missing RA_API_KEY in .env");
+async function raGetUserRecentlyPlayedGames(username, count = 10, offset = 0, apiKey) {
+  if (!apiKey) throw new Error("Missing RA API key.");
 
   const url = new URL("https://retroachievements.org/API/API_GetUserRecentlyPlayedGames.php");
   url.searchParams.set("u", username);
   url.searchParams.set("c", String(count));
   url.searchParams.set("o", String(offset));
-  url.searchParams.set("y", RA_API_KEY);
+  url.searchParams.set("y", apiKey);
 
   const MAX_TRIES = 4; // total attempts (initial + retries)
   for (let attempt = 0; attempt < MAX_TRIES; attempt++) {
@@ -161,14 +161,14 @@ async function raGetUserRecentlyPlayedGames(username, count = 10, offset = 0) {
   return [];
 }
 
-async function raGetUserGameLeaderboards(username, gameId, count = 200) {
-  if (!RA_API_KEY) throw new Error("Missing RA_API_KEY in .env");
+async function raGetUserGameLeaderboards(username, gameId, count = 200, apiKey) {
+  if (!apiKey) throw new Error("Missing RA API key.");
 
   const url = new URL("https://retroachievements.org/API/API_GetUserGameLeaderboards.php");
   url.searchParams.set("u", username);
   url.searchParams.set("i", String(gameId));
   url.searchParams.set("c", String(count));
-  url.searchParams.set("y", RA_API_KEY);
+  url.searchParams.set("y", apiKey);
 
   // This endpoint returns 422 for games with no leaderboards.
   // Treat that as "no results" instead of failing the whole feed.
@@ -199,13 +199,23 @@ async function raGetUserGameLeaderboards(username, gameId, count = 200) {
   return Array.isArray(results) ? results : [];
 }
 
-async function raGetGameInfoAndUserProgress(username, gameId) {
-  if (!RA_API_KEY) throw new Error("Missing RA_API_KEY in .env");
+async function raGetGameInfoAndUserProgress(username, gameId, apiKey) {
+  if (!apiKey) throw new Error("Missing RA API key.");
 
   const url = new URL("https://retroachievements.org/API/API_GetGameInfoAndUserProgress.php");
   url.searchParams.set("u", username);
   url.searchParams.set("g", String(gameId));
-  url.searchParams.set("y", RA_API_KEY);
+  url.searchParams.set("y", apiKey);
+
+  return raFetchJson(url.toString());
+}
+
+async function raGetUserSummary(username, apiKey) {
+  if (!apiKey) throw new Error("Missing RA API key.");
+
+  const url = new URL("https://retroachievements.org/API/API_GetUserSummary.php");
+  url.searchParams.set("u", username);
+  url.searchParams.set("y", apiKey);
 
   return raFetchJson(url.toString());
 }
@@ -224,6 +234,8 @@ app.get("/api/monthly/:username", async (req, res) => {
   try {
     const username = String(req.params.username || "").trim();
     if (!username) return res.status(400).json({ error: "Missing username" });
+    const apiKey = String(req.headers["x-ra-api-key"] || RA_API_KEY || "").trim();
+    if (!apiKey) return res.status(400).json({ error: "Missing RA API key" });
 
     const { start, end } = getMonthRange();
 
@@ -238,7 +250,7 @@ app.get("/api/monthly/:username", async (req, res) => {
     const modeQ = typeof req.query.mode === "string" ? req.query.mode.toLowerCase() : "hc";
     const includeSoftcore = modeQ === "all";
 
-    const unlocks = await raGetAchievementsEarnedBetween(username, fromDate, toDate);
+    const unlocks = await raGetAchievementsEarnedBetween(username, fromDate, toDate, apiKey);
 
     const isHardcoreUnlock = (u) => Boolean(
       u?.HardcoreMode ?? u?.hardcoreMode ??
@@ -278,11 +290,13 @@ app.get("/api/recent-achievements/:username", async (req, res) => {
   try {
     const username = String(req.params.username || "").trim();
     if (!username) return res.status(400).json({ error: "Missing username" });
+    const apiKey = String(req.headers["x-ra-api-key"] || RA_API_KEY || "").trim();
+    if (!apiKey) return res.status(400).json({ error: "Missing RA API key" });
 
     const minutes = typeof req.query.m === "string" ? Number(req.query.m) : 10080; // default 7 days
     const limit = typeof req.query.limit === "string" ? Number(req.query.limit) : 20;
 
-    const items = await raGetUserRecentAchievements(username, Number.isFinite(minutes) ? minutes : 10080);
+    const items = await raGetUserRecentAchievements(username, Number.isFinite(minutes) ? minutes : 10080, apiKey);
 
     // normalize + trim
     const normalized = items.slice(0, Math.max(0, limit)).map(a => ({
@@ -312,6 +326,8 @@ app.get("/api/recent-times/:username", async (req, res) => {
   try {
     const username = String(req.params.username || "").trim();
     if (!username) return res.status(400).json({ error: "Missing username" });
+    const apiKey = String(req.headers["x-ra-api-key"] || RA_API_KEY || "").trim();
+    if (!apiKey) return res.status(400).json({ error: "Missing RA API key" });
 
     const gamesWanted = typeof req.query.games === "string" ? Number(req.query.games) : 5;
     const limit = typeof req.query.limit === "string" ? Number(req.query.limit) : 20;
@@ -320,7 +336,7 @@ app.get("/api/recent-times/:username", async (req, res) => {
     const safeLimit = Math.max(1, Math.min(50, Number.isFinite(limit) ? limit : 20));
 
     // cache key includes params
-    const cacheKey = `recent-times:${username}:${targetGames}:${safeLimit}`;
+    const cacheKey = `recent-times:${username}:${targetGames}:${safeLimit}:${apiKey}`;
     const cached = cacheGet(cacheKey);
     if (cached) return res.json({ ...cached, cached: true });
 
@@ -331,7 +347,7 @@ app.get("/api/recent-times/:username", async (req, res) => {
       Array.from({ length: pages }, async (_v, idx) => {
         const offset = idx * chunkSize;
         const count = Math.min(chunkSize, targetGames - offset);
-        return raGetUserRecentlyPlayedGames(username, count, offset);
+        return raGetUserRecentlyPlayedGames(username, count, offset, apiKey);
       })
     );
 
@@ -344,7 +360,7 @@ app.get("/api/recent-times/:username", async (req, res) => {
     // fetch leaderboards with a limiter to avoid bursts
     const perGame = await Promise.all(gameIds.map(async (gid) => limitLb(async () => {
       try {
-        const lbs = await raGetUserGameLeaderboards(username, gid, 200);
+        const lbs = await raGetUserGameLeaderboards(username, gid, 200, apiKey);
         const gameMeta = recentlyPlayed.find(g => (g.GameID ?? g.gameId) == gid) || {};
         const gameTitle = gameMeta.Title ?? gameMeta.title ?? `Game ${gid}`;
         const consoleName = gameMeta.ConsoleName ?? gameMeta.consoleName ?? "";
@@ -404,15 +420,17 @@ app.get("/api/recent-games/:username", async (req, res) => {
   try {
     const username = String(req.params.username || "").trim();
     if (!username) return res.status(400).json({ error: "Missing username" });
+    const apiKey = String(req.headers["x-ra-api-key"] || RA_API_KEY || "").trim();
+    if (!apiKey) return res.status(400).json({ error: "Missing RA API key" });
 
     const countQ = typeof req.query.count === "string" ? Number(req.query.count) : 50;
     const count = Math.max(1, Math.min(200, Number.isFinite(countQ) ? countQ : 50));
 
-    const cacheKey = `recent-games:${username}:${count}`;
+    const cacheKey = `recent-games:${username}:${count}:${apiKey}`;
     const cached = cacheGet(cacheKey);
     if (cached) return res.json({ ...cached, cached: true });
 
-    const items = await raGetUserRecentlyPlayedGames(username, count, 0);
+    const items = await raGetUserRecentlyPlayedGames(username, count, 0, apiKey);
 
     const normalized = items.map(g => ({
       username,
@@ -431,18 +449,68 @@ app.get("/api/recent-games/:username", async (req, res) => {
   }
 });
 
+// User summary/profile
+app.get("/api/user-summary/:username", async (req, res) => {
+  try {
+    const username = String(req.params.username || "").trim();
+    if (!username) return res.status(400).json({ error: "Missing username" });
+    const apiKey = String(req.headers["x-ra-api-key"] || RA_API_KEY || "").trim();
+    if (!apiKey) return res.status(400).json({ error: "Missing RA API key" });
+
+    const cacheKey = `user-summary:${username}:${apiKey}`;
+    const cached = cacheGet(cacheKey);
+    if (cached) return res.json({ ...cached, cached: true });
+
+    const data = await raGetUserSummary(username, apiKey);
+    const user =
+      (data && typeof data.User === "object" ? data.User : null) ||
+      (data && typeof data.user === "object" ? data.user : null) ||
+      data;
+
+    const payload = {
+      username,
+      totalPoints:
+        user?.TotalPoints ?? data?.TotalPoints ?? user?.totalPoints ?? data?.totalPoints ??
+        user?.Points ?? data?.Points ?? user?.points ?? data?.points,
+      retroPoints:
+        user?.TotalRetroPoints ?? data?.TotalRetroPoints ?? user?.totalRetroPoints ?? data?.totalRetroPoints ??
+        user?.TotalTruePoints ?? data?.TotalTruePoints ?? user?.totalTruePoints ?? data?.totalTruePoints ??
+        user?.TruePoints ?? data?.TruePoints ?? user?.truePoints ?? data?.truePoints,
+      totalPointsHardcore:
+        user?.TotalPointsHardcore ?? data?.TotalPointsHardcore ?? user?.totalPointsHardcore ?? data?.totalPointsHardcore ??
+        user?.TotalHardcorePoints ?? data?.TotalHardcorePoints ?? user?.totalHardcorePoints ?? data?.totalHardcorePoints ??
+        user?.HardcorePoints ?? data?.HardcorePoints ?? user?.hardcorePoints ?? data?.hardcorePoints,
+      totalPointsSoftcore:
+        user?.TotalPointsSoftcore ?? data?.TotalPointsSoftcore ?? user?.totalPointsSoftcore ?? data?.totalPointsSoftcore ??
+        user?.TotalSoftcorePoints ?? data?.TotalSoftcorePoints ?? user?.totalSoftcorePoints ?? data?.totalSoftcorePoints ??
+        user?.SoftcorePoints ?? data?.SoftcorePoints ?? user?.softcorePoints ?? data?.softcorePoints,
+      rank: user?.Rank ?? data?.Rank ?? user?.rank ?? data?.rank,
+      memberSince: user?.MemberSince ?? data?.MemberSince ?? user?.memberSince ?? data?.memberSince,
+      lastActivity: user?.LastActivity ?? data?.LastActivity ?? user?.lastActivity ?? data?.lastActivity,
+      completedGames: user?.CompletedGames ?? data?.CompletedGames ?? user?.completedGames ?? data?.completedGames
+    };
+
+    cacheSet(cacheKey, payload, DEFAULT_CACHE_TTL_MS);
+    res.json(payload);
+  } catch (err) {
+    res.status(500).json({ error: err?.message || "Failed to fetch user summary" });
+  }
+});
+
 // Achievements for a user + game (for comparison)
 app.get("/api/game-achievements/:username/:gameId", async (req, res) => {
   try {
     const username = String(req.params.username || "").trim();
     const gameId = String(req.params.gameId || "").trim();
     if (!username || !gameId) return res.status(400).json({ error: "Missing username or gameId" });
+    const apiKey = String(req.headers["x-ra-api-key"] || RA_API_KEY || "").trim();
+    if (!apiKey) return res.status(400).json({ error: "Missing RA API key" });
 
-    const cacheKey = `game-achievements:${username}:${gameId}`;
+    const cacheKey = `game-achievements:${username}:${gameId}:${apiKey}`;
     const cached = cacheGet(cacheKey);
     if (cached) return res.json({ ...cached, cached: true });
 
-    const data = await raGetGameInfoAndUserProgress(username, gameId);
+    const data = await raGetGameInfoAndUserProgress(username, gameId, apiKey);
     const rawAchievements = data?.Achievements ?? data?.achievements ?? {};
     const achievements = Object.values(rawAchievements).map(a => ({
       id: a.ID ?? a.id,
@@ -474,6 +542,41 @@ app.get("/api/game-achievements/:username/:gameId", async (req, res) => {
   }
 });
 
+// Leaderboard times/scores for a user + game
+app.get("/api/game-times/:username/:gameId", async (req, res) => {
+  try {
+    const username = String(req.params.username || "").trim();
+    const gameId = String(req.params.gameId || "").trim();
+    if (!username || !gameId) return res.status(400).json({ error: "Missing username or gameId" });
+    const apiKey = String(req.headers["x-ra-api-key"] || RA_API_KEY || "").trim();
+    if (!apiKey) return res.status(400).json({ error: "Missing RA API key" });
+
+    const cacheKey = `game-times:${username}:${gameId}:${apiKey}`;
+    const cached = cacheGet(cacheKey);
+    if (cached) return res.json({ ...cached, cached: true });
+
+    const lbs = await raGetUserGameLeaderboards(username, gameId, 200, apiKey);
+    const normalized = lbs.map(lb => {
+      const ue = lb.UserEntry ?? lb.userEntry ?? {};
+      return {
+        leaderboardId: lb.ID ?? lb.id,
+        leaderboardTitle: lb.Title ?? lb.title,
+        format: lb.Format ?? lb.format,
+        rankAsc: lb.RankAsc ?? lb.rankAsc,
+        score: ue.Score ?? ue.score,
+        formattedScore: ue.FormattedScore ?? ue.formattedScore,
+        rank: ue.Rank ?? ue.rank
+      };
+    });
+
+    const payload = { username, gameId, count: normalized.length, results: normalized };
+    cacheSet(cacheKey, payload, DEFAULT_CACHE_TTL_MS);
+    res.json(payload);
+  } catch (err) {
+    res.status(500).json({ error: err?.message || "Failed to fetch game times" });
+  }
+});
+
 
 // "Now playing" (best-effort): use most recent LastPlayed from Recently Played Games.
 // If LastPlayed is within `windowSeconds` (default 60), treat as "currently playing".
@@ -481,16 +584,18 @@ app.get("/api/now-playing/:username", async (req, res) => {
   try {
     const username = String(req.params.username || "").trim();
     if (!username) return res.status(400).json({ error: "Missing username" });
+    const apiKey = String(req.headers["x-ra-api-key"] || RA_API_KEY || "").trim();
+    if (!apiKey) return res.status(400).json({ error: "Missing RA API key" });
 
     const windowSeconds = typeof req.query.window === "string" ? Number(req.query.window) : 120;
     const win = Number.isFinite(windowSeconds) ? Math.max(5, Math.min(600, windowSeconds)) : 60;
 
-    const cacheKey = `now-playing:${username}:${win}`;
+    const cacheKey = `now-playing:${username}:${win}:${apiKey}`;
     const cached = cacheGet(cacheKey);
     if (cached) return res.json({ ...cached, cached: true });
 
     // only need the most recent game
-    const [latest] = await raGetUserRecentlyPlayedGames(username, 1, 0);
+    const [latest] = await raGetUserRecentlyPlayedGames(username, 1, 0, apiKey);
 
     if (!latest) {
       const payload = { username, nowPlaying: false, reason: "no recent games" };

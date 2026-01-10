@@ -2,13 +2,25 @@ function safeText(v){ return (v === null || v === undefined) ? "" : String(v); }
 
 const LS_ME = "ra.me";
 const LS_FRIENDS = "ra.friends";
+const LS_API_KEY = "ra.apiKey";
 
 const meInput = document.getElementById("meInput");
+const apiKeyInput = document.getElementById("apiKeyInput");
 const friendInput = document.getElementById("friendInput");
-const addFriendBtn = document.getElementById("addFriendBtn");
+const addFriendOpenBtn = document.getElementById("addFriendOpenBtn");
+const addFriendModal = document.getElementById("addFriendModal");
+const addFriendConfirmBtn = document.getElementById("addFriendConfirmBtn");
+const addFriendCloseBtn = document.getElementById("addFriendCloseBtn");
+const addFriendCancelBtn = document.getElementById("addFriendCancelBtn");
 const refreshBtn = document.getElementById("refreshBtn");
 const tbody = document.querySelector("#leaderboard tbody");
 const statusEl = document.getElementById("status");
+
+const settingsBtn = document.getElementById("settingsBtn");
+const settingsModal = document.getElementById("settingsModal");
+const settingsSaveBtn = document.getElementById("settingsSaveBtn");
+const settingsCloseBtn = document.getElementById("settingsCloseBtn");
+const settingsCancelBtn = document.getElementById("settingsCancelBtn");
 
 const recentAchievementsEl = document.getElementById("recentAchievements");
 const recentTimesEl = document.getElementById("recentTimes");
@@ -19,6 +31,7 @@ const refreshTimesBtn = document.getElementById("refreshTimesBtn");
 
 const profilePanel = document.getElementById("profilePanel");
 const profileTitleNameEl = document.getElementById("profileTitleName");
+const profileSummaryEl = document.getElementById("profileSummary");
 const profileSharedGamesEl = document.getElementById("profileSharedGames");
 const profileCloseBtn = document.getElementById("profileCloseBtn");
 
@@ -26,7 +39,11 @@ const comparePanel = document.getElementById("comparePanel");
 const compareTitleGameEl = document.getElementById("compareTitleGame");
 const compareMetaEl = document.getElementById("compareMeta");
 const compareAchievementsEl = document.getElementById("compareAchievements");
+const compareTimesEl = document.getElementById("compareTimes");
 const compareBackBtn = document.getElementById("compareBackBtn");
+
+const compareTabButtons = document.querySelectorAll(".compareTabBtn");
+const compareTabPanels = document.querySelectorAll(".compareTabPanel");
 
 const tabButtons = document.querySelectorAll(".tabBtn");
 const tabPanels = document.querySelectorAll(".tabPanel");
@@ -39,6 +56,7 @@ function clampUsername(s) {
 
 function loadState() {
   meInput.value = localStorage.getItem(LS_ME) || "";
+  if (apiKeyInput) apiKeyInput.value = localStorage.getItem(LS_API_KEY) || "";
   try {
     return JSON.parse(localStorage.getItem(LS_FRIENDS) || "[]");
   } catch {
@@ -50,11 +68,14 @@ let friends = loadState();
 
 function saveState() {
   localStorage.setItem(LS_ME, clampUsername(meInput.value));
+  if (apiKeyInput) localStorage.setItem(LS_API_KEY, (apiKeyInput.value || "").trim());
   localStorage.setItem(LS_FRIENDS, JSON.stringify(friends));
 }
 
 async function fetchJson(url) {
-  const res = await fetch(url);
+  const apiKey = (apiKeyInput?.value || "").trim();
+  const headers = apiKey ? { "x-ra-api-key": apiKey } : {};
+  const res = await fetch(url, { headers });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(text || `Request failed: ${res.status}`);
@@ -86,13 +107,75 @@ async function fetchRecentGames(username, count) {
   return fetchJson(`/api/recent-games/${u}?count=${encodeURIComponent(count)}`);
 }
 
+async function fetchUserSummary(username) {
+  const u = encodeURIComponent(username);
+  return fetchJson(`/api/user-summary/${u}`);
+}
+
 async function fetchGameAchievements(username, gameId) {
   const u = encodeURIComponent(username);
   return fetchJson(`/api/game-achievements/${u}/${encodeURIComponent(gameId)}`);
 }
 
+async function fetchGameTimes(username, gameId) {
+  const u = encodeURIComponent(username);
+  return fetchJson(`/api/game-times/${u}/${encodeURIComponent(gameId)}`);
+}
+
 function setStatus(msg) {
   statusEl.textContent = msg || "";
+}
+
+function openAddFriendModal() {
+  if (!addFriendModal) return;
+  addFriendModal.hidden = false;
+  friendInput.focus();
+}
+
+function closeAddFriendModal() {
+  if (!addFriendModal) return;
+  addFriendModal.hidden = true;
+  if (friendInput) friendInput.value = "";
+}
+
+function addFriendFromModal() {
+  const me = ensureUsername();
+  const u = clampUsername(friendInput.value);
+  if (!me) return setStatus("Set your username first.");
+  if (!u) return;
+  if (u.toLowerCase() === me.toLowerCase()) return setStatus("That's you. Add someone else.");
+
+  if (!friends.includes(u)) friends.push(u);
+  friendInput.value = "";
+  saveState();
+  closeAddFriendModal();
+
+  refreshLeaderboard();
+  refreshRecentAchievements();
+  refreshRecentTimes();
+}
+
+function openSettings() {
+  if (!settingsModal) return;
+  settingsModal.hidden = false;
+  meInput.focus();
+}
+
+function closeSettings() {
+  if (!settingsModal) return;
+  settingsModal.hidden = true;
+}
+
+function ensureUsername() {
+  const existing = clampUsername(meInput.value);
+  if (existing) return existing;
+
+  const entered = clampUsername(window.prompt("Enter your RetroAchievements username:", "") || "");
+  if (!entered) return "";
+
+  meInput.value = entered;
+  saveState();
+  return entered;
 }
 
 function setActiveTab(name) {
@@ -104,6 +187,19 @@ function setActiveTab(name) {
 
   tabPanels.forEach(panel => {
     const isActive = panel.id === `tab-${name}`;
+    panel.classList.toggle("active", isActive);
+  });
+}
+
+function setActiveCompareTab(name) {
+  compareTabButtons.forEach(btn => {
+    const isActive = btn.dataset.tab === name;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-selected", isActive ? "true" : "false");
+  });
+
+  compareTabPanels.forEach(panel => {
+    const isActive = panel.id === `compare-tab-${name}`;
     panel.classList.toggle("active", isActive);
   });
 }
@@ -201,6 +297,48 @@ function renderSharedGames(games) {
   }
 }
 
+function renderProfileSummary(summary) {
+  profileSummaryEl.innerHTML = "";
+
+  if (!summary) {
+    profileSummaryEl.innerHTML = `<div class="meta">No profile summary available.</div>`;
+    return;
+  }
+
+  const items = [
+    ["Total Points", summary.totalPoints],
+    ["Retro Points", summary.retroPoints],
+    ["Rank", summary.rank],
+    ["Member Since", summary.memberSince],
+    ["Last Activity", summary.lastActivity],
+    ["Hardcore Points", summary.totalPointsHardcore],
+    ["Softcore Points", summary.totalPointsSoftcore],
+    ["Completed Games", summary.completedGames]
+  ].filter(([, v]) => v !== undefined && v !== null && v !== "");
+
+  if (!items.length) {
+    profileSummaryEl.innerHTML = `<div class="meta">Profile summary unavailable.</div>`;
+    return;
+  }
+
+  for (const [label, value] of items) {
+    const card = document.createElement("div");
+    card.className = "summaryCard";
+
+    const l = document.createElement("div");
+    l.className = "summaryLabel";
+    l.textContent = label;
+
+    const v = document.createElement("div");
+    v.className = "summaryValue";
+    v.textContent = String(value);
+
+    card.appendChild(l);
+    card.appendChild(v);
+    profileSummaryEl.appendChild(card);
+  }
+}
+
 async function openProfile(username) {
   const target = clampUsername(username);
   if (!target) return;
@@ -211,6 +349,7 @@ async function openProfile(username) {
   profilePanel.hidden = false;
   comparePanel.hidden = true;
   profileTitleNameEl.textContent = target;
+  profileSummaryEl.innerHTML = `<div class="meta">Loading profile summary...</div>`;
   profileSharedGamesEl.innerHTML = `<div class="meta">Loading shared games...</div>`;
   currentProfileUser = target;
 
@@ -220,6 +359,15 @@ async function openProfile(username) {
       fetchRecentGames(me, count),
       fetchRecentGames(target, count)
     ]);
+
+    let summary = null;
+    try {
+      summary = await fetchUserSummary(target);
+    } catch (e) {
+      profileSummaryEl.innerHTML = `<div class="meta">Profile summary unavailable: ${safeText(e?.message || "error")}</div>`;
+    }
+
+    if (summary) renderProfileSummary(summary);
 
     const myMap = new Map((mine.results || []).map(g => [g.gameId, g]));
     const shared = [];
@@ -245,6 +393,7 @@ async function openProfile(username) {
     renderSharedGames(unique);
     profilePanel.scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (e) {
+    profileSummaryEl.innerHTML = `<div class="meta">Failed to load profile summary.</div>`;
     profileSharedGamesEl.innerHTML = `<div class="meta">Failed to load shared games.</div>`;
     setStatus(e?.message || "Failed to load profile.");
   }
@@ -293,6 +442,58 @@ function renderCompareList(items) {
   }
 }
 
+function renderCompareTimes(items) {
+  compareTimesEl.innerHTML = "";
+
+  if (!items.length) {
+    compareTimesEl.innerHTML = `<div class="meta">No leaderboard scores found for this game.</div>`;
+    return;
+  }
+
+  for (const t of items) {
+    const row = document.createElement("div");
+    row.className = "compareItem";
+
+    const main = document.createElement("div");
+    main.className = "compareMain";
+
+    const title = document.createElement("div");
+    title.className = "compareTitle";
+    title.textContent = t.leaderboardTitle || "Leaderboard";
+
+    const desc = document.createElement("div");
+    desc.className = "compareDesc";
+    desc.textContent = t.format ? `Format: ${t.format}` : "";
+
+    main.appendChild(title);
+    main.appendChild(desc);
+
+    const cols = document.createElement("div");
+    cols.className = "timeCols";
+
+    const mineCol = document.createElement("div");
+    mineCol.className = "timeCol";
+    mineCol.innerHTML = `
+      <div class="meta">You</div>
+      <div class="statusPill ${t.me ? "me" : "none"}">${t.me || "No time"}</div>
+    `;
+
+    const theirsCol = document.createElement("div");
+    theirsCol.className = "timeCol";
+    theirsCol.innerHTML = `
+      <div class="meta">Them</div>
+      <div class="statusPill ${t.them ? "them" : "none"}">${t.them || "No time"}</div>
+    `;
+
+    cols.appendChild(mineCol);
+    cols.appendChild(theirsCol);
+
+    row.appendChild(main);
+    row.appendChild(cols);
+    compareTimesEl.appendChild(row);
+  }
+}
+
 async function openGameCompare(game) {
   const target = clampUsername(currentProfileUser);
   if (!target) return;
@@ -302,9 +503,11 @@ async function openGameCompare(game) {
 
   profilePanel.hidden = true;
   comparePanel.hidden = false;
+  setActiveCompareTab("achievements");
   compareTitleGameEl.textContent = game.title || `Game ${safeText(game.gameId)}`;
   compareMetaEl.textContent = `You: ${me} | Friend: ${target}`;
   compareAchievementsEl.innerHTML = `<div class="meta">Loading achievements...</div>`;
+  compareTimesEl.innerHTML = `<div class="meta">Loading scores...</div>`;
 
   try {
     const [mine, theirs] = await Promise.all([
@@ -361,6 +564,44 @@ async function openGameCompare(game) {
   } catch (e) {
     compareAchievementsEl.innerHTML = `<div class="meta">Failed to load achievements.</div>`;
     setStatus(e?.message || "Failed to load game comparison.");
+  }
+
+  try {
+    const [mineTimes, theirsTimes] = await Promise.all([
+      fetchGameTimes(me, game.gameId),
+      fetchGameTimes(target, game.gameId)
+    ]);
+
+    const mineMap = new Map((mineTimes.results || []).map(lb => [lb.leaderboardId, lb]));
+    const theirsMap = new Map((theirsTimes.results || []).map(lb => [lb.leaderboardId, lb]));
+    const ids = new Set([...mineMap.keys(), ...theirsMap.keys()]);
+
+    const merged = [];
+    for (const id of ids) {
+      const m = mineMap.get(id);
+      const t = theirsMap.get(id);
+      const mineLabel = m ? `#${m.rank} ${m.formattedScore ?? m.score ?? ""}`.trim() : "";
+      const theirLabel = t ? `#${t.rank} ${t.formattedScore ?? t.score ?? ""}`.trim() : "";
+
+      merged.push({
+        leaderboardId: id,
+        leaderboardTitle: m?.leaderboardTitle || t?.leaderboardTitle,
+        format: m?.format || t?.format,
+        me: mineLabel,
+        them: theirLabel,
+        both: Boolean(m && t)
+      });
+    }
+
+    merged.sort((a, b) => {
+      const w = Number(b.both) - Number(a.both);
+      if (w !== 0) return w;
+      return String(a.leaderboardTitle || "").localeCompare(String(b.leaderboardTitle || ""));
+    });
+
+    renderCompareTimes(merged);
+  } catch (e) {
+    compareTimesEl.innerHTML = `<div class="meta">Failed to load scores.</div>`;
   }
 }
 
@@ -425,7 +666,7 @@ function renderRecentAchievements(items) {
 function renderRecentTimes(items) {
   recentTimesEl.innerHTML = "";
   if (!items.length) {
-    recentTimesEl.innerHTML = `<div class="meta">No recent leaderboard entries found (based on recently played games).</div>`;
+    recentTimesEl.innerHTML = `<div class="meta">No recent leaderboard scores found (based on recently played games).</div>`;
     return;
   }
 
@@ -447,7 +688,7 @@ function renderRecentTimes(items) {
     head.innerHTML = `
       <strong>${t.username}</strong>
       <span class="pill mono">#${t.rank}</span>
-      <span class="pill mono">${t.formattedScore ?? t.score}</span>
+      <span class="pill mono scorePill">${t.formattedScore ?? t.score}</span>
       <span class="meta">${formatDate(t.dateUpdated)}</span>
     `;
 
@@ -474,6 +715,8 @@ function getUsersIncludingMe() {
 }
 
 async function refreshLeaderboard() {
+  const ensured = ensureUsername();
+  if (!ensured) return;
   const { me, users } = getUsersIncludingMe();
   if (!me) return;
 
@@ -609,10 +852,10 @@ async function refreshRecentTimes() {
 
     if (!combined.length && errors.length) {
       // show the first error so it doesn't look like "nothing happened"
-      setStatus(`Times fetch issue: ${errors[0]}`);
+      setStatus(`Score fetch issue: ${errors[0]}`);
     }
   } catch (e) {
-    setStatus(e?.message || "Failed to load recent times.");
+    setStatus(e?.message || "Failed to load recent scores.");
   }
 }
 
@@ -621,25 +864,26 @@ tabButtons.forEach(btn => {
   btn.addEventListener("click", () => setActiveTab(btn.dataset.tab));
 });
 
+compareTabButtons.forEach(btn => {
+  btn.addEventListener("click", () => setActiveCompareTab(btn.dataset.tab));
+});
+
 if (tabButtons.length) {
   setActiveTab(tabButtons[0].dataset.tab);
 }
 
-addFriendBtn.addEventListener("click", () => {
-  const me = clampUsername(meInput.value);
-  const u = clampUsername(friendInput.value);
-  if (!me) return setStatus("Set your username first.");
-  if (!u) return;
-  if (u.toLowerCase() === me.toLowerCase()) return setStatus("That's you. Add someone else.");
-
-  if (!friends.includes(u)) friends.push(u);
-  friendInput.value = "";
-  saveState();
-
-  refreshLeaderboard();
-  refreshRecentAchievements();
-  refreshRecentTimes();
-});
+if (addFriendOpenBtn) {
+  addFriendOpenBtn.addEventListener("click", openAddFriendModal);
+}
+if (addFriendCloseBtn) {
+  addFriendCloseBtn.addEventListener("click", closeAddFriendModal);
+}
+if (addFriendCancelBtn) {
+  addFriendCancelBtn.addEventListener("click", closeAddFriendModal);
+}
+if (addFriendConfirmBtn) {
+  addFriendConfirmBtn.addEventListener("click", addFriendFromModal);
+}
 
 refreshBtn.addEventListener("click", () => {
   refreshLeaderboard();
@@ -654,11 +898,14 @@ if (profileCloseBtn) {
   profileCloseBtn.addEventListener("click", () => {
     profilePanel.hidden = true;
     profileTitleNameEl.textContent = "";
+    profileSummaryEl.innerHTML = "";
     profileSharedGamesEl.innerHTML = "";
     comparePanel.hidden = true;
     compareTitleGameEl.textContent = "";
     compareMetaEl.textContent = "";
     compareAchievementsEl.innerHTML = "";
+    compareTimesEl.innerHTML = "";
+    setActiveCompareTab("achievements");
     currentProfileUser = "";
   });
 }
@@ -670,23 +917,48 @@ if (compareBackBtn) {
     compareTitleGameEl.textContent = "";
     compareMetaEl.textContent = "";
     compareAchievementsEl.innerHTML = "";
+    compareTimesEl.innerHTML = "";
+  });
+}
+
+if (settingsBtn) {
+  settingsBtn.addEventListener("click", openSettings);
+}
+if (settingsCloseBtn) {
+  settingsCloseBtn.addEventListener("click", closeSettings);
+}
+if (settingsCancelBtn) {
+  settingsCancelBtn.addEventListener("click", closeSettings);
+}
+if (settingsSaveBtn) {
+  settingsSaveBtn.addEventListener("click", () => {
+    meInput.value = clampUsername(meInput.value);
+    saveState();
+    closeSettings();
+    refreshLeaderboard();
+    refreshRecentAchievements();
+    refreshRecentTimes();
   });
 }
 
 meInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") {
+    saveState();
     refreshLeaderboard();
     refreshRecentAchievements();
     refreshRecentTimes();
   }
 });
 
-friendInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") addFriendBtn.click();
-});
+if (friendInput) {
+  friendInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") addFriendFromModal();
+  });
+}
 
 // initial load
-if (meInput.value) {
+const ensured = ensureUsername();
+if (ensured) {
   refreshLeaderboard();
   refreshRecentAchievements();
   refreshRecentTimes();
