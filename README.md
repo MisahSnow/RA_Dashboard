@@ -1,10 +1,19 @@
-# RA Ultra-Minimal Friends Dashboard (Points + Activity)
+# Competitive RetroAchievements
+
+A lightweight dashboard for comparing RetroAchievements friends: monthly points, recent activity, and profile/game comparisons.
+
+## Features
+- Monthly leaderboard with live "now playing" status.
+- Profile view with shared games, full recent games, and achievement counts for you vs them.
+- Per-game comparison (achievements + leaderboard times).
+- Friends activity feeds with incremental "show more."
+- Built-in caching and retry/backoff for RA API rate limits.
 
 ## Setup
 1) Install dependencies:
    npm install
 
-2) Create `.env` next to server.js (copy from .env.example) and set:
+2) Create `.env` next to `server.js` and set:
    RA_API_KEY=YOUR_KEY
 
 3) Run:
@@ -13,14 +22,16 @@
 4) Open:
    http://localhost:5179
 
-## Endpoints
-- /api/monthly/:username               (this month's points gained)
-- /api/recent-achievements/:username   (recent unlocks; query ?m=minutes&limit=n)
-- /api/recent-times/:username          (recent leaderboard entries; query ?games=n&limit=n)
+## API Endpoints
+- /api/monthly/:username
+- /api/recent-achievements/:username (query: ?m=minutes&limit=n)
+- /api/recent-times/:username (query: ?games=n&limit=n)
+- /api/recent-games/:username (query: ?count=n)
+- /api/user-summary/:username
+- /api/game-achievements/:username/:gameId
+- /api/game-times/:username/:gameId
+- /api/now-playing/:username (query: ?window=seconds)
 
-Recent achievements uses API_GetUserRecentAchievements.
-Recently played games uses API_GetUserRecentlyPlayedGames.
-User game leaderboards uses API_GetUserGameLeaderboards.
-
-## Rate limiting
-This version caches recent-times for ~3 minutes and limits leaderboard requests to 2 at a time to avoid RA 429 errors.
+## Notes
+- Uses RetroAchievements API. Provide your own API key in `.env` or via the UI settings.
+- Recent times and other endpoints are cached for a few minutes to reduce 429s.
