@@ -7,7 +7,6 @@ A lightweight dashboard for comparing RetroAchievements friends: monthly points,
 - Profile view with shared games, full recent games, and achievement counts for you vs them.
 - Per-game comparison (achievements + leaderboard times).
 - Friends activity feeds with incremental "show more."
-- Built-in caching and retry/backoff for RA API rate limits.
 
 ## Setup
 1) Install dependencies:
