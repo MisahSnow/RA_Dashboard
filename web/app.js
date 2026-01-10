@@ -31,6 +31,7 @@ const recentAchievementsEl = document.getElementById("recentAchievements");
 const recentTimesEl = document.getElementById("recentTimes");
 const recentGamesEl = document.getElementById("recentGames");
 const recentAchievementsToggleBtn = document.getElementById("recentAchievementsToggleBtn");
+const recentAchievementsShowLessBtn = document.getElementById("recentAchievementsShowLessBtn");
 const recentTimesToggleBtn = document.getElementById("recentTimesToggleBtn");
 const leaderboardLoadingEl = document.getElementById("leaderboardLoading");
 const profileLoadingEl = document.getElementById("profileLoading");
@@ -957,6 +958,7 @@ function renderRecentAchievements(items) {
     recentAchievementsVisible = RECENT_DEFAULT_ROWS;
     recentAchievementsEl.innerHTML = `<div class="meta">No recent achievements in this window.</div>`;
     if (recentAchievementsToggleBtn) recentAchievementsToggleBtn.hidden = true;
+    if (recentAchievementsShowLessBtn) recentAchievementsShowLessBtn.hidden = true;
     return;
   }
 
@@ -1016,6 +1018,9 @@ function renderRecentAchievements(items) {
       items.length >= achievementsMaxResults;
     recentAchievementsToggleBtn.hidden = !canLoadMore;
     recentAchievementsToggleBtn.textContent = "Show more";
+  }
+  if (recentAchievementsShowLessBtn) {
+    recentAchievementsShowLessBtn.hidden = recentAchievementsVisible <= RECENT_DEFAULT_ROWS;
   }
 }
 
@@ -1281,6 +1286,14 @@ if (recentAchievementsToggleBtn) {
       achievementsMaxResults
     );
     refreshRecentAchievements({ reset: false });
+  });
+}
+
+if (recentAchievementsShowLessBtn) {
+  recentAchievementsShowLessBtn.addEventListener("click", () => {
+    recentAchievementsVisible = RECENT_DEFAULT_ROWS;
+    achievementsMaxResults = Math.max(ACHIEVEMENTS_DEFAULT_MAX, achievementsMaxResults);
+    renderRecentAchievements(recentAchievementsItems);
   });
 }
 

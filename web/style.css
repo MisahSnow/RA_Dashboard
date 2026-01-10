@@ -424,6 +424,7 @@ tbody tr:nth-child(even){
   display:flex;
   justify-content:flex-end;
   margin-top: 20px;
+  gap:8px;
 }
 
 .profileSummary{
