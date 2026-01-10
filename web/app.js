@@ -337,8 +337,8 @@ function renderLeaderboard(rows, me) {
     const delta = r.deltaVsYou;
     const cls = delta > 0 ? "delta-pos" : delta < 0 ? "delta-neg" : "delta-zero";
     const isMe = (r.username && me) ? r.username.toLowerCase() === me.toLowerCase() : false;
-tr.innerHTML = `
-      <td><button class="linkBtn" type="button" data-profile="${safeText(r.username)}"><strong>${safeText(r.username)}</strong></button>${isMe ? ' <span class="note">(you)</span>' : ""}</td>
+    tr.innerHTML = `
+      <td><button class="linkBtn" type="button" data-profile="${safeText(r.username)}"><span class="nameRank">${rows.indexOf(r) + 1}.</span> <strong>${safeText(r.username)}</strong></button>${isMe ? ' <span class="note">(you)</span>' : ""}</td>
       <td><strong>${Math.round(r.points)}</strong></td>
       <td class="${cls}"><strong>${delta > 0 ? "+" : ""}${Math.round(delta)}</strong></td>
       <td>${r.unlocks}</td>
