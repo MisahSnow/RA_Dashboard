@@ -74,16 +74,16 @@ function renderLeaderboard(rows, me) {
 
     const delta = r.deltaVsYou;
     const cls = delta > 0 ? "delta-pos" : delta < 0 ? "delta-neg" : "delta-zero";
-    const isMe = (r.username && me) ? r.username.toLowerCase() === me.toLowerCase() : false;
+    const isMe = r.username.toLowerCase() === me.toLowerCase();
 
     tr.innerHTML = `
-      <td><strong>${r.username ?? ""}</strong>${isMe ? ' <span class="note">(you)</span>' : ""}</td>
+      <td><strong>${r.username}</strong>${isMe ? ' <span class="note">(you)</span>' : ""}</td>
       <td><strong>${Math.round(r.points)}</strong></td>
       <td class="${cls}"><strong>${delta > 0 ? "+" : ""}${Math.round(delta)}</strong></td>
       <td>${r.unlocks}</td>
       <td>${r.nowPlayingText || ''}</td>
       <td style="text-align:right;">
-        ${isMe ? "" : `<button class="smallBtn" data-remove="${r.username ?? ""}">Remove</button>`}
+        ${isMe ? "" : `<button class="smallBtn" data-remove="${r.username}">Remove</button>`}
       </td>
     `;
 
@@ -233,59 +233,52 @@ function getUsersIncludingMe() {
 
 async function refreshLeaderboard() {
   const { me, users } = getUsersIncludingMe();
-  if (!me) return;
+  if (!me) return setStatus("Enter your username first.");
+
+  saveState();
+  setStatus("Loading leaderboard…");
 
   try {
-    // 1) Load monthly points first and render immediately.
     const results = await Promise.all(users.map(u => fetchMonthly(u).then(m => [u, m])));
     const map = Object.fromEntries(results);
     const myPoints = map[me]?.points ?? 0;
 
-    // Initial rows: show placeholder in Now Playing while we fetch presence.
-    const rows = users.map(u => ({
-      username: u,
-      points: map[u]?.points ?? 0,
-      deltaVsYou: (map[u]?.points ?? 0) - myPoints,
-      unlocks: map[u]?.unlockCount ?? 0,
-      nowPlayingText: "…"
+    // Fetch "now playing" for each user (best-effort).
+    const win = 120;
+    const presencePairs = await Promise.all(users.map(async (u) => {
+      try {
+        const p = await fetchNowPlaying(u, win);
+        return [u, p];
+      } catch {
+        return [u, null];
+      }
     }));
+    const presence = Object.fromEntries(presencePairs);
 
-    // Sort rows by points (descending) like before.
-    rows.sort((a, b) => (b.points - a.points) || a.username.localeCompare(b.username));
-
-    renderLeaderboard(rows);
-
-    // 2) Fetch presence in the background, then update the leaderboard.
-    // This ensures the leaderboard isn't "blocked" by recently-played lookups.
-    (async () => {
-      const win = 120; // 2 minutes window
-      const presencePairs = await Promise.all(users.map(async (u) => {
-        try {
-          const p = await fetchNowPlaying(u, win);
-          return [u, p];
-        } catch {
-          return [u, null];
-        }
-      }));
-      const presence = Object.fromEntries(presencePairs);
-
-      for (const r of rows) {
-        const p = presence[r.username];
-        if (p && p.title) {
-          const age = (typeof p.ageSeconds === "number")
-            ? (p.ageSeconds < 60 ? `${p.ageSeconds}s ago` : `${Math.floor(p.ageSeconds/60)}m ago`)
-            : "";
-          r.nowPlayingText = p.nowPlaying ? `▶ ${p.title}` : `${p.title}${age ? ` (${age})` : ""}`;
-        } else {
-          r.nowPlayingText = "—";
-        }
+    const rows = users.map(u => {
+      const p = presence[u];
+      let nowPlayingText = "";
+      if (p && p.title) {
+        const age = (typeof p.ageSeconds === "number")
+          ? (p.ageSeconds < 60 ? `${p.ageSeconds}s ago` : `${Math.floor(p.ageSeconds/60)}m ago`)
+          : "";
+        nowPlayingText = p.nowPlaying ? `▶ ${p.title}` : `${p.title} (${age})`;
+      } else {
+        nowPlayingText = "—";
       }
 
-      renderLeaderboard(rows);
-    })().catch(() => {
-      // Ignore background presence errors; leaderboard already rendered.
+      return {
+        username: u,
+        points: map[u]?.points ?? 0,
+        deltaVsYou: (map[u]?.points ?? 0) - myPoints,
+        unlocks: map[u]?.unlockCount ?? 0,
+        nowPlayingText
+      };
     });
 
+    rows.sort((a, b) => b.points - a.points);
+    renderLeaderboard(rows, me);
+    setStatus("Updated.");
   } catch (e) {
     setStatus(e?.message || "Failed to load leaderboard.");
   }

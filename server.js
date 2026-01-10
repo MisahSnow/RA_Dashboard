@@ -135,8 +135,7 @@ async function raGetUserRecentlyPlayedGames(username, count = 10, offset = 0) {
   url.searchParams.set("o", String(offset));
   url.searchParams.set("y", RA_API_KEY);
 
-  // Retry a few times on transient failures (network hiccups / 5xx / 429 backoff handled in raFetchJson too).
-  const MAX_TRIES = 4; // total attempts
+  const MAX_TRIES = 4; // total attempts (initial + retries)
   for (let attempt = 0; attempt < MAX_TRIES; attempt++) {
     try {
       const data = await raFetchJson(url.toString(), { retries: 3 });
@@ -415,26 +414,12 @@ app.get("/api/now-playing/:username", async (req, res) => {
   }
 });
 
-// --- static site (served from /web) ---
-const WEB_DIR = path.join(__dirname, "web");
-
-// Serve static assets (app.js, style.css, images, etc.)
-app.use(express.static(WEB_DIR, {
-  extensions: ["html"],
-  setHeaders: (res, filePath) => {
-    // Ensure JS is served with correct MIME type even on some hosts
-    if (filePath.endsWith(".js")) res.setHeader("Content-Type", "application/javascript; charset=utf-8");
-    if (filePath.endsWith(".css")) res.setHeader("Content-Type", "text/css; charset=utf-8");
-  }
-}));
-
-// Fallback for "/" to index.html
-app.get("/", (_req, res) => {
-  res.sendFile(path.join(WEB_DIR, "index.html"));
-});
+// --- static site ---
+const webPath = path.join(__dirname, "web");
+app.use(express.static(webPath));
+app.get("/", (_req, res) => res.sendFile(path.join(webPath, "index.html")));
 
 app.listen(PORT, () => {
   console.log(`Server running: http://localhost:${PORT}`);
   console.log(`Health check : http://localhost:${PORT}/api/health`);
-});
 });
