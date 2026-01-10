@@ -257,7 +257,8 @@ async function refreshLeaderboard() {
     const win = 120; // 2 minutes
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-    async function fetchNowPlayingWithRetry(username, windowSeconds, {
+    
+async function fetchNowPlayingWithRetry(username, windowSeconds, {
   retries = 4,
   delayMs = 1000,
   onRetry = () => {}
@@ -269,9 +270,54 @@ async function refreshLeaderboard() {
       const msg = String(e?.message || e || "");
       const is429 = msg.includes("429") || msg.includes("Too Many Attempts");
       if (!is429 || attempt === retries) throw e;
+
       onRetry(attempt);
       await sleep(delayMs);
     }
+  }
+  return null;
+}
+
+    (async () => {
+      const presencePairs = await Promise.all(users.map(async (u) => {
+        try {
+          const p = await fetchNowPlayingWithRetry(u, win, {
+  retries: 4,
+  delayMs: 1000,
+  onRetry: (attempt) => {
+    const row = rows.find(r => r.username === u);
+    if (row) {
+      row.nowPlayingText = `Loading… (retry ${attempt}/4)`;
+      renderLeaderboard(rows);
+    }
+  }
+});
+          return [u, p];
+        } catch {
+          return [u, null];
+        }
+      }));
+      const presence = Object.fromEntries(presencePairs);
+
+      for (const r of rows) {
+        const p = presence[r.username];
+        if (p && p.title) {
+          const age = (typeof p.ageSeconds === "number")
+            ? (p.ageSeconds < 60 ? `${p.ageSeconds}s ago` : `${Math.floor(p.ageSeconds/60)}m ago`)
+            : "";
+          r.nowPlayingText = p.nowPlaying ? `▶ ${p.title}` : `${p.title}${age ? ` (${age})` : ""}`;
+        } else {
+          r.nowPlayingText = "—";
+        }
+      }
+
+      renderLeaderboard(rows);
+    })().catch(() => {
+      // Ignore background errors; leaderboard already rendered.
+    });
+
+  } catch (e) {
+    setStatus(e?.message || "Failed to load leaderboard.");
   }
 }
 
