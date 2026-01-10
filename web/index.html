@@ -8,7 +8,7 @@
 </head>
 <body>
   <div class="wrap">
-    <h1>🏆 RetroAchievements Friends Dashboard</h1>
+    <h1>dY?+ RetroAchievements Friends Dashboard</h1>
     <p class="subtitle">Monthly Points gained + friends activity</p>
 
     <section class="controls card">
@@ -37,7 +37,7 @@
           <tr>
             <th>User</th>
             <th>Points</th>
-            <th>Δ vs You</th>
+            <th>I" vs You</th>
             <th>Unlocks</th>
             <th>Now Playing</th>
             <th></th>
@@ -47,41 +47,46 @@
       </table>
       <p class="note">Friends are saved in your browser (localStorage).</p>
     </section>
-    <div class="grid2">
-      <section class="card">
-      <div class="sectionHead">
-        <h2 class="sectionTitle">Friends recent achievements</h2>
-        <div class="sectionControls">
-          <label class="tiny">
-            Look back (hours)
-            <input id="recentHours" type="number" min="1" max="720" value="72" />
-          </label>
-          <button id="refreshRecentAchBtn" class="smallBtn">Refresh</button>
+
+    <section class="card tabsCard">
+      <div class="tabsHead">
+        <h2 class="sectionTitle">Friends activity</h2>
+        <div class="tabButtons" role="tablist" aria-label="Recent activity tabs">
+          <button class="tabBtn active" data-tab="achievements" role="tab" aria-selected="true" aria-controls="tab-achievements">Recent achievements</button>
+          <button class="tabBtn" data-tab="times" role="tab" aria-selected="false" aria-controls="tab-times">Recent times</button>
         </div>
       </div>
-      <div id="recentAchievements" class="feed"></div>
-      <p class="note">Shows unlocks within the lookback window. Data from API_GetUserRecentAchievements.</p>
-    </section>
-      <section class="card">
-      <div class="sectionHead">
-        <h2 class="sectionTitle">Friends recent times</h2>
-        <div class="sectionControls">
-          <label class="tiny">
-            Recently played games
-            <input id="recentGames" type="number" min="1" max="200" value="5" />
-          </label>
-          <button id="refreshTimesBtn" class="smallBtn">Refresh</button>
+
+      <div id="tab-achievements" class="tabPanel active" role="tabpanel">
+        <div class="sectionHead">
+          <h2 class="sectionTitle">Friends recent achievements</h2>
+          <div class="sectionControls">
+            <label class="tiny">
+              Look back (hours)
+              <input id="recentHours" type="number" min="1" max="720" value="72" />
+            </label>
+            <button id="refreshRecentAchBtn" class="smallBtn">Refresh</button>
+          </div>
         </div>
+        <div id="recentAchievements" class="feed"></div>
+        <p class="note">Shows unlocks within the lookback window. Data from API_GetUserRecentAchievements.</p>
       </div>
-      <div id="recentTimes" class="feed"></div>
-      <p class="note">Derived from recently played games + user game leaderboards.</p>
+
+      <div id="tab-times" class="tabPanel" role="tabpanel">
+        <div class="sectionHead">
+          <h2 class="sectionTitle">Friends recent times</h2>
+          <div class="sectionControls">
+            <label class="tiny">
+              Recently played games
+              <input id="recentGames" type="number" min="1" max="200" value="5" />
+            </label>
+            <button id="refreshTimesBtn" class="smallBtn">Refresh</button>
+          </div>
+        </div>
+        <div id="recentTimes" class="feed"></div>
+        <p class="note">Derived from recently played games + user game leaderboards.</p>
+      </div>
     </section>
-    </div>
-
-
-
-
-    
   </div>
 
   <script src="app.js"></script>

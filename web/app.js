@@ -17,6 +17,9 @@ const recentGamesEl = document.getElementById("recentGames");
 const refreshRecentAchBtn = document.getElementById("refreshRecentAchBtn");
 const refreshTimesBtn = document.getElementById("refreshTimesBtn");
 
+const tabButtons = document.querySelectorAll(".tabBtn");
+const tabPanels = document.querySelectorAll(".tabPanel");
+
 function clampUsername(s) {
   return (s || "").trim().replace(/\s+/g, "");
 }
@@ -69,6 +72,19 @@ function setStatus(msg) {
   statusEl.textContent = msg || "";
 }
 
+function setActiveTab(name) {
+  tabButtons.forEach(btn => {
+    const isActive = btn.dataset.tab === name;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-selected", isActive ? "true" : "false");
+  });
+
+  tabPanels.forEach(panel => {
+    const isActive = panel.id === `tab-${name}`;
+    panel.classList.toggle("active", isActive);
+  });
+}
+
 function renderLeaderboard(rows, me) {
   tbody.innerHTML = "";
   for (const r of rows) {
@@ -82,7 +98,7 @@ tr.innerHTML = `
       <td><strong>${Math.round(r.points)}</strong></td>
       <td class="${cls}"><strong>${delta > 0 ? "+" : ""}${Math.round(delta)}</strong></td>
       <td>${r.unlocks}</td>
-      <td>${r.nowPlayingText || ''}</td>
+      <td>${r.nowPlayingText || ""}</td>
       <td style="text-align:right;">
         ${isMe ? "" : `<button class="smallBtn" data-remove="${safeText(r.username)}">Remove</button>`}
       </td>
@@ -131,8 +147,6 @@ function renderRecentAchievements(items) {
     const div = document.createElement("div");
     div.className = "item";
 
-    
-
     // Make the whole achievement row clickable
     if (a.achievementId) {
       div.classList.add("clickable");
@@ -145,7 +159,8 @@ function renderRecentAchievements(items) {
         if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
       });
     }
-const badge = document.createElement("img");
+
+    const badge = document.createElement("img");
     badge.className = "badge";
     badge.alt = "badge";
     badge.src = iconUrl(a.badgeUrl);
@@ -164,8 +179,8 @@ const badge = document.createElement("img");
 
     const body = document.createElement("div");
     body.innerHTML = `
-      <div><strong>${a.title}</strong> <span class="meta">(${a.points} pts)</span>${a.achievementId ? ` <span class="meta">↗</span>` : ``}</div>
-      <div class="meta">${a.gameTitle}${a.consoleName ? " • " + a.consoleName : ""}</div>
+      <div><strong>${a.title}</strong> <span class="meta">(${a.points} pts)</span>${a.achievementId ? ` <span class="meta">open</span>` : ``}</div>
+      <div class="meta">${a.gameTitle}${a.consoleName ? " - " + a.consoleName : ""}</div>
       <div class="meta">${a.description || ""}</div>
     `;
 
@@ -177,8 +192,6 @@ const badge = document.createElement("img");
     recentAchievementsEl.appendChild(div);
   }
 }
-
-
 
 
 function renderRecentTimes(items) {
@@ -213,7 +226,7 @@ function renderRecentTimes(items) {
     const body = document.createElement("div");
     body.innerHTML = `
       <div><strong>${t.leaderboardTitle}</strong></div>
-      <div class="meta">${t.gameTitle}${t.consoleName ? " • " + t.consoleName : ""}</div>
+      <div class="meta">${t.gameTitle}${t.consoleName ? " - " + t.consoleName : ""}</div>
     `;
 
     main.appendChild(head);
@@ -248,7 +261,7 @@ async function refreshLeaderboard() {
       points: map[u]?.points ?? 0,
       deltaVsYou: (map[u]?.points ?? 0) - myPoints,
       unlocks: map[u]?.unlockCount ?? 0,
-      nowPlayingText: "…"
+      nowPlayingText: "Loading..."
     }));
 
     rows.sort((a, b) => (b.points - a.points) || a.username.localeCompare(b.username));
@@ -258,41 +271,40 @@ async function refreshLeaderboard() {
     const win = 120; // 2 minutes
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-    
-async function fetchNowPlayingWithRetry(username, windowSeconds, {
-  retries = 4,
-  delayMs = 1000,
-  onRetry = () => {}
-} = {}) {
-  for (let attempt = 1; attempt <= retries; attempt++) {
-    try {
-      return await fetchNowPlaying(username, windowSeconds);
-    } catch (e) {
-      const msg = String(e?.message || e || "");
-      const is429 = msg.includes("429") || msg.includes("Too Many Attempts");
-      if (!is429 || attempt === retries) throw e;
+    async function fetchNowPlayingWithRetry(username, windowSeconds, {
+      retries = 4,
+      delayMs = 1000,
+      onRetry = () => {}
+    } = {}) {
+      for (let attempt = 1; attempt <= retries; attempt++) {
+        try {
+          return await fetchNowPlaying(username, windowSeconds);
+        } catch (e) {
+          const msg = String(e?.message || e || "");
+          const is429 = msg.includes("429") || msg.includes("Too Many Attempts");
+          if (!is429 || attempt === retries) throw e;
 
-      onRetry(attempt);
-      await sleep(delayMs);
+          onRetry(attempt);
+          await sleep(delayMs);
+        }
+      }
+      return null;
     }
-  }
-  return null;
-}
 
     (async () => {
       const presencePairs = await Promise.all(users.map(async (u) => {
         try {
           const p = await fetchNowPlayingWithRetry(u, win, {
-  retries: 4,
-  delayMs: 1000,
-  onRetry: (attempt) => {
-    const row = rows.find(r => r.username === u);
-    if (row) {
-      row.nowPlayingText = `Loading… (retry ${attempt}/4)`;
-      renderLeaderboard(rows);
-    }
-  }
-});
+            retries: 4,
+            delayMs: 1000,
+            onRetry: (attempt) => {
+              const row = rows.find(r => r.username === u);
+              if (row) {
+                row.nowPlayingText = `Loading... (retry ${attempt}/4)`;
+                renderLeaderboard(rows);
+              }
+            }
+          });
           return [u, p];
         } catch {
           return [u, null];
@@ -306,9 +318,9 @@ async function fetchNowPlayingWithRetry(username, windowSeconds, {
           const age = (typeof p.ageSeconds === "number")
             ? (p.ageSeconds < 60 ? `${p.ageSeconds}s ago` : `${Math.floor(p.ageSeconds/60)}m ago`)
             : "";
-          r.nowPlayingText = p.nowPlaying ? `▶ ${p.title}` : `${p.title}${age ? ` (${age})` : ""}`;
+          r.nowPlayingText = p.nowPlaying ? `Playing: ${p.title}` : `${p.title}${age ? ` (${age})` : ""}`;
         } else {
-          r.nowPlayingText = "—";
+          r.nowPlayingText = "";
         }
       }
 
@@ -321,8 +333,6 @@ async function fetchNowPlayingWithRetry(username, windowSeconds, {
     setStatus(e?.message || "Failed to load leaderboard.");
   }
 }
-
-
 
 
 async function refreshRecentAchievements() {
@@ -350,7 +360,7 @@ async function refreshRecentTimes() {
   const { me, users } = getUsersIncludingMe();
   if (!me) return;
 
-    const games = Math.max(1, Number(recentGamesEl.value || 50));
+  const games = Math.max(1, Number(recentGamesEl.value || 50));
   const perUserLimit = 10;
 
   try {
@@ -379,12 +389,20 @@ async function refreshRecentTimes() {
 }
 
 // UI wiring
+tabButtons.forEach(btn => {
+  btn.addEventListener("click", () => setActiveTab(btn.dataset.tab));
+});
+
+if (tabButtons.length) {
+  setActiveTab(tabButtons[0].dataset.tab);
+}
+
 addFriendBtn.addEventListener("click", () => {
   const me = clampUsername(meInput.value);
   const u = clampUsername(friendInput.value);
   if (!me) return setStatus("Set your username first.");
   if (!u) return;
-  if (u.toLowerCase() === me.toLowerCase()) return setStatus("That’s you 🙂 Add someone else.");
+  if (u.toLowerCase() === me.toLowerCase()) return setStatus("That's you. Add someone else.");
 
   if (!friends.includes(u)) friends.push(u);
   friendInput.value = "";
@@ -407,7 +425,7 @@ refreshTimesBtn.addEventListener("click", refreshRecentTimes);
 meInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") {
     refreshLeaderboard();
-      refreshRecentAchievements();
+    refreshRecentAchievements();
     refreshRecentTimes();
   }
 });
