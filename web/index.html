@@ -14,8 +14,13 @@
         <p class="subtitle">Group Leaderboard and Achievement Tracking</p>
       </div>
       <div class="panelActions">
-        <button id="settingsBtn" class="smallBtn">Settings</button>
-        <button id="refreshBtn" class="smallBtn">Refresh</button>
+        <div class="refreshBlock">
+          <span id="refreshCountdown" class="note"></span>
+          <div class="refreshRow">
+            <button id="settingsBtn" class="smallBtn">Settings</button>
+            <button id="refreshBtn" class="smallBtn">Refresh</button>
+          </div>
+        </div>
       </div>
     </div>
     <div class="status" id="status"></div>
@@ -132,11 +137,6 @@
         <div class="sectionHead">
           <h2 class="sectionTitle">Friends Recent Achievements</h2>
           <div class="sectionControls">
-            <label class="tiny">
-              Look back (hours)
-              <input id="recentHours" type="number" min="1" max="720" value="72" />
-            </label>
-            <button id="refreshRecentAchBtn" class="smallBtn">Refresh</button>
             <div id="recentAchievementsLoading" class="loadingWheel" hidden aria-label="Loading"></div>
           </div>
         </div>
@@ -154,7 +154,6 @@
               Recently played games
               <input id="recentGames" type="number" min="1" max="200" value="5" />
             </label>
-            <button id="refreshTimesBtn" class="smallBtn">Refresh</button>
             <div id="recentTimesLoading" class="loadingWheel" hidden aria-label="Loading"></div>
           </div>
         </div>

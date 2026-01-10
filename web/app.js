@@ -19,6 +19,7 @@ const addFriendCancelBtn = document.getElementById("addFriendCancelBtn");
 const refreshBtn = document.getElementById("refreshBtn");
 const tbody = document.querySelector("#leaderboard tbody");
 const statusEl = document.getElementById("status");
+const refreshCountdownEl = document.getElementById("refreshCountdown");
 
 const settingsBtn = document.getElementById("settingsBtn");
 const settingsModal = document.getElementById("settingsModal");
@@ -28,10 +29,7 @@ const settingsCancelBtn = document.getElementById("settingsCancelBtn");
 
 const recentAchievementsEl = document.getElementById("recentAchievements");
 const recentTimesEl = document.getElementById("recentTimes");
-const recentHoursEl = document.getElementById("recentHours");
 const recentGamesEl = document.getElementById("recentGames");
-const refreshRecentAchBtn = document.getElementById("refreshRecentAchBtn");
-const refreshTimesBtn = document.getElementById("refreshTimesBtn");
 const recentAchievementsToggleBtn = document.getElementById("recentAchievementsToggleBtn");
 const recentTimesToggleBtn = document.getElementById("recentTimesToggleBtn");
 const leaderboardLoadingEl = document.getElementById("leaderboardLoading");
@@ -79,6 +77,19 @@ let recentAchievementsItems = [];
 let recentTimesItems = [];
 let recentAchievementsVisible = RECENT_DEFAULT_ROWS;
 let recentTimesVisible = RECENT_DEFAULT_ROWS;
+let refreshCountdownTimer = null;
+let nextRefreshAt = null;
+
+const AUTO_REFRESH_MS = 120000;
+const ACHIEVEMENTS_DEFAULT_HOURS = 72;
+const ACHIEVEMENTS_STEP_HOURS = 24;
+const ACHIEVEMENTS_MAX_HOURS = 720;
+const ACHIEVEMENTS_DEFAULT_MAX = 30;
+const ACHIEVEMENTS_STEP_MAX = 30;
+let achievementsLookbackHours = ACHIEVEMENTS_DEFAULT_HOURS;
+let achievementsMaxResults = ACHIEVEMENTS_DEFAULT_MAX;
+const ACHIEVEMENTS_MIN_WAIT_MS = 5000;
+const achievementsLoadStart = Date.now();
 
 function clampUsername(s) {
   return (s || "").trim().replace(/\s+/g, "");
@@ -177,6 +188,43 @@ function setStatus(msg) {
 function setLoading(el, isLoading) {
   if (!el) return;
   el.hidden = !isLoading;
+}
+
+function formatCountdown(ms) {
+  const total = Math.max(0, Math.ceil(ms / 1000));
+  const m = Math.floor(total / 60);
+  const s = String(total % 60).padStart(2, "0");
+  return `${m}:${s}`;
+}
+
+function setNextRefresh(delayMs = AUTO_REFRESH_MS) {
+  nextRefreshAt = Date.now() + delayMs;
+  if (refreshCountdownEl) {
+    refreshCountdownEl.textContent = `Auto refresh in ${formatCountdown(delayMs)}`;
+  }
+}
+
+function startRefreshCountdown() {
+  if (refreshCountdownTimer) return;
+  refreshCountdownTimer = setInterval(() => {
+    if (!nextRefreshAt) return;
+    const remaining = nextRefreshAt - Date.now();
+    if (remaining <= 0) {
+      refreshLeaderboard();
+      refreshRecentAchievements();
+      refreshRecentTimes();
+      setNextRefresh();
+      return;
+    }
+    if (refreshCountdownEl) {
+      refreshCountdownEl.textContent = `Auto refresh in ${formatCountdown(remaining)}`;
+    }
+  }, 1000);
+}
+
+function resetRefreshCountdown() {
+  setNextRefresh();
+  startRefreshCountdown();
 }
 
 function openAddFriendModal() {
@@ -963,7 +1011,10 @@ function renderRecentAchievements(items) {
   }
 
   if (recentAchievementsToggleBtn) {
-    recentAchievementsToggleBtn.hidden = visible.length >= items.length;
+    const canLoadMore =
+      achievementsLookbackHours < ACHIEVEMENTS_MAX_HOURS ||
+      items.length >= achievementsMaxResults;
+    recentAchievementsToggleBtn.hidden = !canLoadMore;
     recentAchievementsToggleBtn.textContent = "Show more";
   }
 }
@@ -1125,13 +1176,18 @@ async function refreshLeaderboard() {
 }
 
 
-async function refreshRecentAchievements() {
+async function refreshRecentAchievements({ reset = true } = {}) {
   const { me, users } = getUsersIncludingMe();
   if (!me) return;
 
+  if (reset) {
+    achievementsLookbackHours = ACHIEVEMENTS_DEFAULT_HOURS;
+    recentAchievementsVisible = RECENT_DEFAULT_ROWS;
+    achievementsMaxResults = ACHIEVEMENTS_DEFAULT_MAX;
+  }
+
   setLoading(recentAchievementsLoadingEl, true);
-  const hours = Number(recentHoursEl.value || 72);
-  const minutes = Math.max(1, Math.floor(hours * 60));
+  const minutes = Math.max(1, Math.floor(achievementsLookbackHours * 60));
   const perUserLimit = 10;
 
   try {
@@ -1141,8 +1197,7 @@ async function refreshRecentAchievements() {
 
     const combined = payloads.flatMap(p => p.results || []);
     combined.sort((a, b) => (Date.parse(b.date || "") || 0) - (Date.parse(a.date || "") || 0));
-    recentAchievementsVisible = RECENT_DEFAULT_ROWS;
-    renderRecentAchievements(combined.slice(0, 30));
+    renderRecentAchievements(combined.slice(0, achievementsMaxResults));
   } catch {
     // keep quiet; leaderboard is primary
   } finally {
@@ -1211,11 +1266,21 @@ if (profileGameSearchEl) {
 
 if (recentAchievementsToggleBtn) {
   recentAchievementsToggleBtn.addEventListener("click", () => {
+    const elapsed = Date.now() - achievementsLoadStart;
+    if (elapsed < ACHIEVEMENTS_MIN_WAIT_MS) {
+      setLoading(recentAchievementsLoadingEl, true);
+      setTimeout(() => {
+        recentAchievementsToggleBtn.click();
+      }, ACHIEVEMENTS_MIN_WAIT_MS - elapsed);
+      return;
+    }
+    achievementsLookbackHours = Math.min(ACHIEVEMENTS_MAX_HOURS, achievementsLookbackHours + ACHIEVEMENTS_STEP_HOURS);
+    achievementsMaxResults += ACHIEVEMENTS_STEP_MAX;
     recentAchievementsVisible = Math.min(
       recentAchievementsVisible + RECENT_STEP_ROWS,
-      recentAchievementsItems.length
+      achievementsMaxResults
     );
-    renderRecentAchievements(recentAchievementsItems);
+    refreshRecentAchievements({ reset: false });
   });
 }
 
@@ -1250,10 +1315,9 @@ refreshBtn.addEventListener("click", () => {
   refreshLeaderboard();
   refreshRecentAchievements();
   refreshRecentTimes();
+  resetRefreshCountdown();
 });
 
-refreshRecentAchBtn.addEventListener("click", refreshRecentAchievements);
-refreshTimesBtn.addEventListener("click", refreshRecentTimes);
 
 if (profileCloseBtn) {
   profileCloseBtn.addEventListener("click", () => {
@@ -1326,6 +1390,7 @@ if (settingsSaveBtn) {
     refreshLeaderboard();
     refreshRecentAchievements();
     refreshRecentTimes();
+    resetRefreshCountdown();
   });
 }
 
@@ -1335,6 +1400,7 @@ meInput.addEventListener("keydown", (e) => {
     refreshLeaderboard();
     refreshRecentAchievements();
     refreshRecentTimes();
+    resetRefreshCountdown();
   }
 });
 
@@ -1350,4 +1416,5 @@ if (ensured) {
   refreshLeaderboard();
   refreshRecentAchievements();
   refreshRecentTimes();
+  resetRefreshCountdown();
 }
