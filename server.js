@@ -203,6 +203,12 @@ async function raGetUserGameLeaderboards(username, gameId, count = 200) {
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
 // Monthly points gained (this month)
+//
+// NOTE about "points":
+// RetroAchievements can award points in Hardcore or Softcore.
+// The website's "monthly points" is commonly interpreted as Hardcore-only.
+// This endpoint defaults to Hardcore-only to match that expectation.
+// Use ?mode=all to include both HC + SC.
 app.get("/api/monthly/:username", async (req, res) => {
   try {
     const username = String(req.params.username || "").trim();
@@ -217,23 +223,39 @@ app.get("/api/monthly/:username", async (req, res) => {
     const fromDate = fromQ ? new Date(fromQ + "T00:00:00") : start;
     const toDate = toQ ? new Date(toQ + "T23:59:59") : end;
 
+    // mode: "hc" (default) or "all"
+    const modeQ = typeof req.query.mode === "string" ? req.query.mode.toLowerCase() : "hc";
+    const includeSoftcore = modeQ === "all";
+
     const unlocks = await raGetAchievementsEarnedBetween(username, fromDate, toDate);
+
+    const isHardcoreUnlock = (u) => Boolean(
+      u?.HardcoreMode ?? u?.hardcoreMode ??
+      u?.Hardcore ?? u?.hardcore ??
+      u?.IsHardcore ?? u?.isHardcore ??
+      u?.HardcoreModeActive ?? u?.hardcoreModeActive ??
+      false
+    );
+
+    const considered = includeSoftcore ? unlocks : unlocks.filter(isHardcoreUnlock);
 
     let retroPoints = 0;
     let points = 0;
 
-    for (const u of unlocks) {
+    for (const u of considered) {
       retroPoints += Number(u.trueRatio ?? u.TrueRatio ?? 0);
       points += Number(u.points ?? u.Points ?? 0);
     }
 
     res.json({
       username,
+      mode: includeSoftcore ? "all" : "hc",
       fromDate: fromDate.toISOString(),
       toDate: toDate.toISOString(),
       retroPoints,
       points,
-      unlockCount: unlocks.length
+      unlockCount: considered.length,
+      unlockCountAll: unlocks.length
     });
   } catch (err) {
     res.status(500).json({ error: err?.message || "Failed to fetch monthly data" });
