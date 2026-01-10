@@ -73,11 +73,12 @@ let profileAutoLoadingAll = false;
 let profileSkipAutoLoadOnce = false;
 let profileGameAchievementCounts = new Map();
 let profileGameAchievementPending = new Map();
-const RECENT_DEFAULT_ROWS = 4;
+const RECENT_DEFAULT_ROWS = 6;
+const RECENT_STEP_ROWS = 4;
 let recentAchievementsItems = [];
 let recentTimesItems = [];
-let recentAchievementsExpanded = false;
-let recentTimesExpanded = false;
+let recentAchievementsVisible = RECENT_DEFAULT_ROWS;
+let recentTimesVisible = RECENT_DEFAULT_ROWS;
 
 function clampUsername(s) {
   return (s || "").trim().replace(/\s+/g, "");
@@ -905,13 +906,13 @@ function renderRecentAchievements(items) {
   recentAchievementsEl.innerHTML = "";
   recentAchievementsItems = items;
   if (!items.length) {
-    recentAchievementsExpanded = false;
+    recentAchievementsVisible = RECENT_DEFAULT_ROWS;
     recentAchievementsEl.innerHTML = `<div class="meta">No recent achievements in this window.</div>`;
     if (recentAchievementsToggleBtn) recentAchievementsToggleBtn.hidden = true;
     return;
   }
 
-  const visible = recentAchievementsExpanded ? items : items.slice(0, RECENT_DEFAULT_ROWS);
+  const visible = items.slice(0, Math.max(RECENT_DEFAULT_ROWS, recentAchievementsVisible));
   for (const a of visible) {
     const div = document.createElement("div");
     div.className = "item";
@@ -962,8 +963,8 @@ function renderRecentAchievements(items) {
   }
 
   if (recentAchievementsToggleBtn) {
-    recentAchievementsToggleBtn.hidden = items.length <= RECENT_DEFAULT_ROWS;
-    recentAchievementsToggleBtn.textContent = recentAchievementsExpanded ? "Show less" : "Show more";
+    recentAchievementsToggleBtn.hidden = visible.length >= items.length;
+    recentAchievementsToggleBtn.textContent = "Show more";
   }
 }
 
@@ -972,13 +973,13 @@ function renderRecentTimes(items) {
   recentTimesEl.innerHTML = "";
   recentTimesItems = items;
   if (!items.length) {
-    recentTimesExpanded = false;
+    recentTimesVisible = RECENT_DEFAULT_ROWS;
     recentTimesEl.innerHTML = `<div class="meta">No recent leaderboard scores found (based on recently played games).</div>`;
     if (recentTimesToggleBtn) recentTimesToggleBtn.hidden = true;
     return;
   }
 
-  const visible = recentTimesExpanded ? items : items.slice(0, RECENT_DEFAULT_ROWS);
+  const visible = items.slice(0, Math.max(RECENT_DEFAULT_ROWS, recentTimesVisible));
   for (const t of visible) {
     const div = document.createElement("div");
     div.className = "item";
@@ -1017,8 +1018,8 @@ function renderRecentTimes(items) {
   }
 
   if (recentTimesToggleBtn) {
-    recentTimesToggleBtn.hidden = items.length <= RECENT_DEFAULT_ROWS;
-    recentTimesToggleBtn.textContent = recentTimesExpanded ? "Show less" : "Show more";
+    recentTimesToggleBtn.hidden = visible.length >= items.length;
+    recentTimesToggleBtn.textContent = "Show more";
   }
 }
 
@@ -1140,7 +1141,7 @@ async function refreshRecentAchievements() {
 
     const combined = payloads.flatMap(p => p.results || []);
     combined.sort((a, b) => (Date.parse(b.date || "") || 0) - (Date.parse(a.date || "") || 0));
-    recentAchievementsExpanded = false;
+    recentAchievementsVisible = RECENT_DEFAULT_ROWS;
     renderRecentAchievements(combined.slice(0, 30));
   } catch {
     // keep quiet; leaderboard is primary
@@ -1171,7 +1172,7 @@ async function refreshRecentTimes() {
     const errors = payloads.filter(p => p.__error).map(p => `${p.username}: ${p.__error}`);
     const combined = payloads.flatMap(p => p.results || []);
     combined.sort((a, b) => (Date.parse(b.dateUpdated || "") || 0) - (Date.parse(a.dateUpdated || "") || 0));
-    recentTimesExpanded = false;
+    recentTimesVisible = RECENT_DEFAULT_ROWS;
     renderRecentTimes(combined.slice(0, 30));
 
     if (!combined.length && errors.length) {
@@ -1210,14 +1211,20 @@ if (profileGameSearchEl) {
 
 if (recentAchievementsToggleBtn) {
   recentAchievementsToggleBtn.addEventListener("click", () => {
-    recentAchievementsExpanded = !recentAchievementsExpanded;
+    recentAchievementsVisible = Math.min(
+      recentAchievementsVisible + RECENT_STEP_ROWS,
+      recentAchievementsItems.length
+    );
     renderRecentAchievements(recentAchievementsItems);
   });
 }
 
 if (recentTimesToggleBtn) {
   recentTimesToggleBtn.addEventListener("click", () => {
-    recentTimesExpanded = !recentTimesExpanded;
+    recentTimesVisible = Math.min(
+      recentTimesVisible + RECENT_STEP_ROWS,
+      recentTimesItems.length
+    );
     renderRecentTimes(recentTimesItems);
   });
 }
