@@ -75,6 +75,12 @@ function getMonthRange(now = new Date()) {
   return { start, end };
 }
 
+function getDayRange(now = new Date()) {
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+  const end = new Date(now);
+  return { start, end };
+}
+
 async function raFetchJson(url, { retries = 2 } = {}) {
   let attempt = 0;
   while (true) {
@@ -282,6 +288,57 @@ app.get("/api/monthly/:username", async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ error: err?.message || "Failed to fetch monthly data" });
+  }
+});
+
+// Daily points gained (today)
+app.get("/api/daily/:username", async (req, res) => {
+  try {
+    const username = String(req.params.username || "").trim();
+    if (!username) return res.status(400).json({ error: "Missing username" });
+    const apiKey = String(req.headers["x-ra-api-key"] || RA_API_KEY || "").trim();
+    if (!apiKey) return res.status(400).json({ error: "Missing RA API key" });
+
+    const { start, end } = getDayRange();
+
+    const modeQ = typeof req.query.mode === "string" ? req.query.mode.toLowerCase() : "hc";
+    const includeSoftcore = modeQ === "all";
+
+    const cacheKey = `daily:${username}:${includeSoftcore ? "all" : "hc"}:${apiKey}`;
+    const cached = cacheGet(cacheKey);
+    if (cached) return res.json({ ...cached, cached: true });
+
+    const unlocks = await raGetAchievementsEarnedBetween(username, start, end, apiKey);
+
+    const isHardcoreUnlock = (u) => Boolean(
+      u?.HardcoreMode ?? u?.hardcoreMode ??
+      u?.Hardcore ?? u?.hardcore ??
+      u?.IsHardcore ?? u?.isHardcore ??
+      u?.HardcoreModeActive ?? u?.hardcoreModeActive ??
+      false
+    );
+
+    const considered = includeSoftcore ? unlocks : unlocks.filter(isHardcoreUnlock);
+
+    let points = 0;
+    for (const u of considered) {
+      points += Number(u.points ?? u.Points ?? 0);
+    }
+
+    const payload = {
+      username,
+      mode: includeSoftcore ? "all" : "hc",
+      fromDate: start.toISOString(),
+      toDate: end.toISOString(),
+      points,
+      unlockCount: considered.length,
+      unlockCountAll: unlocks.length
+    };
+
+    cacheSet(cacheKey, payload, DEFAULT_CACHE_TTL_MS);
+    res.json(payload);
+  } catch (err) {
+    res.status(500).json({ error: err?.message || "Failed to fetch daily data" });
   }
 });
 
@@ -616,6 +673,12 @@ app.get("/api/now-playing/:username", async (req, res) => {
       gameId: latest.GameID ?? latest.gameId,
       consoleName: latest.ConsoleName ?? latest.consoleName,
       title: latest.Title ?? latest.title,
+      richPresence:
+        latest.RichPresenceMsg ??
+        latest.RichPresence ??
+        latest.RichPresenceText ??
+        latest.richPresence ??
+        latest.richPresenceMsg,
       imageIcon: latest.ImageIcon ?? latest.imageIcon,
       lastPlayed
     };

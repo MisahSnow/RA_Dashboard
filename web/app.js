@@ -44,6 +44,7 @@ const recentTimesLoadingEl = document.getElementById("recentTimesLoading");
 const profilePanel = document.getElementById("profilePanel");
 const profileTitleNameEl = document.getElementById("profileTitleName");
 const profileSummaryEl = document.getElementById("profileSummary");
+const profileInsightsEl = document.getElementById("profileInsights");
 const profileSharedGamesEl = document.getElementById("profileSharedGames");
 const profileCloseBtn = document.getElementById("profileCloseBtn");
 const profileShowMoreBtn = document.getElementById("profileShowMoreBtn");
@@ -151,6 +152,9 @@ async function fetchMonthly(username) {
   return fetchJson(`/api/monthly/${encodeURIComponent(username)}`);
 }
 
+async function fetchDaily(username) {
+  return fetchJson(`/api/daily/${encodeURIComponent(username)}`);
+}
 async function fetchRecentAchievements(username, minutes, limit) {
   const u = encodeURIComponent(username);
   return fetchJson(`/api/recent-achievements/${u}?m=${encodeURIComponent(minutes)}&limit=${encodeURIComponent(limit)}`);
@@ -341,7 +345,10 @@ function renderLeaderboard(rows, me) {
     const isMe = (r.username && me) ? r.username.toLowerCase() === me.toLowerCase() : false;
     tr.innerHTML = `
       <td><button class="linkBtn" type="button" data-profile="${safeText(r.username)}"><span class="nameRank">${rows.indexOf(r) + 1}.</span> <strong>${safeText(r.username)}</strong></button>${isMe ? ' <span class="note">(you)</span>' : ""}</td>
-      <td><strong>${Math.round(r.points)}</strong></td>
+      <td>
+        <strong>${Math.round(r.points)}</strong>
+        ${r.dailyPoints !== null ? `<span class="dailyPoints">(+${Math.round(r.dailyPoints)})</span>` : ""}
+      </td>
       <td class="${cls}"><strong>${delta > 0 ? "+" : ""}${Math.round(delta)}</strong></td>
       <td>${r.unlocks}</td>
       <td>${r.nowPlayingHtml || r.nowPlayingText || ""}</td>
@@ -631,8 +638,15 @@ function renderProfileSummary(summary) {
           value.Date ?? value.date ??
           value.LastActivity ?? value.lastActivity ??
           value.LastUpdated ?? value.lastUpdated ??
-          value.timestamp ?? value.time;
+          value.timestamp ?? value.time ??
+          value.LastPlayed ?? value.lastPlayed;
         if (candidate) return formatDate(candidate);
+        for (const [k, v] of Object.entries(value)) {
+          if (typeof v === "string" && k.toLowerCase().includes("date")) {
+            return formatDate(v);
+          }
+        }
+        return "";
       }
       return formatDate(value);
     }
@@ -642,13 +656,9 @@ function renderProfileSummary(summary) {
   }
 
   const items = [
-    ["Total Points", summary.totalPoints],
-    ["Retro Points", summary.retroPoints],
     ["Rank", summary.rank],
     ["Member Since", summary.memberSince],
     ["Last Activity", summary.lastActivity],
-    ["Hardcore Points", summary.totalPointsHardcore],
-    ["Softcore Points", summary.totalPointsSoftcore],
     ["Completed Games", summary.completedGames]
   ].filter(([, v]) => v !== undefined && v !== null && v !== "");
 
@@ -677,6 +687,61 @@ function renderProfileSummary(summary) {
   }
 }
 
+function renderProfileInsights({ sharedCount, meSummary, themSummary }) {
+  if (!profileInsightsEl) return;
+  profileInsightsEl.innerHTML = "";
+
+  const formatNum = (v) => {
+    if (v === null || v === undefined || v === "") return null;
+    const n = Number(v);
+    return Number.isNaN(n) ? null : n;
+  };
+  const fmt = (v) => (v === null ? "--" : v.toLocaleString());
+  const formatLabel = (label, meVal, themVal) => {
+    const me = formatNum(meVal);
+    const them = formatNum(themVal);
+    if (me === null && them === null) return null;
+    return {
+      label,
+      valueHtml: `
+        <span class="me">You ${fmt(me)}</span>
+        <span class="sep">|</span>
+        <span class="them">Them ${fmt(them)}</span>
+      `
+    };
+  };
+
+  const rows = [
+    { label: "Shared Games", valueHtml: `<strong>${Number(sharedCount ?? 0).toLocaleString()}</strong>` },
+    formatLabel("Total Points", meSummary?.totalPoints, themSummary?.totalPoints),
+    formatLabel("Retro Points", meSummary?.retroPoints, themSummary?.retroPoints),
+    formatLabel("Completed Games", meSummary?.completedGames, themSummary?.completedGames),
+    formatLabel("Rank", meSummary?.rank, themSummary?.rank)
+  ].filter(Boolean);
+
+  if (!rows.length) {
+    profileInsightsEl.innerHTML = `<div class="meta">Profile insights unavailable.</div>`;
+    return;
+  }
+
+  for (const row of rows) {
+    const card = document.createElement("div");
+    card.className = "insightCard";
+
+    const label = document.createElement("div");
+    label.className = "insightLabel";
+    label.textContent = row.label;
+
+    const value = document.createElement("div");
+    value.className = "insightValue";
+    value.innerHTML = row.valueHtml;
+
+    card.appendChild(label);
+    card.appendChild(value);
+    profileInsightsEl.appendChild(card);
+  }
+}
+
 async function openProfile(username) {
   const target = clampUsername(username);
   if (!target) return;
@@ -688,6 +753,7 @@ async function openProfile(username) {
   comparePanel.hidden = true;
   profileTitleNameEl.textContent = target;
   profileSummaryEl.innerHTML = `<div class="meta">Loading profile summary...</div>`;
+  if (profileInsightsEl) profileInsightsEl.innerHTML = `<div class="meta">Loading profile insights...</div>`;
   profileSharedGamesEl.innerHTML = `<div class="meta">Loading shared games...</div>`;
   currentProfileUser = target;
   profileSharedGames = [];
@@ -719,19 +785,18 @@ async function openProfile(username) {
 
   try {
     const count = 60;
-    const [mine, theirs] = await Promise.all([
+    const [mine, theirs, meSummary, themSummary] = await Promise.all([
       fetchRecentGames(me, count),
-      fetchRecentGames(target, count)
+      fetchRecentGames(target, count),
+      fetchUserSummary(me).catch(() => null),
+      fetchUserSummary(target).catch(() => null)
     ]);
 
-    let summary = null;
-    try {
-      summary = await fetchUserSummary(target);
-    } catch (e) {
-      profileSummaryEl.innerHTML = `<div class="meta">Profile summary unavailable: ${safeText(e?.message || "error")}</div>`;
+    if (themSummary) {
+      renderProfileSummary(themSummary);
+    } else {
+      profileSummaryEl.innerHTML = `<div class="meta">Profile summary unavailable.</div>`;
     }
-
-    if (summary) renderProfileSummary(summary);
 
     const myMap = new Map((mine.results || []).map(g => [g.gameId, g]));
     const shared = [];
@@ -756,9 +821,15 @@ async function openProfile(username) {
 
     profileSharedGames = unique;
     renderSharedGames(unique);
+    renderProfileInsights({
+      sharedCount: unique.length,
+      meSummary,
+      themSummary
+    });
     profilePanel.scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (e) {
     profileSummaryEl.innerHTML = `<div class="meta">Failed to load profile summary.</div>`;
+    if (profileInsightsEl) profileInsightsEl.innerHTML = `<div class="meta">Failed to load profile insights.</div>`;
     profileSharedGamesEl.innerHTML = `<div class="meta">Failed to load shared games.</div>`;
     setStatus(e?.message || "Failed to load profile.");
   } finally {
@@ -1130,7 +1201,8 @@ async function refreshLeaderboard() {
       points: map[u]?.points ?? 0,
       deltaVsYou: (map[u]?.points ?? 0) - myPoints,
       unlocks: map[u]?.unlockCount ?? 0,
-      nowPlayingHtml: "Loading..."
+      nowPlayingHtml: "Loading...",
+      dailyPoints: null
     }));
 
     rows.sort((a, b) => (b.points - a.points) || a.username.localeCompare(b.username));
@@ -1187,11 +1259,22 @@ async function refreshLeaderboard() {
           const age = (typeof p.ageSeconds === "number")
             ? (p.ageSeconds < 60 ? `${p.ageSeconds}s ago` : `${Math.floor(p.ageSeconds/60)}m ago`)
             : "";
+          const icon = p.imageIcon ? `<img class="nowPlayingIcon" src="${iconUrl(p.imageIcon)}" alt="game" loading="lazy" />` : "";
+          const details = p.richPresence ? `<div class="nowPlayingDetail">${safeText(p.richPresence)}</div>` : "";
           if (p.nowPlaying) {
-            const icon = p.imageIcon ? `<img class="nowPlayingIcon" src="${iconUrl(p.imageIcon)}" alt="game" loading="lazy" />` : "";
-            r.nowPlayingHtml = `<span class="nowPlaying">${icon}<span>&#9654; ${safeText(p.title)}</span></span>`;
+            r.nowPlayingHtml = `
+              <div class="nowPlayingWrap">
+                <div class="nowPlaying">${icon}<span>&#9654; ${safeText(p.title)}</span></div>
+                ${details}
+              </div>
+            `;
           } else {
-            r.nowPlayingHtml = `${safeText(p.title)}${age ? ` (${age})` : ""}`;
+            r.nowPlayingHtml = `
+              <div class="nowPlayingWrap">
+                <div class="nowPlaying">${icon}<span>${safeText(p.title)}${age ? ` (${age})` : ""}</span></div>
+                ${details}
+              </div>
+            `;
           }
         } else {
           r.nowPlayingHtml = "";
@@ -1203,6 +1286,23 @@ async function refreshLeaderboard() {
       // Ignore background errors; leaderboard already rendered.
     });
     presencePromise.finally(() => setLoading(leaderboardLoadingEl, false));
+
+    // 3) Fetch daily points in the background.
+    (async () => {
+      const dailyPairs = await Promise.all(users.map(async (u) => {
+        try {
+          const d = await fetchDaily(u);
+          return [u, d?.points ?? 0];
+        } catch {
+          return [u, null];
+        }
+      }));
+      const daily = Object.fromEntries(dailyPairs);
+      for (const r of rows) {
+        r.dailyPoints = daily[r.username];
+      }
+      renderLeaderboard(rows, me);
+    })().catch(() => {});
 
   } catch (e) {
     setLoading(leaderboardLoadingEl, false);
@@ -1376,6 +1476,7 @@ if (profileCloseBtn) {
     profilePanel.hidden = true;
     profileTitleNameEl.textContent = "";
     profileSummaryEl.innerHTML = "";
+    if (profileInsightsEl) profileInsightsEl.innerHTML = "";
     profileSharedGamesEl.innerHTML = "";
     profileSharedGames = [];
     profileDisplayedGames = [];

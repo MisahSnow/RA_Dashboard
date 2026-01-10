@@ -313,6 +313,12 @@ tbody tr:nth-child(even){
 .delta-neg { color: #fb7185; font-weight: 600; }
 .delta-zero { color: #94a3b8; }
 
+.dailyPoints{
+  margin-left: 6px;
+  font-size: 12px;
+  color: #7dd3fc;
+}
+
 .smallBtn { padding: 8px 10px; font-size: 12px; }
 
 .note { margin: 10px 0 0; font-size: 12px; color: var(--ink-muted); }
@@ -515,6 +521,52 @@ tbody tr:nth-child(even){
   margin-bottom: 12px;
 }
 
+.profileInsights{
+  display:grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap:12px;
+  margin-bottom: 12px;
+}
+
+.insightCard{
+  background:#120b22;
+  border:1px solid #2c2448;
+  border-radius: var(--radius-sm);
+  padding:12px;
+  box-shadow: 0 10px 20px var(--shadow);
+}
+
+.insightLabel{
+  font-size:11px;
+  color:#9aa8c7;
+  text-transform:uppercase;
+  letter-spacing:0.6px;
+}
+
+.insightValue{
+  margin-top:6px;
+  font-size:14px;
+  color:#e6edf7;
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+  align-items:center;
+}
+
+.insightValue .me{
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.insightValue .them{
+  color: var(--accent-2);
+  font-weight: 600;
+}
+
+.insightValue .sep{
+  color: var(--ink-muted);
+}
+
 .profileActions{
   display:flex;
   justify-content:flex-end;
@@ -654,6 +706,17 @@ tbody tr:nth-child(even){
   display:inline-flex;
   align-items:center;
   gap:6px;
+}
+
+.nowPlayingWrap{
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+}
+
+.nowPlayingDetail{
+  font-size:12px;
+  color: var(--ink-muted);
 }
 
 .nowPlayingIcon{
