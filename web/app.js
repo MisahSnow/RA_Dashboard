@@ -1,3 +1,5 @@
+function safeText(v){ return (v === null || v === undefined) ? "" : String(v); }
+
 const LS_ME = "ra.me";
 const LS_FRIENDS = "ra.friends";
 
@@ -74,16 +76,15 @@ function renderLeaderboard(rows, me) {
 
     const delta = r.deltaVsYou;
     const cls = delta > 0 ? "delta-pos" : delta < 0 ? "delta-neg" : "delta-zero";
-    const isMe = r.username.toLowerCase() === me.toLowerCase();
-
-    tr.innerHTML = `
-      <td><strong>${r.username}</strong>${isMe ? ' <span class="note">(you)</span>' : ""}</td>
+    const isMe = (r.username && me) ? r.username.toLowerCase() === me.toLowerCase() : false;
+tr.innerHTML = `
+      <td><strong>${safeText(r.username)}</strong>${isMe ? ' <span class="note">(you)</span>' : ""}</td>
       <td><strong>${Math.round(r.points)}</strong></td>
       <td class="${cls}"><strong>${delta > 0 ? "+" : ""}${Math.round(delta)}</strong></td>
       <td>${r.unlocks}</td>
       <td>${r.nowPlayingText || ''}</td>
       <td style="text-align:right;">
-        ${isMe ? "" : `<button class="smallBtn" data-remove="${r.username}">Remove</button>`}
+        ${isMe ? "" : `<button class="smallBtn" data-remove="${safeText(r.username)}">Remove</button>`}
       </td>
     `;
 
