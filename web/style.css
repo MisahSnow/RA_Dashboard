@@ -134,6 +134,149 @@ th {
 
 .note { margin: 10px 0 0; font-size: 11px; color: #c77dff; }
 
+.profilePanel[hidden]{
+  display:none;
+}
+
+.comparePanel[hidden]{
+  display:none;
+}
+
+.linkBtn{
+  background:none;
+  border:none;
+  padding:0;
+  color:#00ffff;
+  cursor:pointer;
+  font-family: inherit;
+  font-size: inherit;
+  text-shadow: 0 0 6px rgba(0,255,255,0.4);
+}
+.linkBtn:hover{
+  color:#ff4fd8;
+  text-shadow: 0 0 6px rgba(255,79,216,0.7);
+}
+.linkBtn:focus{
+  outline:1px solid #00ffff;
+  outline-offset:2px;
+}
+
+.tileGrid{
+  display:grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap:12px;
+}
+
+.tile{
+  background:#0b0018;
+  border:1px solid #00ffff;
+  border-radius:12px;
+  padding:8px;
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+  align-items:center;
+  text-align:center;
+}
+
+.tile.clickable{
+  cursor:pointer;
+}
+.tile.clickable:hover{
+  background: rgba(255,255,255,0.05);
+}
+
+.tile img{
+  width:100%;
+  height:auto;
+  aspect-ratio: 1 / 1;
+  border-radius:8px;
+  object-fit:cover;
+  border:1px solid #ff4fd8;
+  background:#000;
+}
+
+.tileTitle{
+  font-size:12px;
+  color:#e6f7ff;
+}
+
+.compareList{
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+  margin-top:10px;
+}
+
+.compareItem{
+  display:flex;
+  gap:12px;
+  align-items:center;
+  padding:10px;
+  background:#0b0018;
+  border:1px solid #1e2436;
+  border-radius:10px;
+}
+
+.compareItem.shared{
+  border-color:#00ffff;
+  box-shadow: 0 0 8px rgba(0,255,255,0.25);
+}
+
+.compareBadge{
+  width:56px;
+  height:56px;
+  border-radius:8px;
+  object-fit:cover;
+  border:1px solid #ff4fd8;
+  background:#000;
+}
+
+.compareMain{
+  flex:1;
+  min-width:0;
+}
+
+.compareTitle{
+  font-size:14px;
+  color:#00ffff;
+  margin-bottom:4px;
+}
+
+.compareDesc{
+  font-size:12px;
+  color:#c77dff;
+}
+
+.statusPill{
+  font-size:10px;
+  padding:2px 8px;
+  border-radius:999px;
+  border:1px solid #00ffff;
+  color:#00ffff;
+  text-shadow: 0 0 4px rgba(0,255,255,0.7);
+  background: rgba(0,0,0,0.4);
+  white-space:nowrap;
+}
+
+.statusPill.me{
+  border-color:#00ff9c;
+  color:#00ff9c;
+  text-shadow: 0 0 6px #00ff9c;
+}
+
+.statusPill.them{
+  border-color:#ff8fe6;
+  color:#ff8fe6;
+  text-shadow: 0 0 6px rgba(255,143,230,0.8);
+}
+
+.statusPill.none{
+  border-color:#ccccff;
+  color:#ccccff;
+  text-shadow:none;
+}
+
 .feed{
   display:flex;
   flex-direction:column;

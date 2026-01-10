@@ -48,6 +48,25 @@
       <p class="note">Friends are saved in your browser (localStorage).</p>
     </section>
 
+    <section class="card profilePanel" id="profilePanel" hidden>
+      <div class="sectionHead">
+        <h2 class="sectionTitle">Profile: <span id="profileTitleName"></span></h2>
+        <button id="profileCloseBtn" class="smallBtn">Close</button>
+      </div>
+      <div id="profileSharedGames" class="tileGrid"></div>
+      <p class="note">Shows recently played games you both have in common.</p>
+    </section>
+
+    <section class="card comparePanel" id="comparePanel" hidden>
+      <div class="sectionHead">
+        <h2 class="sectionTitle">Compare: <span id="compareTitleGame"></span></h2>
+        <button id="compareBackBtn" class="smallBtn">Back</button>
+      </div>
+      <div id="compareMeta" class="meta"></div>
+      <div id="compareAchievements" class="compareList"></div>
+      <p class="note">Shared achievements are listed first.</p>
+    </section>
+
     <section class="card tabsCard">
       <div class="tabsHead">
         <h2 class="sectionTitle">Friends activity</h2>

@@ -199,6 +199,17 @@ async function raGetUserGameLeaderboards(username, gameId, count = 200) {
   return Array.isArray(results) ? results : [];
 }
 
+async function raGetGameInfoAndUserProgress(username, gameId) {
+  if (!RA_API_KEY) throw new Error("Missing RA_API_KEY in .env");
+
+  const url = new URL("https://retroachievements.org/API/API_GetGameInfoAndUserProgress.php");
+  url.searchParams.set("u", username);
+  url.searchParams.set("g", String(gameId));
+  url.searchParams.set("y", RA_API_KEY);
+
+  return raFetchJson(url.toString());
+}
+
 // --- API routes ---
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
@@ -385,6 +396,81 @@ app.get("/api/recent-times/:username", async (req, res) => {
     res.json(payload);
   } catch (err) {
     res.status(500).json({ error: err?.message || "Failed to fetch recent times" });
+  }
+});
+
+// Recent games for a user (from recently played games)
+app.get("/api/recent-games/:username", async (req, res) => {
+  try {
+    const username = String(req.params.username || "").trim();
+    if (!username) return res.status(400).json({ error: "Missing username" });
+
+    const countQ = typeof req.query.count === "string" ? Number(req.query.count) : 50;
+    const count = Math.max(1, Math.min(200, Number.isFinite(countQ) ? countQ : 50));
+
+    const cacheKey = `recent-games:${username}:${count}`;
+    const cached = cacheGet(cacheKey);
+    if (cached) return res.json({ ...cached, cached: true });
+
+    const items = await raGetUserRecentlyPlayedGames(username, count, 0);
+
+    const normalized = items.map(g => ({
+      username,
+      gameId: g.GameID ?? g.gameId,
+      title: g.Title ?? g.title,
+      consoleName: g.ConsoleName ?? g.consoleName,
+      imageIcon: g.ImageIcon ?? g.imageIcon,
+      lastPlayed: g.LastPlayed ?? g.lastPlayed
+    }));
+
+    const payload = { username, count: normalized.length, results: normalized };
+    cacheSet(cacheKey, payload, DEFAULT_CACHE_TTL_MS);
+    res.json(payload);
+  } catch (err) {
+    res.status(500).json({ error: err?.message || "Failed to fetch recent games" });
+  }
+});
+
+// Achievements for a user + game (for comparison)
+app.get("/api/game-achievements/:username/:gameId", async (req, res) => {
+  try {
+    const username = String(req.params.username || "").trim();
+    const gameId = String(req.params.gameId || "").trim();
+    if (!username || !gameId) return res.status(400).json({ error: "Missing username or gameId" });
+
+    const cacheKey = `game-achievements:${username}:${gameId}`;
+    const cached = cacheGet(cacheKey);
+    if (cached) return res.json({ ...cached, cached: true });
+
+    const data = await raGetGameInfoAndUserProgress(username, gameId);
+    const rawAchievements = data?.Achievements ?? data?.achievements ?? {};
+    const achievements = Object.values(rawAchievements).map(a => ({
+      id: a.ID ?? a.id,
+      title: a.Title ?? a.title,
+      description: a.Description ?? a.description,
+      points: a.Points ?? a.points,
+      badgeUrl: a.BadgeName ? `/Badge/${a.BadgeName}.png` : (a.BadgeURL ?? a.badgeUrl),
+      earned: Boolean(
+        a.DateEarned || a.dateEarned ||
+        a.DateEarnedHardcore || a.dateEarnedHardcore ||
+        a.Earned || a.earned
+      ),
+      earnedHardcore: Boolean(a.DateEarnedHardcore || a.dateEarnedHardcore)
+    }));
+
+    const payload = {
+      username,
+      gameId,
+      gameTitle: data?.Title ?? data?.title,
+      consoleName: data?.ConsoleName ?? data?.consoleName,
+      imageIcon: data?.ImageIcon ?? data?.imageIcon,
+      achievements
+    };
+
+    cacheSet(cacheKey, payload, DEFAULT_CACHE_TTL_MS);
+    res.json(payload);
+  } catch (err) {
+    res.status(500).json({ error: err?.message || "Failed to fetch game achievements" });
   }
 });
 

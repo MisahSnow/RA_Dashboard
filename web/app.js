@@ -17,8 +17,21 @@ const recentGamesEl = document.getElementById("recentGames");
 const refreshRecentAchBtn = document.getElementById("refreshRecentAchBtn");
 const refreshTimesBtn = document.getElementById("refreshTimesBtn");
 
+const profilePanel = document.getElementById("profilePanel");
+const profileTitleNameEl = document.getElementById("profileTitleName");
+const profileSharedGamesEl = document.getElementById("profileSharedGames");
+const profileCloseBtn = document.getElementById("profileCloseBtn");
+
+const comparePanel = document.getElementById("comparePanel");
+const compareTitleGameEl = document.getElementById("compareTitleGame");
+const compareMetaEl = document.getElementById("compareMeta");
+const compareAchievementsEl = document.getElementById("compareAchievements");
+const compareBackBtn = document.getElementById("compareBackBtn");
+
 const tabButtons = document.querySelectorAll(".tabBtn");
 const tabPanels = document.querySelectorAll(".tabPanel");
+
+let currentProfileUser = "";
 
 function clampUsername(s) {
   return (s || "").trim().replace(/\s+/g, "");
@@ -68,6 +81,16 @@ async function fetchRecentTimes(username, games, limit) {
   return fetchJson(`/api/recent-times/${u}?games=${encodeURIComponent(games)}&limit=${encodeURIComponent(limit)}`);
 }
 
+async function fetchRecentGames(username, count) {
+  const u = encodeURIComponent(username);
+  return fetchJson(`/api/recent-games/${u}?count=${encodeURIComponent(count)}`);
+}
+
+async function fetchGameAchievements(username, gameId) {
+  const u = encodeURIComponent(username);
+  return fetchJson(`/api/game-achievements/${u}/${encodeURIComponent(gameId)}`);
+}
+
 function setStatus(msg) {
   statusEl.textContent = msg || "";
 }
@@ -94,7 +117,7 @@ function renderLeaderboard(rows, me) {
     const cls = delta > 0 ? "delta-pos" : delta < 0 ? "delta-neg" : "delta-zero";
     const isMe = (r.username && me) ? r.username.toLowerCase() === me.toLowerCase() : false;
 tr.innerHTML = `
-      <td><strong>${safeText(r.username)}</strong>${isMe ? ' <span class="note">(you)</span>' : ""}</td>
+      <td><button class="linkBtn" type="button" data-profile="${safeText(r.username)}"><strong>${safeText(r.username)}</strong></button>${isMe ? ' <span class="note">(you)</span>' : ""}</td>
       <td><strong>${Math.round(r.points)}</strong></td>
       <td class="${cls}"><strong>${delta > 0 ? "+" : ""}${Math.round(delta)}</strong></td>
       <td>${r.unlocks}</td>
@@ -105,6 +128,13 @@ tr.innerHTML = `
     `;
 
     tbody.appendChild(tr);
+
+    const nameBtn = tr.querySelector("button[data-profile]");
+    if (nameBtn) {
+      nameBtn.addEventListener("click", () => {
+        openProfile(nameBtn.getAttribute("data-profile"));
+      });
+    }
   }
 
   tbody.querySelectorAll("button[data-remove]").forEach(btn => {
@@ -135,6 +165,204 @@ function achievementUrl(id) {
   return `https://retroachievements.org/achievement/${encodeURIComponent(id)}`;
 }
 
+
+function renderSharedGames(games) {
+  profileSharedGamesEl.innerHTML = "";
+
+  if (!games.length) {
+    profileSharedGamesEl.innerHTML = `<div class="meta">No shared games found in recent play history.</div>`;
+    return;
+  }
+
+  for (const g of games) {
+    const tile = document.createElement("div");
+    tile.className = "tile clickable";
+    tile.setAttribute("role", "button");
+    tile.tabIndex = 0;
+
+    const img = document.createElement("img");
+    img.src = iconUrl(g.imageIcon);
+    img.alt = safeText(g.title || "game");
+    img.loading = "lazy";
+
+    const title = document.createElement("div");
+    title.className = "tileTitle";
+    title.textContent = g.title || `Game ${safeText(g.gameId)}`;
+
+    tile.appendChild(img);
+    tile.appendChild(title);
+    profileSharedGamesEl.appendChild(tile);
+
+    const open = () => openGameCompare(g);
+    tile.addEventListener("click", open);
+    tile.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
+    });
+  }
+}
+
+async function openProfile(username) {
+  const target = clampUsername(username);
+  if (!target) return;
+
+  const { me } = getUsersIncludingMe();
+  if (!me) return setStatus("Set your username first.");
+
+  profilePanel.hidden = false;
+  comparePanel.hidden = true;
+  profileTitleNameEl.textContent = target;
+  profileSharedGamesEl.innerHTML = `<div class="meta">Loading shared games...</div>`;
+  currentProfileUser = target;
+
+  try {
+    const count = 60;
+    const [mine, theirs] = await Promise.all([
+      fetchRecentGames(me, count),
+      fetchRecentGames(target, count)
+    ]);
+
+    const myMap = new Map((mine.results || []).map(g => [g.gameId, g]));
+    const shared = [];
+
+    for (const g of (theirs.results || [])) {
+      if (!myMap.has(g.gameId)) continue;
+      const mineGame = myMap.get(g.gameId);
+      shared.push({
+        gameId: g.gameId,
+        title: g.title || mineGame?.title,
+        imageIcon: g.imageIcon || mineGame?.imageIcon
+      });
+    }
+
+    const seen = new Set();
+    const unique = shared.filter(g => {
+      const key = String(g.gameId ?? "");
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    renderSharedGames(unique);
+    profilePanel.scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (e) {
+    profileSharedGamesEl.innerHTML = `<div class="meta">Failed to load shared games.</div>`;
+    setStatus(e?.message || "Failed to load profile.");
+  }
+}
+
+function renderCompareList(items) {
+  compareAchievementsEl.innerHTML = "";
+
+  if (!items.length) {
+    compareAchievementsEl.innerHTML = `<div class="meta">No achievements found for this game.</div>`;
+    return;
+  }
+
+  for (const a of items) {
+    const row = document.createElement("div");
+    row.className = `compareItem${a.shared ? " shared" : ""}`;
+
+    const img = document.createElement("img");
+    img.className = "compareBadge";
+    img.alt = safeText(a.title || "achievement");
+    img.loading = "lazy";
+    img.src = iconUrl(a.badgeUrl);
+
+    const main = document.createElement("div");
+    main.className = "compareMain";
+
+    const title = document.createElement("div");
+    title.className = "compareTitle";
+    title.textContent = a.title || `Achievement ${safeText(a.id)}`;
+
+    const desc = document.createElement("div");
+    desc.className = "compareDesc";
+    desc.textContent = a.description || "";
+
+    main.appendChild(title);
+    main.appendChild(desc);
+
+    const status = document.createElement("div");
+    status.className = `statusPill ${a.statusClass}`;
+    status.textContent = a.statusLabel;
+
+    row.appendChild(img);
+    row.appendChild(main);
+    row.appendChild(status);
+    compareAchievementsEl.appendChild(row);
+  }
+}
+
+async function openGameCompare(game) {
+  const target = clampUsername(currentProfileUser);
+  if (!target) return;
+
+  const { me } = getUsersIncludingMe();
+  if (!me) return setStatus("Set your username first.");
+
+  profilePanel.hidden = true;
+  comparePanel.hidden = false;
+  compareTitleGameEl.textContent = game.title || `Game ${safeText(game.gameId)}`;
+  compareMetaEl.textContent = `You: ${me} | Friend: ${target}`;
+  compareAchievementsEl.innerHTML = `<div class="meta">Loading achievements...</div>`;
+
+  try {
+    const [mine, theirs] = await Promise.all([
+      fetchGameAchievements(me, game.gameId),
+      fetchGameAchievements(target, game.gameId)
+    ]);
+
+    const mineById = new Map((mine.achievements || []).map(a => [a.id, a]));
+    const theirsById = new Map((theirs.achievements || []).map(a => [a.id, a]));
+    const ids = new Set([...mineById.keys(), ...theirsById.keys()]);
+
+    const combined = [];
+    let sharedCount = 0;
+    let mineCount = 0;
+    let theirsCount = 0;
+
+    for (const id of ids) {
+      const ma = mineById.get(id);
+      const ta = theirsById.get(id);
+      const mineEarned = Boolean(ma?.earned);
+      const theirsEarned = Boolean(ta?.earned);
+
+      if (mineEarned) mineCount++;
+      if (theirsEarned) theirsCount++;
+      if (mineEarned && theirsEarned) sharedCount++;
+
+      let statusLabel = "None";
+      let statusClass = "none";
+      if (mineEarned && theirsEarned) { statusLabel = "Both"; statusClass = ""; }
+      else if (mineEarned) { statusLabel = "You"; statusClass = "me"; }
+      else if (theirsEarned) { statusLabel = "Them"; statusClass = "them"; }
+
+      combined.push({
+        id,
+        title: ma?.title || ta?.title,
+        description: ma?.description || ta?.description,
+        badgeUrl: ma?.badgeUrl || ta?.badgeUrl,
+        shared: mineEarned && theirsEarned,
+        statusLabel,
+        statusClass
+      });
+    }
+
+    combined.sort((a, b) => {
+      const weight = (x) => x.shared ? 0 : (x.statusLabel === "You" || x.statusLabel === "Them") ? 1 : 2;
+      const w = weight(a) - weight(b);
+      if (w !== 0) return w;
+      return String(a.title || "").localeCompare(String(b.title || ""));
+    });
+
+    compareMetaEl.textContent = `You: ${me} | Friend: ${target} | Shared: ${sharedCount} | You: ${mineCount} | Them: ${theirsCount}`;
+    renderCompareList(combined);
+    comparePanel.scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (e) {
+    compareAchievementsEl.innerHTML = `<div class="meta">Failed to load achievements.</div>`;
+    setStatus(e?.message || "Failed to load game comparison.");
+  }
+}
 
 function renderRecentAchievements(items) {
   recentAchievementsEl.innerHTML = "";
@@ -265,7 +493,7 @@ async function refreshLeaderboard() {
     }));
 
     rows.sort((a, b) => (b.points - a.points) || a.username.localeCompare(b.username));
-    renderLeaderboard(rows);
+    renderLeaderboard(rows, me);
 
     // 2) Fetch presence in the background. Retry a few times (best-effort) but never block the leaderboard.
     const win = 120; // 2 minutes
@@ -301,7 +529,7 @@ async function refreshLeaderboard() {
               const row = rows.find(r => r.username === u);
               if (row) {
                 row.nowPlayingText = `Loading... (retry ${attempt}/4)`;
-                renderLeaderboard(rows);
+                renderLeaderboard(rows, me);
               }
             }
           });
@@ -324,7 +552,7 @@ async function refreshLeaderboard() {
         }
       }
 
-      renderLeaderboard(rows);
+      renderLeaderboard(rows, me);
     })().catch(() => {
       // Ignore background errors; leaderboard already rendered.
     });
@@ -421,6 +649,29 @@ refreshBtn.addEventListener("click", () => {
 
 refreshRecentAchBtn.addEventListener("click", refreshRecentAchievements);
 refreshTimesBtn.addEventListener("click", refreshRecentTimes);
+
+if (profileCloseBtn) {
+  profileCloseBtn.addEventListener("click", () => {
+    profilePanel.hidden = true;
+    profileTitleNameEl.textContent = "";
+    profileSharedGamesEl.innerHTML = "";
+    comparePanel.hidden = true;
+    compareTitleGameEl.textContent = "";
+    compareMetaEl.textContent = "";
+    compareAchievementsEl.innerHTML = "";
+    currentProfileUser = "";
+  });
+}
+
+if (compareBackBtn) {
+  compareBackBtn.addEventListener("click", () => {
+    comparePanel.hidden = true;
+    profilePanel.hidden = false;
+    compareTitleGameEl.textContent = "";
+    compareMetaEl.textContent = "";
+    compareAchievementsEl.innerHTML = "";
+  });
+}
 
 meInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") {
