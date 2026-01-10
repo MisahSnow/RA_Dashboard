@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Competetive RetroAchievements</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="wrap">
+    <div class="panelHeader">
+      <div class="panelTitle">
+        <h1>Competetive RetroAchievements</h1>
+        <p class="subtitle">Group Leaderboard and Achievement Tracking</p>
+      </div>
+      <div class="panelActions">
+        <button id="settingsBtn" class="smallBtn">Settings</button>
+        <button id="refreshBtn" class="smallBtn">Refresh</button>
+      </div>
+    </div>
+    <div class="status" id="status"></div>
+
+    <div id="settingsModal" class="modal" hidden>
+      <div class="modalCard">
+        <div class="sectionHead">
+          <h2 class="sectionTitle">Settings</h2>
+          <button id="settingsCloseBtn" class="smallBtn">Close</button>
+        </div>
+        <div class="field">
+          <label for="meInput">Username</label>
+          <input id="meInput" placeholder="Your RA username" autocomplete="off" />
+        </div>
+        <div class="field">
+          <label for="apiKeyInput">API key (optional)</label>
+          <input id="apiKeyInput" placeholder="Use your own RetroAchievements API key" autocomplete="off" />
+        </div>
+        <div class="buttons">
+          <button id="settingsSaveBtn">Save</button>
+          <button id="settingsCancelBtn" class="smallBtn">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="addFriendModal" class="modal" hidden>
+      <div class="modalCard">
+        <div class="sectionHead">
+          <h2 class="sectionTitle">Add Friend</h2>
+          <button id="addFriendCloseBtn" class="smallBtn">Close</button>
+        </div>
+        <div class="field">
+          <label for="friendInput">Friend username</label>
+          <input id="friendInput" placeholder="RetroAchievements username" autocomplete="off" />
+        </div>
+        <div class="buttons">
+          <button id="addFriendConfirmBtn">Add</button>
+          <button id="addFriendCancelBtn" class="smallBtn">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <section class="card">
+      <div class="sectionHead">
+        <h2 class="sectionTitle">Leaderboard (this month)</h2>
+        <div class="sectionControls">
+          <button id="addFriendOpenBtn" class="smallBtn primaryBtn">Add Friend</button>
+          <div id="leaderboardLoading" class="loadingWheel" hidden aria-label="Loading"></div>
+        </div>
+      </div>
+      <table id="leaderboard">
+        <thead>
+          <tr>
+            <th>User</th>
+            <th>Points</th>
+            <th>I" vs You</th>
+            <th>Unlocks</th>
+            <th>Now Playing</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <section class="card profilePanel" id="profilePanel" hidden>
+      <div class="sectionHead">
+        <h2 class="sectionTitle">Profile: <span id="profileTitleName"></span></h2>
+        <div class="profileFilters">
+          <input id="profileGameSearch" type="text" placeholder="Search games..." autocomplete="off" />
+        </div>
+        <div id="profileLoading" class="loadingWheel" hidden aria-label="Loading"></div>
+        <button id="profileCloseBtn" class="smallBtn">Close</button>
+      </div>
+      <div id="profileSummary" class="profileSummary"></div>
+      <div id="profileSharedGames" class="tileGrid"></div>
+      <p class="note" id="profileGamesNote">Shows recently played games you both have in common.</p>
+      <div class="profileActions">
+        <button id="profileShowMoreBtn" class="smallBtn">Show more</button>
+      </div>
+      <p class="note profileLegend"><span class="legend me"></span> <span id="profileLegendMe">You</span> <span class="legend them"></span> <span id="profileLegendThem">Friend</span></p>
+    </section>
+
+    <section class="card comparePanel" id="comparePanel" hidden>
+      <div class="sectionHead">
+        <h2 class="sectionTitle">Compare: <span id="compareTitleGame"></span></h2>
+        <div id="compareLoading" class="loadingWheel" hidden aria-label="Loading"></div>
+        <button id="compareBackBtn" class="smallBtn">Back</button>
+      </div>
+        <div class="tabButtons" role="tablist" aria-label="Compare tabs">
+          <button class="compareTabBtn active" data-tab="achievements" role="tab" aria-selected="true" aria-controls="compare-tab-achievements">Achievements</button>
+        <button class="compareTabBtn" data-tab="times" role="tab" aria-selected="false" aria-controls="compare-tab-times">Scores</button>
+        </div>
+      <div id="compareMeta" class="meta"></div>
+      <div id="compare-tab-achievements" class="compareTabPanel active" role="tabpanel">
+        <div id="compareAchievements" class="compareList"></div>
+      </div>
+      <div id="compare-tab-times" class="compareTabPanel" role="tabpanel">
+        <div id="compareTimes" class="compareTimesList"></div>
+      </div>
+      <p class="note">Shared achievements are listed first.</p>
+    </section>
+
+    <section class="card tabsCard">
+      <div class="tabsHead">
+        <h2 class="sectionTitle">Friends activity</h2>
+        <div class="tabButtons" role="tablist" aria-label="Recent activity tabs">
+          <button class="tabBtn active" data-tab="achievements" role="tab" aria-selected="true" aria-controls="tab-achievements">Recent Achievements</button>
+          <button class="tabBtn" data-tab="times" role="tab" aria-selected="false" aria-controls="tab-times">Recent Scores</button>
+        </div>
+      </div>
+
+      <div id="tab-achievements" class="tabPanel active" role="tabpanel">
+        <div class="sectionHead">
+          <h2 class="sectionTitle">Friends Recent Achievements</h2>
+          <div class="sectionControls">
+            <label class="tiny">
+              Look back (hours)
+              <input id="recentHours" type="number" min="1" max="720" value="72" />
+            </label>
+            <button id="refreshRecentAchBtn" class="smallBtn">Refresh</button>
+            <div id="recentAchievementsLoading" class="loadingWheel" hidden aria-label="Loading"></div>
+          </div>
+        </div>
+        <div id="recentAchievements" class="feed"></div>
+        <div class="feedActions">
+          <button id="recentAchievementsToggleBtn" class="smallBtn" hidden>Show more</button>
+        </div>
+      </div>
+
+      <div id="tab-times" class="tabPanel" role="tabpanel">
+        <div class="sectionHead">
+          <h2 class="sectionTitle">Friends Recent Scores</h2>
+          <div class="sectionControls">
+            <label class="tiny">
+              Recently played games
+              <input id="recentGames" type="number" min="1" max="200" value="5" />
+            </label>
+            <button id="refreshTimesBtn" class="smallBtn">Refresh</button>
+            <div id="recentTimesLoading" class="loadingWheel" hidden aria-label="Loading"></div>
+          </div>
+        </div>
+        <div id="recentTimes" class="feed"></div>
+        <p class="note">Derived from recently played games + user game leaderboards.</p>
+        <div class="feedActions">
+          <button id="recentTimesToggleBtn" class="smallBtn" hidden>Show more</button>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
