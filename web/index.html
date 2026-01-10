@@ -4,6 +4,12 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>RA Friends Leaderboard</title>
+
+  <!-- Pixel Font -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -47,41 +53,38 @@
       </table>
       <p class="note">Friends are saved in your browser (localStorage).</p>
     </section>
+
     <div class="grid2">
       <section class="card">
-      <div class="sectionHead">
-        <h2 class="sectionTitle">Friends recent achievements</h2>
-        <div class="sectionControls">
-          <label class="tiny">
-            Look back (hours)
-            <input id="recentHours" type="number" min="1" max="720" value="72" />
-          </label>
-          <button id="refreshRecentAchBtn" class="smallBtn">Refresh</button>
+        <div class="sectionHead">
+          <h2 class="sectionTitle">Friends recent achievements</h2>
+          <div class="sectionControls">
+            <label class="tiny">
+              Look back (hours)
+              <input id="recentHours" type="number" min="1" max="720" value="72" />
+            </label>
+            <button id="refreshRecentAchBtn" class="smallBtn">Refresh</button>
+          </div>
         </div>
-      </div>
-      <div id="recentAchievements" class="feed"></div>
-      <p class="note">Shows unlocks within the lookback window. Data from API_GetUserRecentAchievements.</p>
-    </section>
+        <div id="recentAchievements" class="feed"></div>
+        <p class="note">Shows unlocks within the lookback window.</p>
+      </section>
+
       <section class="card">
-      <div class="sectionHead">
-        <h2 class="sectionTitle">Friends recent times</h2>
-        <div class="sectionControls">
-          <label class="tiny">
-            Recently played games
-            <input id="recentGames" type="number" min="1" max="200" value="5" />
-          </label>
-          <button id="refreshTimesBtn" class="smallBtn">Refresh</button>
+        <div class="sectionHead">
+          <h2 class="sectionTitle">Friends recent times</h2>
+          <div class="sectionControls">
+            <label class="tiny">
+              Recently played games
+              <input id="recentGames" type="number" min="1" max="200" value="5" />
+            </label>
+            <button id="refreshTimesBtn" class="smallBtn">Refresh</button>
+          </div>
         </div>
-      </div>
-      <div id="recentTimes" class="feed"></div>
-      <p class="note">Derived from recently played games + user game leaderboards.</p>
-    </section>
+        <div id="recentTimes" class="feed"></div>
+        <p class="note">Derived from recently played games.</p>
+      </section>
     </div>
-
-
-
-
-    
   </div>
 
   <script src="app.js"></script>
