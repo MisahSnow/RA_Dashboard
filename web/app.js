@@ -7,7 +7,6 @@ function sleep(ms) {
 const LS_API_KEY = "ra.apiKey";
 const LS_USE_API_KEY = "ra.useApiKey";
 const LS_CACHE_PREFIX = "ra.cache.";
-const LS_DAILY_HISTORY = "ra.dailyHistory";
 
 const meInput = document.getElementById("meInput");
 const apiKeyInput = document.getElementById("apiKeyInput");
@@ -131,6 +130,7 @@ let lastPresenceMe = "";
 let lastChartKey = "";
 let currentUser = "";
 let friends = [];
+let dailyHistoryCache = {};
 
 function clampUsername(s) {
   return (s || "").trim().replace(/\s+/g, "");
@@ -204,40 +204,8 @@ function getLocalDateKey(d = new Date()) {
   return `${year}-${month}-${day}`;
 }
 
-function loadDailyHistory() {
-  try {
-    return JSON.parse(localStorage.getItem(LS_DAILY_HISTORY) || "{}");
-  } catch {
-    return {};
-  }
-}
-
-function saveDailyHistory(history) {
-  try {
-    localStorage.setItem(LS_DAILY_HISTORY, JSON.stringify(history));
-  } catch {
-    // ignore
-  }
-}
-
-function updateDailyHistory(rows) {
-  const history = loadDailyHistory();
-  const today = getLocalDateKey();
-  for (const r of rows) {
-    if (r.dailyPoints === null || r.dailyPoints === undefined) continue;
-    if (!history[r.username]) history[r.username] = {};
-    history[r.username][today] = Math.round(r.dailyPoints);
-  }
-  const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - 30);
-  const cutoffKey = getLocalDateKey(cutoff);
-  for (const [user, days] of Object.entries(history)) {
-    for (const day of Object.keys(days)) {
-      if (day < cutoffKey) delete days[day];
-    }
-    if (Object.keys(days).length === 0) delete history[user];
-  }
-  saveDailyHistory(history);
+function setDailyHistory(history) {
+  dailyHistoryCache = history || {};
 }
 
 function userColor(username) {
@@ -252,7 +220,7 @@ function userColor(username) {
 
 function renderLeaderboardChart(rows) {
   if (!leaderboardChartEl) return;
-  const history = loadDailyHistory();
+  const history = dailyHistoryCache || {};
   const days = [];
   const today = new Date();
   for (let i = 6; i >= 0; i--) {
@@ -452,6 +420,16 @@ async function fetchMonthly(username) {
 
 async function fetchDaily(username) {
   return fetchJson(`/api/daily/${encodeURIComponent(username)}`);
+}
+
+async function fetchDailyHistory(users, days = 7) {
+  const list = users.map(clampUsername).filter(Boolean);
+  if (!list.length) return {};
+  const params = new URLSearchParams();
+  params.set("users", list.join(","));
+  params.set("days", String(days));
+  const data = await fetchJson(`/api/daily-history?${params.toString()}`);
+  return data?.results || {};
 }
 async function fetchRecentAchievements(username, minutes, limit) {
   const u = encodeURIComponent(username);
@@ -1932,7 +1910,7 @@ async function refreshLeaderboard() {
     });
     presencePromise.finally(() => setLoading(leaderboardLoadingEl, false));
 
-    // 3) Fetch daily points in the background.
+    // 3) Fetch daily points and history in the background.
     (async () => {
       const dailyPairs = await Promise.all(users.map(async (u) => {
         try {
@@ -1946,8 +1924,15 @@ async function refreshLeaderboard() {
       for (const r of rows) {
         r.dailyPoints = daily[r.username];
       }
-      updateDailyHistory(rows);
       renderLeaderboard(rows, me);
+
+      try {
+        const history = await fetchDailyHistory(users, 7);
+        setDailyHistory(history);
+        renderLeaderboardChart(rows);
+      } catch {
+        // ignore history errors
+      }
     })().catch(() => {});
 
   } catch (e) {

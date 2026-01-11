@@ -91,6 +91,17 @@ async function initDb() {
       UNIQUE(user_id, friend_username)
     );
   `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS daily_points (
+      id SERIAL PRIMARY KEY,
+      username TEXT NOT NULL,
+      day DATE NOT NULL,
+      mode TEXT NOT NULL DEFAULT 'hc',
+      points INTEGER NOT NULL DEFAULT 0,
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(username, day, mode)
+    );
+  `);
 }
 
 // simple concurrency limiter
@@ -471,8 +482,9 @@ app.get("/api/monthly/:username", async (req, res) => {
 // Daily points gained (today)
 app.get("/api/daily/:username", async (req, res) => {
   try {
-    const username = String(req.params.username || "").trim();
-    if (!username) return res.status(400).json({ error: "Missing username" });
+    const rawUsername = String(req.params.username || "").trim();
+    if (!rawUsername) return res.status(400).json({ error: "Missing username" });
+    const username = normalizeUsername(rawUsername);
     const apiKey = String(req.headers["x-ra-api-key"] || RA_API_KEY || "").trim();
     if (!apiKey) return res.status(400).json({ error: "Missing RA API key" });
 
@@ -513,9 +525,68 @@ app.get("/api/daily/:username", async (req, res) => {
     };
 
     cacheSet(cacheKey, payload, DEFAULT_CACHE_TTL_MS);
+
+    if (pool) {
+      const dayKey = start.toISOString().slice(0, 10);
+      const mode = includeSoftcore ? "all" : "hc";
+      await pool.query(
+        `
+          INSERT INTO daily_points (username, day, mode, points, updated_at)
+          VALUES ($1, $2, $3, $4, NOW())
+          ON CONFLICT (username, day, mode)
+          DO UPDATE SET points = EXCLUDED.points, updated_at = NOW()
+        `,
+        [username, dayKey, mode, points]
+      );
+    }
+
     res.json(payload);
   } catch (err) {
     res.status(500).json({ error: err?.message || "Failed to fetch daily data" });
+  }
+});
+
+// Daily points history from DB (default last 7 days)
+app.get("/api/daily-history", async (req, res) => {
+  try {
+    if (!pool) return res.status(500).json({ error: "Database unavailable" });
+    const usersParam = typeof req.query.users === "string" ? req.query.users : "";
+    const users = usersParam
+      .split(",")
+      .map(normalizeUsername)
+      .filter(Boolean);
+    if (!users.length) return res.status(400).json({ error: "Missing users" });
+
+    const daysParam = typeof req.query.days === "string" ? Number(req.query.days) : 7;
+    const days = Math.max(1, Math.min(30, Number.isFinite(daysParam) ? daysParam : 7));
+    const modeQ = typeof req.query.mode === "string" ? req.query.mode.toLowerCase() : "hc";
+    const mode = modeQ === "all" ? "all" : "hc";
+
+    const start = new Date();
+    start.setDate(start.getDate() - (days - 1));
+    const startKey = start.toISOString().slice(0, 10);
+
+    const result = await pool.query(
+      `
+        SELECT username, day, points
+        FROM daily_points
+        WHERE username = ANY($1) AND mode = $2 AND day >= $3
+        ORDER BY day ASC
+      `,
+      [users, mode, startKey]
+    );
+
+    const map = {};
+    for (const row of result.rows) {
+      const user = row.username;
+      const dayKey = new Date(row.day).toISOString().slice(0, 10);
+      if (!map[user]) map[user] = {};
+      map[user][dayKey] = Number(row.points || 0);
+    }
+
+    res.json({ days, mode, results: map });
+  } catch (err) {
+    res.status(500).json({ error: err?.message || "Failed to fetch daily history" });
   }
 });
 
