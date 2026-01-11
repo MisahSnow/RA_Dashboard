@@ -19,6 +19,7 @@ if (fs.existsSync(envPath)) {
 }
 
 const app = express();
+app.set("trust proxy", 1);
 app.use(express.json());
 
 const PORT = Number(process.env.PORT || 5179);
