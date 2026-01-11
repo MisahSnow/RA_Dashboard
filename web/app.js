@@ -8,6 +8,7 @@ const LS_ME = "ra.me";
 const LS_FRIENDS = "ra.friends";
 const LS_API_KEY = "ra.apiKey";
 const LS_CACHE_PREFIX = "ra.cache.";
+const LS_DAILY_HISTORY = "ra.dailyHistory";
 
 const meInput = document.getElementById("meInput");
 const apiKeyInput = document.getElementById("apiKeyInput");
@@ -31,6 +32,7 @@ const statusEl = document.getElementById("status");
 const refreshCountdownEl = document.getElementById("refreshCountdown");
 const onlineUsersEl = document.getElementById("onlineUsers");
 const onlineHintEl = document.getElementById("onlineHint");
+const leaderboardChartEl = document.getElementById("leaderboardChart");
 
 const settingsBtn = document.getElementById("settingsBtn");
 const settingsModal = document.getElementById("settingsModal");
@@ -158,6 +160,112 @@ function cacheGet(key) {
 
 async function fetchPresence() {
   return fetchJson("/api/presence", { silent: true });
+}
+
+function getLocalDateKey(d = new Date()) {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function loadDailyHistory() {
+  try {
+    return JSON.parse(localStorage.getItem(LS_DAILY_HISTORY) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function saveDailyHistory(history) {
+  try {
+    localStorage.setItem(LS_DAILY_HISTORY, JSON.stringify(history));
+  } catch {
+    // ignore
+  }
+}
+
+function updateDailyHistory(rows) {
+  const history = loadDailyHistory();
+  const today = getLocalDateKey();
+  for (const r of rows) {
+    if (r.dailyPoints === null || r.dailyPoints === undefined) continue;
+    if (!history[r.username]) history[r.username] = {};
+    history[r.username][today] = Math.round(r.dailyPoints);
+  }
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - 30);
+  const cutoffKey = getLocalDateKey(cutoff);
+  for (const [user, days] of Object.entries(history)) {
+    for (const day of Object.keys(days)) {
+      if (day < cutoffKey) delete days[day];
+    }
+    if (Object.keys(days).length === 0) delete history[user];
+  }
+  saveDailyHistory(history);
+}
+
+function userColor(username) {
+  let hash = 0;
+  for (let i = 0; i < username.length; i++) {
+    hash = ((hash << 5) - hash) + username.charCodeAt(i);
+    hash |= 0;
+  }
+  const hue = Math.abs(hash) % 360;
+  return `hsl(${hue}, 75%, 62%)`;
+}
+
+function renderLeaderboardChart(rows) {
+  if (!leaderboardChartEl) return;
+  const history = loadDailyHistory();
+  const days = [];
+  const today = new Date();
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(today.getDate() - i);
+    days.push(getLocalDateKey(d));
+  }
+
+  const series = rows.map(r => ({
+    username: r.username,
+    values: days.map(day => Number(history[r.username]?.[day] || 0)),
+    color: r.nameColor || userColor(r.username)
+  }));
+
+  const max = Math.max(1, ...series.flatMap(s => s.values));
+  const width = 800;
+  const height = 160;
+  const pad = 12;
+  const xStep = (width - pad * 2) / (days.length - 1);
+  const yScale = (val) => height - pad - ((val / max) * (height - pad * 2));
+
+  const axisY = `<line class="chartAxis" x1="${pad}" y1="${pad}" x2="${pad}" y2="${height - pad}" />`;
+  const axisX = `<line class="chartAxis" x1="${pad}" y1="${height - pad}" x2="${width - pad}" y2="${height - pad}" />`;
+
+  const paths = series.map(s => {
+    const d = s.values.map((v, idx) => {
+      const x = pad + xStep * idx;
+      const y = yScale(v);
+      return `${idx === 0 ? "M" : "L"} ${x} ${y}`;
+    }).join(" ");
+    return `<path class="chartLine" stroke="${s.color}" d="${d}" />`;
+  }).join("");
+
+  const legend = series.map(s => `
+    <div class="chartLegendItem">
+      <span class="chartLegendSwatch" style="background:${s.color}"></span>
+      <span class="chartLegendLabel">${safeText(s.username)}</span>
+    </div>
+  `).join("");
+
+  leaderboardChartEl.innerHTML = `
+    <svg viewBox="0 0 ${width} ${height}" width="100%" height="${height}" role="img" aria-label="Daily points chart">
+      ${axisY}
+      ${axisX}
+      ${paths}
+    </svg>
+    <div class="chartLegend">${legend}</div>
+  `;
 }
 
 async function sendPresence(username) {
@@ -455,12 +563,13 @@ function setActiveCompareTab(name) {
 function renderLeaderboard(rows, me) {
   tbody.innerHTML = "";
   cacheSet("leaderboard", { rows, me });
+  renderLeaderboardChart(rows);
   const total = rows.length;
   for (const r of rows) {
     const tr = document.createElement("tr");
 
     const delta = r.deltaVsYou;
-    const cls = delta > 0 ? "delta-pos" : delta < 0 ? "delta-neg" : "delta-zero";
+    const cls = delta > 0 ? "delta-neg" : delta < 0 ? "delta-pos" : "delta-zero";
     const isMe = (r.username && me) ? r.username.toLowerCase() === me.toLowerCase() : false;
     tr.innerHTML = `
       <td><button class="linkBtn" type="button" data-profile="${safeText(r.username)}"><span class="nameRank">${rows.indexOf(r) + 1}.</span> <strong>${safeText(r.username)}</strong></button>${isMe ? ' <span class="note">(you)</span>' : ""}</td>
@@ -486,7 +595,8 @@ function renderLeaderboard(rows, me) {
         const startHue = 45; // gold
         const endHue = 215; // blue
         const hue = Math.round(startHue + (endHue - startHue) * ratio);
-        nameBtn.style.setProperty("--name-color", `hsl(${hue}, 70%, 60%)`);
+        r.nameColor = `hsl(${hue}, 70%, 60%)`;
+        nameBtn.style.setProperty("--name-color", r.nameColor);
       }
       nameBtn.addEventListener("click", () => {
         openProfile(nameBtn.getAttribute("data-profile"));
@@ -1427,6 +1537,7 @@ async function refreshLeaderboard() {
       for (const r of rows) {
         r.dailyPoints = daily[r.username];
       }
+      updateDailyHistory(rows);
       renderLeaderboard(rows, me);
     })().catch(() => {});
 

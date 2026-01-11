@@ -355,6 +355,14 @@ table { width: 100%; border-collapse: collapse; overflow: hidden; border-radius:
   width: 100%;
 }
 th, td { padding: 12px 10px; border-bottom: 1px solid var(--border); text-align: left; }
+th:nth-child(2),
+th:nth-child(3),
+th:nth-child(4),
+td:nth-child(2),
+td:nth-child(3),
+td:nth-child(4){
+  text-align: center;
+}
 th { border-bottom: none; }
 
 th {
@@ -404,6 +412,65 @@ tbody tr:nth-child(even){
 
 .errorText{
   color: #fb7185;
+}
+
+.chartCard{
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  background:#120b22;
+  border:1px solid #2c2448;
+  box-shadow: 0 10px 20px var(--shadow);
+}
+
+.chartTitle{
+  margin: 0 0 8px;
+  font-family: var(--font-head);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--ink-muted);
+}
+
+.chartWrap{
+  width: 100%;
+  min-height: 160px;
+}
+
+.chartLegend{
+  display:flex;
+  flex-wrap:wrap;
+  gap:10px;
+  margin-top: 8px;
+}
+
+.chartLegendItem{
+  display:flex;
+  align-items:center;
+  gap:6px;
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+
+.chartLegendSwatch{
+  width:10px;
+  height:10px;
+  border-radius:50%;
+  border:1px solid #2b3650;
+}
+
+.chartLegendLabel{
+  color: var(--ink);
+}
+
+.chartLine{
+  fill: none;
+  stroke-width: 2.5;
+}
+
+.chartAxis{
+  stroke: #22304b;
+  stroke-width: 1;
 }
 
 #profileGamesNote{
