@@ -1009,6 +1009,14 @@ async function refreshChallenges({ includeTotals = true } = {}) {
     if (data?.warnings?.length) {
       if (challengeErrorEl) challengeErrorEl.textContent = data.warnings[0];
     }
+    for (const item of active) {
+      if (item.creator_points !== null && item.opponent_points !== null) {
+        challengeTotalsCache.set(String(item.id), {
+          creator_points: item.creator_points,
+          opponent_points: item.opponent_points
+        });
+      }
+    }
     let activeForRender = active;
     if (includeTotals) {
       await hydrateChallengeAvatars(active);

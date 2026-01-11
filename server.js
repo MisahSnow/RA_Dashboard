@@ -116,6 +116,12 @@ async function initDb() {
       end_at TIMESTAMPTZ
     );
   `);
+  await pool.query(`
+    ALTER TABLE challenges
+    ADD COLUMN IF NOT EXISTS creator_points INTEGER,
+    ADD COLUMN IF NOT EXISTS opponent_points INTEGER,
+    ADD COLUMN IF NOT EXISTS points_updated_at TIMESTAMPTZ
+  `);
 }
 
 // simple concurrency limiter
@@ -517,7 +523,8 @@ app.get("/api/challenges", requireAuth, async (req, res) => {
   const active = await pool.query(
     `
       SELECT id, creator_username, opponent_username, duration_hours, status,
-             created_at, accepted_at, start_at, end_at
+             created_at, accepted_at, start_at, end_at,
+             creator_points, opponent_points, points_updated_at
       FROM challenges
       WHERE status = 'active' AND (creator_username = $1 OR opponent_username = $1)
       ORDER BY start_at DESC
@@ -533,20 +540,43 @@ app.get("/api/challenges", requireAuth, async (req, res) => {
     activeRows = await Promise.all(activeRows.map((row) => limitChallenges(async () => {
       try {
         const startAt = row.start_at ? new Date(row.start_at) : null;
-        if (!startAt) return { ...row, creator_points: null, opponent_points: null };
+        const baseRow = {
+          ...row,
+          creator_points: row.creator_points ?? null,
+          opponent_points: row.opponent_points ?? null
+        };
+        if (!startAt) return baseRow;
         const creatorPoints = await computePointsBetweenWithRetry(row.creator_username, startAt, now, false, RA_API_KEY, 10);
         const opponentPoints = await computePointsBetweenWithRetry(row.opponent_username, startAt, now, false, RA_API_KEY, 10);
+        await pool.query(
+          `
+            UPDATE challenges
+            SET creator_points = $1,
+                opponent_points = $2,
+                points_updated_at = NOW()
+            WHERE id = $3
+          `,
+          [creatorPoints, opponentPoints, row.id]
+        );
         return { ...row, creator_points: creatorPoints, opponent_points: opponentPoints };
       } catch (err) {
         const msg = String(err?.message || "");
         if (msg.includes("429") || msg.includes("Too Many Attempts")) {
           warnings.push("Rate limited by RetroAchievements. Challenge totals may be delayed.");
         }
-        return { ...row, creator_points: null, opponent_points: null };
+        return {
+          ...row,
+          creator_points: row.creator_points ?? null,
+          opponent_points: row.opponent_points ?? null
+        };
       }
     })));
   } else {
-    activeRows = activeRows.map(row => ({ ...row, creator_points: null, opponent_points: null }));
+    activeRows = activeRows.map(row => ({
+      ...row,
+      creator_points: row.creator_points ?? null,
+      opponent_points: row.opponent_points ?? null
+    }));
   }
 
   res.json({
@@ -659,6 +689,53 @@ app.post("/api/challenges/:id/cancel", requireAuth, async (req, res) => {
     return res.status(404).json({ error: "Challenge not found or not active" });
   }
   res.json({ ok: true });
+});
+
+// Challenge totals snapshot (intended for cron)
+app.post("/api/challenges-snapshot", requireSnapshotSecret, async (_req, res) => {
+  try {
+    if (!pool) return res.status(500).json({ error: "Database unavailable" });
+    if (!RA_API_KEY) return res.status(400).json({ error: "Missing RA API key" });
+
+    const active = await pool.query(
+      `
+        SELECT id, creator_username, opponent_username, start_at
+        FROM challenges
+        WHERE status = 'active' AND start_at IS NOT NULL
+      `
+    );
+    if (!active.rows.length) return res.json({ ok: true, count: 0 });
+
+    const limitChallenges = createLimiter(2);
+    const now = new Date();
+    const skipped = [];
+    await Promise.all(active.rows.map((row) => limitChallenges(async () => {
+      try {
+        const startAt = new Date(row.start_at);
+        const creatorPoints = await computePointsBetweenWithRetry(row.creator_username, startAt, now, false, RA_API_KEY, 10);
+        const opponentPoints = await computePointsBetweenWithRetry(row.opponent_username, startAt, now, false, RA_API_KEY, 10);
+        await pool.query(
+          `
+            UPDATE challenges
+            SET creator_points = $1,
+                opponent_points = $2,
+                points_updated_at = NOW()
+            WHERE id = $3
+          `,
+          [creatorPoints, opponentPoints, row.id]
+        );
+      } catch {
+        skipped.push(row.id);
+      }
+    })));
+
+    if (skipped.length) {
+      console.warn(`Challenge snapshot skipped ${skipped.length} challenge(s): ${skipped.join(", ")}`);
+    }
+    res.json({ ok: true, count: active.rows.length, skipped });
+  } catch (err) {
+    res.status(500).json({ error: err?.message || "Failed to snapshot challenges" });
+  }
 });
 
 // Online presence (best-effort)
