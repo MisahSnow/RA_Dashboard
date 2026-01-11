@@ -86,6 +86,7 @@ let profileAutoLoadingAll = false;
 let profileSkipAutoLoadOnce = false;
 let profileGameAchievementCounts = new Map();
 let profileGameAchievementPending = new Map();
+const profileAchievementLimiter = createLimiter(2);
 const RECENT_DEFAULT_ROWS = 6;
 const RECENT_STEP_ROWS = 4;
 let recentAchievementsItems = [];
@@ -156,6 +157,25 @@ function cacheGet(key) {
   } catch {
     return null;
   }
+}
+
+function createLimiter(max) {
+  let active = 0;
+  const queue = [];
+  const runNext = () => {
+    if (active >= max) return;
+    const job = queue.shift();
+    if (!job) return;
+    active++;
+    job().finally(() => {
+      active--;
+      runNext();
+    });
+  };
+  return (fn) => new Promise((resolve, reject) => {
+    queue.push(() => fn().then(resolve, reject));
+    runNext();
+  });
 }
 
 async function fetchPresence() {
@@ -744,10 +764,11 @@ async function loadProfileGameAchievements(gameId, metaEl) {
 
   metaEl.textContent = "Achievements: Loading...";
   const targetAtRequest = target;
-  const promise = Promise.all([
-    fetchGameAchievements(me, gameId).catch(() => null),
-    fetchGameAchievements(target, gameId).catch(() => null)
-  ]).then(([mine, theirs]) => {
+  const promise = profileAchievementLimiter(async () => {
+    const [mine, theirs] = await Promise.all([
+      fetchGameAchievements(me, gameId).catch(() => null),
+      fetchGameAchievements(target, gameId).catch(() => null)
+    ]);
     const mineList = mine?.achievements || null;
     const theirsList = theirs?.achievements || null;
     const mineCount = mineList
@@ -1093,18 +1114,29 @@ function renderCompareList(items) {
 
     const desc = document.createElement("div");
     desc.className = "compareDesc";
-    desc.textContent = a.description || "";
+    const points = (a.points !== undefined && a.points !== null) ? ` (${a.points} pts)` : "";
+    desc.textContent = `${a.description || ""}${points}`;
 
     main.appendChild(title);
     main.appendChild(desc);
+
+    const statusWrap = document.createElement("div");
+    statusWrap.className = "statusWrap";
 
     const status = document.createElement("div");
     status.className = `statusPill ${a.statusClass}`;
     status.textContent = a.statusLabel;
 
+    const pointsPill = document.createElement("div");
+    pointsPill.className = "statusPill points";
+    pointsPill.textContent = `+${a.points ?? 0} pts`;
+
+    statusWrap.appendChild(status);
+    statusWrap.appendChild(pointsPill);
+
     row.appendChild(img);
     row.appendChild(main);
-    row.appendChild(status);
+    row.appendChild(statusWrap);
     compareAchievementsEl.appendChild(row);
   }
 }
@@ -1213,6 +1245,7 @@ async function openGameCompare(game) {
         title: ma?.title || ta?.title,
         description: ma?.description || ta?.description,
         badgeUrl: ma?.badgeUrl || ta?.badgeUrl,
+        points: ma?.points ?? ta?.points,
         shared: mineEarned && theirsEarned,
         statusLabel,
         statusClass
@@ -1319,12 +1352,13 @@ function renderRecentAchievements(items) {
     title.innerHTML = `
       <strong>${a.username}</strong>
       <span class="pill ${a.hardcore ? "hc" : ""}">${a.hardcore ? "HC" : "SC"}</span>
+      <span class="pointsPill compact">+${a.points} pts</span>
       <span class="meta">${formatDate(a.date)}</span>
     `;
 
     const body = document.createElement("div");
     body.innerHTML = `
-      <div><strong>${a.title}</strong> <span class="meta">(${a.points} pts)</span>${a.achievementId ? ` <span class="meta">open</span>` : ``}</div>
+      <div><strong>${a.title}</strong></div>
       <div class="meta">${a.gameTitle}${a.consoleName ? " - " + a.consoleName : ""}</div>
       <div class="meta">${a.description || ""}</div>
     `;

@@ -888,6 +888,19 @@ tbody tr:nth-child(even){
   background: rgba(255, 183, 3, 0.1);
 }
 
+.pointsPill{
+  font-size:11px;
+  padding:2px 8px;
+  border-radius:999px;
+  border:1px solid #22d3ee;
+  color:#22d3ee;
+  background: rgba(34, 211, 238, 0.12);
+}
+
+.pointsPill.compact{
+  padding:2px 6px;
+}
+
 .mono{ font-family: var(--font-mono); }
 
 .grid2{
@@ -1078,4 +1091,17 @@ tbody tr:nth-child(even){
   border-color:#3a2e5a;
   color:#8a82a6;
   background:#120b22;
+}
+
+.statusWrap{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  align-items:flex-start;
+}
+
+.statusPill.points{
+  border-color:#3a2e5a;
+  color:#cbd5f5;
+  background:#0f162b;
 }
