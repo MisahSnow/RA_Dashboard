@@ -604,7 +604,10 @@ async function bootstrapAfterLogin() {
 async function loginAndStart(username, { errorEl, loadingEl, closeModal } = {}) {
   try {
     if (loadingEl) loadingEl.hidden = false;
-    await fetchUserSummary(username, { silent: true });
+    const apiKey = (apiKeyInput?.value || "").trim();
+    if (apiKey) {
+      await fetchUserSummary(username, { silent: true });
+    }
   } catch (e) {
     const message = getUserValidationError(e, username);
     if (errorEl) {
