@@ -103,6 +103,19 @@ async function initDb() {
       UNIQUE(username, day, mode)
     );
   `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS challenges (
+      id SERIAL PRIMARY KEY,
+      creator_username TEXT NOT NULL,
+      opponent_username TEXT NOT NULL,
+      duration_hours INTEGER NOT NULL DEFAULT 24,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      accepted_at TIMESTAMPTZ,
+      start_at TIMESTAMPTZ,
+      end_at TIMESTAMPTZ
+    );
+  `);
 }
 
 // simple concurrency limiter
@@ -199,6 +212,42 @@ async function computeDailyPointsWithRetry(username, includeSoftcore, apiKey, re
     }
   }
   throw new Error("Failed to fetch daily points after retries.");
+}
+
+async function computePointsBetween(username, fromDate, toDate, includeSoftcore, apiKey) {
+  const unlocks = await raGetAchievementsEarnedBetween(username, fromDate, toDate, apiKey);
+
+  const isHardcoreUnlock = (u) => Boolean(
+    u?.HardcoreMode ?? u?.hardcoreMode ??
+    u?.Hardcore ?? u?.hardcore ??
+    u?.IsHardcore ?? u?.isHardcore ??
+    u?.HardcoreModeActive ?? u?.hardcoreModeActive ??
+    false
+  );
+
+  const considered = includeSoftcore ? unlocks : unlocks.filter(isHardcoreUnlock);
+
+  let points = 0;
+  for (const u of considered) {
+    points += Number(u.points ?? u.Points ?? 0);
+  }
+
+  return points;
+}
+
+async function computePointsBetweenWithRetry(username, fromDate, toDate, includeSoftcore, apiKey, retries = 10) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await computePointsBetween(username, fromDate, toDate, includeSoftcore, apiKey);
+    } catch (err) {
+      const msg = String(err?.message || err || "");
+      const is429 = msg.includes("429") || msg.includes("Too Many Attempts");
+      if (!is429 || attempt >= retries) throw err;
+      const delayMs = Math.min(30000, 750 * Math.pow(2, attempt));
+      await sleep(delayMs);
+    }
+  }
+  throw new Error("Failed to fetch points after retries.");
 }
 
 async function raFetchJson(url, { retries = 2 } = {}) {
@@ -436,6 +485,179 @@ app.delete("/api/friends/:username", requireAuth, async (req, res) => {
     "DELETE FROM friends WHERE user_id = $1 AND friend_username = $2",
     [userId, friend]
   );
+  res.json({ ok: true });
+});
+
+// Challenges
+app.get("/api/challenges", requireAuth, async (req, res) => {
+  if (!pool) return res.status(500).json({ error: "Database unavailable" });
+  const me = normalizeUsername(req.session.user.username);
+  const totalsQ = typeof req.query.totals === "string" ? req.query.totals.toLowerCase() : "1";
+  const includeTotals = !(totalsQ === "0" || totalsQ === "false");
+  const incoming = await pool.query(
+    `
+      SELECT id, creator_username, opponent_username, duration_hours, status,
+             created_at, accepted_at, start_at, end_at
+      FROM challenges
+      WHERE opponent_username = $1 AND status = 'pending'
+      ORDER BY created_at DESC
+    `,
+    [me]
+  );
+  const outgoing = await pool.query(
+    `
+      SELECT id, creator_username, opponent_username, duration_hours, status,
+             created_at, accepted_at, start_at, end_at
+      FROM challenges
+      WHERE creator_username = $1 AND status = 'pending'
+      ORDER BY created_at DESC
+    `,
+    [me]
+  );
+  const active = await pool.query(
+    `
+      SELECT id, creator_username, opponent_username, duration_hours, status,
+             created_at, accepted_at, start_at, end_at
+      FROM challenges
+      WHERE status = 'active' AND (creator_username = $1 OR opponent_username = $1)
+      ORDER BY start_at DESC
+    `,
+    [me]
+  );
+
+  let activeRows = active.rows;
+  const warnings = [];
+  if (includeTotals && RA_API_KEY && activeRows.length) {
+    const limitChallenges = createLimiter(2);
+    const now = new Date();
+    activeRows = await Promise.all(activeRows.map((row) => limitChallenges(async () => {
+      try {
+        const startAt = row.start_at ? new Date(row.start_at) : null;
+        if (!startAt) return { ...row, creator_points: null, opponent_points: null };
+        const creatorPoints = await computePointsBetweenWithRetry(row.creator_username, startAt, now, false, RA_API_KEY, 10);
+        const opponentPoints = await computePointsBetweenWithRetry(row.opponent_username, startAt, now, false, RA_API_KEY, 10);
+        return { ...row, creator_points: creatorPoints, opponent_points: opponentPoints };
+      } catch (err) {
+        const msg = String(err?.message || "");
+        if (msg.includes("429") || msg.includes("Too Many Attempts")) {
+          warnings.push("Rate limited by RetroAchievements. Challenge totals may be delayed.");
+        }
+        return { ...row, creator_points: null, opponent_points: null };
+      }
+    })));
+  } else {
+    activeRows = activeRows.map(row => ({ ...row, creator_points: null, opponent_points: null }));
+  }
+
+  res.json({
+    incoming: incoming.rows,
+    outgoing: outgoing.rows,
+    active: activeRows,
+    warnings
+  });
+});
+
+app.post("/api/challenges", requireAuth, async (req, res) => {
+  if (!pool) return res.status(500).json({ error: "Database unavailable" });
+  const me = normalizeUsername(req.session.user.username);
+  const opponent = normalizeUsername(req.body?.opponent);
+  if (!opponent) return res.status(400).json({ error: "Missing opponent" });
+  if (opponent === me) return res.status(400).json({ error: "Cannot challenge yourself" });
+
+  const durationHours = Math.max(1, Math.min(168, Number(req.body?.hours || 24)));
+
+  if (RA_API_KEY) {
+    try {
+      await raGetUserSummary(opponent, RA_API_KEY);
+    } catch (err) {
+      const msg = String(err?.message || "");
+      const notFound = msg.includes("404") || msg.toLowerCase().includes("not found");
+      if (notFound) return res.status(404).json({ error: `User not found: ${opponent}` });
+      return res.status(502).json({ error: `Unable to verify user: ${opponent}` });
+    }
+  }
+
+  const result = await pool.query(
+    `
+      INSERT INTO challenges (creator_username, opponent_username, duration_hours)
+      VALUES ($1, $2, $3)
+      RETURNING id, creator_username, opponent_username, duration_hours, status,
+                created_at, accepted_at, start_at, end_at
+    `,
+    [me, opponent, durationHours]
+  );
+  res.json(result.rows[0]);
+});
+
+app.post("/api/challenges/:id/accept", requireAuth, async (req, res) => {
+  if (!pool) return res.status(500).json({ error: "Database unavailable" });
+  const me = normalizeUsername(req.session.user.username);
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid challenge id" });
+
+  const result = await pool.query(
+    `
+      UPDATE challenges
+      SET status = 'active',
+          accepted_at = NOW(),
+          start_at = NOW(),
+          end_at = NOW() + (duration_hours || ' hours')::interval
+      WHERE id = $1 AND opponent_username = $2 AND status = 'pending'
+      RETURNING id, creator_username, opponent_username, duration_hours, status,
+                created_at, accepted_at, start_at, end_at
+    `,
+    [id, me]
+  );
+
+  if (result.rows.length === 0) {
+    return res.status(404).json({ error: "Challenge not found or not pending" });
+  }
+  res.json(result.rows[0]);
+});
+
+app.post("/api/challenges/:id/decline", requireAuth, async (req, res) => {
+  if (!pool) return res.status(500).json({ error: "Database unavailable" });
+  const me = normalizeUsername(req.session.user.username);
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid challenge id" });
+
+  const result = await pool.query(
+    `
+      UPDATE challenges
+      SET status = 'declined'
+      WHERE id = $1 AND opponent_username = $2 AND status = 'pending'
+      RETURNING id
+    `,
+    [id, me]
+  );
+
+  if (result.rows.length === 0) {
+    return res.status(404).json({ error: "Challenge not found or not pending" });
+  }
+  res.json({ ok: true });
+});
+
+app.post("/api/challenges/:id/cancel", requireAuth, async (req, res) => {
+  if (!pool) return res.status(500).json({ error: "Database unavailable" });
+  const me = normalizeUsername(req.session.user.username);
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid challenge id" });
+
+  const result = await pool.query(
+    `
+      UPDATE challenges
+      SET status = 'cancelled'
+      WHERE id = $1
+        AND status IN ('pending', 'active')
+        AND (creator_username = $2 OR opponent_username = $2)
+      RETURNING id
+    `,
+    [id, me]
+  );
+
+  if (result.rows.length === 0) {
+    return res.status(404).json({ error: "Challenge not found or not active" });
+  }
   res.json({ ok: true });
 });
 
@@ -870,7 +1092,10 @@ app.get("/api/user-summary/:username", async (req, res) => {
       rank: user?.Rank ?? data?.Rank ?? user?.rank ?? data?.rank,
       memberSince: user?.MemberSince ?? data?.MemberSince ?? user?.memberSince ?? data?.memberSince,
       lastActivity: user?.LastActivity ?? data?.LastActivity ?? user?.lastActivity ?? data?.lastActivity,
-      completedGames: user?.CompletedGames ?? data?.CompletedGames ?? user?.completedGames ?? data?.completedGames
+      completedGames: user?.CompletedGames ?? data?.CompletedGames ?? user?.completedGames ?? data?.completedGames,
+      userPic:
+        user?.UserPic ?? data?.UserPic ?? user?.userPic ?? data?.userPic ??
+        user?.UserPicURL ?? data?.UserPicURL ?? user?.userPicUrl ?? data?.userPicUrl
     };
 
     cacheSet(cacheKey, payload, DEFAULT_CACHE_TTL_MS);

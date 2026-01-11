@@ -29,6 +29,10 @@
         </div>
       </div>
     </div>
+    <div class="pageTabs" role="tablist" aria-label="Pages">
+      <button class="pageBtn active" data-page="dashboard" role="tab" aria-selected="true">Dashboard</button>
+      <button class="pageBtn" data-page="challenges" role="tab" aria-selected="false">Challenges</button>
+    </div>
     <div class="status" id="status"></div>
 
     <div id="settingsModal" class="modal" hidden>
@@ -104,6 +108,7 @@
       </div>
     </div>
 
+    <section id="dashboardPage" class="page active">
     <section class="card">
       <div class="sectionHead">
         <h2 class="sectionTitle">Monthly Leaderboard</h2>
@@ -225,6 +230,47 @@
         </div>
         <div id="recentTimesLoading" class="loadingWheel" hidden aria-label="Loading"></div>
       </div>
+    </section>
+    </section>
+
+    <section id="challengesPage" class="page" hidden>
+      <section class="card">
+        <div class="sectionHead">
+          <h2 class="sectionTitle">Challenges</h2>
+          <div id="challengesLoading" class="loadingWheel" hidden aria-label="Loading"></div>
+        </div>
+        <div class="challengeLayout">
+          <div class="challengeForm">
+            <div class="field">
+              <label for="challengeOpponent">Friend</label>
+              <select id="challengeOpponent"></select>
+            </div>
+            <div class="field">
+              <label for="challengeDuration">Duration (hours)</label>
+              <input id="challengeDuration" type="number" min="1" max="168" value="24" />
+            </div>
+            <div class="buttons">
+              <button id="challengeSendBtn">Send Challenge</button>
+            </div>
+            <div id="challengeError" class="note errorText" role="alert"></div>
+          </div>
+
+          <div class="challengeLists">
+            <div class="challengeBlock">
+              <h3 class="sectionTitle">Pending Challenges (To You)</h3>
+              <div id="challengeIncoming" class="challengeList"></div>
+            </div>
+            <div class="challengeBlock">
+              <h3 class="sectionTitle">Pending Challenges (Sent)</h3>
+              <div id="challengeOutgoing" class="challengeList"></div>
+            </div>
+            <div class="challengeBlock">
+              <h3 class="sectionTitle">Active Challenges</h3>
+              <div id="challengeActive" class="challengeList"></div>
+            </div>
+          </div>
+        </div>
+      </section>
     </section>
     </div>
   </div>
