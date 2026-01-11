@@ -136,6 +136,10 @@ function clampUsername(s) {
   return (s || "").trim().replace(/\s+/g, "");
 }
 
+function normalizeUserKey(s) {
+  return clampUsername(s).toLowerCase();
+}
+
 function setCurrentUser(username) {
   currentUser = clampUsername(username);
   if (meInput) meInput.value = currentUser;
@@ -231,7 +235,7 @@ function renderLeaderboardChart(rows) {
 
   const series = rows.map(r => ({
     username: r.username,
-    values: days.map(day => Number(history[r.username]?.[day] || 0)),
+    values: days.map(day => Number(history[normalizeUserKey(r.username)]?.[day] || 0)),
     color: r.nameColor || userColor(r.username)
   }));
 
@@ -423,7 +427,7 @@ async function fetchDaily(username) {
 }
 
 async function fetchDailyHistory(users, days = 7) {
-  const list = users.map(clampUsername).filter(Boolean);
+  const list = users.map(normalizeUserKey).filter(Boolean);
   if (!list.length) return {};
   const params = new URLSearchParams();
   params.set("users", list.join(","));

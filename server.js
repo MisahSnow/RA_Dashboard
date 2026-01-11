@@ -26,6 +26,7 @@ const PORT = Number(process.env.PORT || 5179);
 const RA_API_KEY = process.env.RA_API_KEY;
 const DATABASE_URL = process.env.DATABASE_URL;
 const SESSION_SECRET = process.env.SESSION_SECRET || "dev-session-secret";
+const SNAPSHOT_SECRET = process.env.SNAPSHOT_SECRET || "";
 
 if (!RA_API_KEY) {
   console.warn("WARNING: RA_API_KEY is not set. Check .env next to server.js.");
@@ -142,6 +143,47 @@ function getDayRange(now = new Date()) {
   const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
   const end = new Date(now);
   return { start, end };
+}
+
+async function computeDailyPoints(username, includeSoftcore, apiKey) {
+  const { start, end } = getDayRange();
+  const unlocks = await raGetAchievementsEarnedBetween(username, start, end, apiKey);
+
+  const isHardcoreUnlock = (u) => Boolean(
+    u?.HardcoreMode ?? u?.hardcoreMode ??
+    u?.Hardcore ?? u?.hardcore ??
+    u?.IsHardcore ?? u?.isHardcore ??
+    u?.HardcoreModeActive ?? u?.hardcoreModeActive ??
+    false
+  );
+
+  const considered = includeSoftcore ? unlocks : unlocks.filter(isHardcoreUnlock);
+
+  let points = 0;
+  for (const u of considered) {
+    points += Number(u.points ?? u.Points ?? 0);
+  }
+
+  return {
+    start,
+    end,
+    points,
+    unlockCount: considered.length,
+    unlockCountAll: unlocks.length
+  };
+}
+
+async function upsertDailyPoints(username, dayKey, mode, points) {
+  if (!pool) return;
+  await pool.query(
+    `
+      INSERT INTO daily_points (username, day, mode, points, updated_at)
+      VALUES ($1, $2, $3, $4, NOW())
+      ON CONFLICT (username, day, mode)
+      DO UPDATE SET points = EXCLUDED.points, updated_at = NOW()
+    `,
+    [username, dayKey, mode, points]
+  );
 }
 
 async function raFetchJson(url, { retries = 2 } = {}) {
@@ -300,6 +342,13 @@ function requireAuth(req, res, next) {
   if (!req.session || !req.session.user) {
     return res.status(401).json({ error: "Not authenticated" });
   }
+  return next();
+}
+
+function requireSnapshotSecret(req, res, next) {
+  if (!SNAPSHOT_SECRET) return next();
+  const token = String(req.headers["x-snapshot-secret"] || req.query.secret || "").trim();
+  if (token !== SNAPSHOT_SECRET) return res.status(401).json({ error: "Unauthorized" });
   return next();
 }
 
@@ -488,57 +537,31 @@ app.get("/api/daily/:username", async (req, res) => {
     const apiKey = String(req.headers["x-ra-api-key"] || RA_API_KEY || "").trim();
     if (!apiKey) return res.status(400).json({ error: "Missing RA API key" });
 
-    const { start, end } = getDayRange();
-
     const modeQ = typeof req.query.mode === "string" ? req.query.mode.toLowerCase() : "hc";
     const includeSoftcore = modeQ === "all";
+    const mode = includeSoftcore ? "all" : "hc";
 
-    const cacheKey = `daily:${username}:${includeSoftcore ? "all" : "hc"}:${apiKey}`;
+    const cacheKey = `daily:${username}:${mode}:${apiKey}`;
     const cached = cacheGet(cacheKey);
     if (cached) return res.json({ ...cached, cached: true });
 
-    const unlocks = await raGetAchievementsEarnedBetween(username, start, end, apiKey);
-
-    const isHardcoreUnlock = (u) => Boolean(
-      u?.HardcoreMode ?? u?.hardcoreMode ??
-      u?.Hardcore ?? u?.hardcore ??
-      u?.IsHardcore ?? u?.isHardcore ??
-      u?.HardcoreModeActive ?? u?.hardcoreModeActive ??
-      false
-    );
-
-    const considered = includeSoftcore ? unlocks : unlocks.filter(isHardcoreUnlock);
-
-    let points = 0;
-    for (const u of considered) {
-      points += Number(u.points ?? u.Points ?? 0);
-    }
+    const { start, end, points, unlockCount, unlockCountAll } =
+      await computeDailyPoints(username, includeSoftcore, apiKey);
 
     const payload = {
       username,
-      mode: includeSoftcore ? "all" : "hc",
+      mode,
       fromDate: start.toISOString(),
       toDate: end.toISOString(),
       points,
-      unlockCount: considered.length,
-      unlockCountAll: unlocks.length
+      unlockCount,
+      unlockCountAll
     };
 
     cacheSet(cacheKey, payload, DEFAULT_CACHE_TTL_MS);
 
-    if (pool) {
-      const dayKey = start.toISOString().slice(0, 10);
-      const mode = includeSoftcore ? "all" : "hc";
-      await pool.query(
-        `
-          INSERT INTO daily_points (username, day, mode, points, updated_at)
-          VALUES ($1, $2, $3, $4, NOW())
-          ON CONFLICT (username, day, mode)
-          DO UPDATE SET points = EXCLUDED.points, updated_at = NOW()
-        `,
-        [username, dayKey, mode, points]
-      );
-    }
+    const dayKey = start.toISOString().slice(0, 10);
+    await upsertDailyPoints(username, dayKey, mode, points);
 
     res.json(payload);
   } catch (err) {
@@ -587,6 +610,42 @@ app.get("/api/daily-history", async (req, res) => {
     res.json({ days, mode, results: map });
   } catch (err) {
     res.status(500).json({ error: err?.message || "Failed to fetch daily history" });
+  }
+});
+
+// Daily points snapshot for all known users (intended for cron)
+app.post("/api/daily-snapshot", requireSnapshotSecret, async (req, res) => {
+  try {
+    if (!pool) return res.status(500).json({ error: "Database unavailable" });
+    if (!RA_API_KEY) return res.status(400).json({ error: "Missing RA API key" });
+
+    const userRows = await pool.query("SELECT username FROM users");
+    const friendRows = await pool.query("SELECT DISTINCT friend_username AS username FROM friends");
+    const usernames = Array.from(new Set([
+      ...userRows.rows.map(r => normalizeUsername(r.username)),
+      ...friendRows.rows.map(r => normalizeUsername(r.username))
+    ])).filter(Boolean);
+
+    if (!usernames.length) return res.json({ ok: true, count: 0 });
+
+    const modeQ = typeof req.query.mode === "string" ? req.query.mode.toLowerCase() : "hc";
+    const includeSoftcore = modeQ === "all";
+    const mode = includeSoftcore ? "all" : "hc";
+    const dayKey = getDayRange().start.toISOString().slice(0, 10);
+    const limitDaily = createLimiter(2);
+
+    await Promise.all(usernames.map((username) => limitDaily(async () => {
+      try {
+        const { points } = await computeDailyPoints(username, includeSoftcore, RA_API_KEY);
+        await upsertDailyPoints(username, dayKey, mode, points);
+      } catch {
+        // ignore snapshot failures per user
+      }
+    })));
+
+    res.json({ ok: true, count: usernames.length });
+  } catch (err) {
+    res.status(500).json({ error: err?.message || "Failed to snapshot daily points" });
   }
 });
 
