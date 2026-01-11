@@ -61,7 +61,28 @@
       <div class="buttons">
         <button id="addFriendConfirmBtn">Add</button>
         <button id="addFriendCancelBtn" class="smallBtn">Cancel</button>
+        </div>
       </div>
+    </div>
+
+    <div id="usernameModal" class="modal" hidden>
+      <div class="modalCard">
+        <div class="sectionHead">
+          <h2 class="sectionTitle">Enter username to continue</h2>
+        </div>
+        <div class="field">
+          <label for="usernameModalInput">Username</label>
+          <input id="usernameModalInput" placeholder="Your RA username" autocomplete="off" />
+        </div>
+        <div class="field">
+          <label for="usernameModalApiKeyInput">API key (optional)</label>
+          <input id="usernameModalApiKeyInput" placeholder="RetroAchievements API key" autocomplete="off" />
+        </div>
+        <div id="usernameModalLoading" class="loadingWheel" hidden aria-label="Loading"></div>
+        <div id="usernameModalError" class="note errorText" role="alert"></div>
+        <div class="buttons">
+          <button id="usernameModalConfirmBtn">Continue</button>
+        </div>
       </div>
     </div>
 
@@ -145,15 +166,14 @@
       <div id="tab-achievements" class="tabPanel active" role="tabpanel">
         <div class="sectionHead">
           <h2 class="sectionTitle">Recent Achievements</h2>
-          <div class="sectionControls">
-            <div id="recentAchievementsLoading" class="loadingWheel" hidden aria-label="Loading"></div>
-          </div>
+          <div class="sectionControls"></div>
         </div>
         <div id="recentAchievements" class="feed"></div>
         <div class="feedActions">
           <button id="recentAchievementsShowLessBtn" class="smallBtn" hidden>Show less</button>
           <button id="recentAchievementsToggleBtn" class="smallBtn" hidden>Show more</button>
         </div>
+        <div id="recentAchievementsLoading" class="loadingWheel" hidden aria-label="Loading"></div>
       </div>
 
       <div id="tab-times" class="tabPanel" role="tabpanel">
@@ -164,7 +184,6 @@
               Recently played games
               <input id="recentGames" type="number" min="1" max="200" value="5" />
             </label>
-            <div id="recentTimesLoading" class="loadingWheel" hidden aria-label="Loading"></div>
           </div>
         </div>
         <div id="recentTimes" class="feed"></div>
@@ -172,6 +191,7 @@
         <div class="feedActions">
           <button id="recentTimesToggleBtn" class="smallBtn" hidden>Show more</button>
         </div>
+        <div id="recentTimesLoading" class="loadingWheel" hidden aria-label="Loading"></div>
       </div>
     </section>
   </div>

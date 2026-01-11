@@ -7,6 +7,7 @@ function sleep(ms) {
 const LS_ME = "ra.me";
 const LS_FRIENDS = "ra.friends";
 const LS_API_KEY = "ra.apiKey";
+const LS_CACHE_PREFIX = "ra.cache.";
 
 const meInput = document.getElementById("meInput");
 const apiKeyInput = document.getElementById("apiKeyInput");
@@ -18,6 +19,12 @@ const addFriendCloseBtn = document.getElementById("addFriendCloseBtn");
 const addFriendCancelBtn = document.getElementById("addFriendCancelBtn");
 const addFriendErrorEl = document.getElementById("addFriendError");
 const addFriendLoadingEl = document.getElementById("addFriendLoading");
+const usernameModal = document.getElementById("usernameModal");
+const usernameModalInput = document.getElementById("usernameModalInput");
+const usernameModalApiKeyInput = document.getElementById("usernameModalApiKeyInput");
+const usernameModalConfirmBtn = document.getElementById("usernameModalConfirmBtn");
+const usernameModalErrorEl = document.getElementById("usernameModalError");
+const usernameModalLoadingEl = document.getElementById("usernameModalLoading");
 const refreshBtn = document.getElementById("refreshBtn");
 const tbody = document.querySelector("#leaderboard tbody");
 const statusEl = document.getElementById("status");
@@ -96,6 +103,7 @@ let achievementsMaxResults = ACHIEVEMENTS_DEFAULT_MAX;
 const ACHIEVEMENTS_MIN_WAIT_MS = 5000;
 const achievementsLoadStart = Date.now();
 let achievementsShowMoreCount = 0;
+const STAGGER_MS = 400;
 
 function clampUsername(s) {
   return (s || "").trim().replace(/\s+/g, "");
@@ -117,6 +125,25 @@ function saveState() {
   localStorage.setItem(LS_ME, clampUsername(meInput.value));
   if (apiKeyInput) localStorage.setItem(LS_API_KEY, (apiKeyInput.value || "").trim());
   localStorage.setItem(LS_FRIENDS, JSON.stringify(friends));
+}
+
+function cacheSet(key, data) {
+  try {
+    localStorage.setItem(`${LS_CACHE_PREFIX}${key}`, JSON.stringify({ ts: Date.now(), data }));
+  } catch {
+    // Ignore cache failures.
+  }
+}
+
+function cacheGet(key) {
+  try {
+    const raw = localStorage.getItem(`${LS_CACHE_PREFIX}${key}`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed?.data ?? null;
+  } catch {
+    return null;
+  }
 }
 
 async function fetchJson(url, { silent = false } = {}) {
@@ -300,12 +327,19 @@ function ensureUsername() {
   const existing = clampUsername(meInput.value);
   if (existing) return existing;
 
-  const entered = clampUsername(window.prompt("Enter your RetroAchievements username:", "") || "");
-  if (!entered) return "";
-
-  meInput.value = entered;
-  saveState();
-  return entered;
+  if (usernameModal) {
+    usernameModal.hidden = false;
+    if (usernameModalInput) {
+      usernameModalInput.value = "";
+      usernameModalInput.focus();
+    }
+    if (usernameModalApiKeyInput) {
+      usernameModalApiKeyInput.value = "";
+    }
+    if (usernameModalErrorEl) usernameModalErrorEl.textContent = "";
+    if (usernameModalLoadingEl) usernameModalLoadingEl.hidden = true;
+  }
+  return "";
 }
 
 function setActiveTab(name) {
@@ -336,6 +370,7 @@ function setActiveCompareTab(name) {
 
 function renderLeaderboard(rows, me) {
   tbody.innerHTML = "";
+  cacheSet("leaderboard", { rows, me });
   const total = rows.length;
   for (const r of rows) {
     const tr = document.createElement("tr");
@@ -1049,6 +1084,7 @@ async function openGameCompare(game) {
 function renderRecentAchievements(items) {
   recentAchievementsEl.innerHTML = "";
   recentAchievementsItems = items;
+  cacheSet("recentAchievements", { items });
   if (!items.length) {
     recentAchievementsVisible = RECENT_DEFAULT_ROWS;
     recentAchievementsEl.innerHTML = `<div class="meta">No recent achievements in this window.</div>`;
@@ -1124,6 +1160,7 @@ function renderRecentAchievements(items) {
 function renderRecentTimes(items) {
   recentTimesEl.innerHTML = "";
   recentTimesItems = items;
+  cacheSet("recentTimes", { items });
   if (!items.length) {
     recentTimesVisible = RECENT_DEFAULT_ROWS;
     recentTimesEl.innerHTML = `<div class="meta">No recent leaderboard scores found (based on recently played games).</div>`;
@@ -1186,6 +1223,11 @@ async function refreshLeaderboard() {
   if (!ensured) return;
   const { me, users } = getUsersIncludingMe();
   if (!me) return;
+
+  const cached = cacheGet("leaderboard");
+  if (cached?.rows?.length) {
+    renderLeaderboard(cached.rows, cached.me || me);
+  }
 
   setLoading(leaderboardLoadingEl, true);
 
@@ -1315,6 +1357,11 @@ async function refreshRecentAchievements({ reset = true } = {}) {
   const { me, users } = getUsersIncludingMe();
   if (!me) return;
 
+  const cached = cacheGet("recentAchievements");
+  if (cached?.items?.length) {
+    renderRecentAchievements(cached.items);
+  }
+
   if (reset) {
     achievementsLookbackHours = ACHIEVEMENTS_DEFAULT_HOURS;
     recentAchievementsVisible = RECENT_DEFAULT_ROWS;
@@ -1344,6 +1391,11 @@ async function refreshRecentAchievements({ reset = true } = {}) {
 async function refreshRecentTimes() {
   const { me, users } = getUsersIncludingMe();
   if (!me) return;
+
+  const cached = cacheGet("recentTimes");
+  if (cached?.items?.length) {
+    renderRecentTimes(cached.items);
+  }
 
   setLoading(recentTimesLoadingEl, true);
   const games = Math.max(1, Number(recentGamesEl.value || 50));
@@ -1464,10 +1516,14 @@ if (addFriendConfirmBtn) {
 }
 
 refreshBtn.addEventListener("click", () => {
-  refreshLeaderboard();
-  refreshRecentAchievements();
-  refreshRecentTimes();
-  resetRefreshCountdown();
+  (async () => {
+    refreshLeaderboard();
+    await sleep(STAGGER_MS);
+    refreshRecentAchievements();
+    await sleep(STAGGER_MS);
+    refreshRecentTimes();
+    resetRefreshCountdown();
+  })();
 });
 
 
@@ -1540,20 +1596,28 @@ if (settingsSaveBtn) {
     meInput.value = clampUsername(meInput.value);
     saveState();
     closeSettings();
-    refreshLeaderboard();
-    refreshRecentAchievements();
-    refreshRecentTimes();
-    resetRefreshCountdown();
+    (async () => {
+      refreshLeaderboard();
+      await sleep(STAGGER_MS);
+      refreshRecentAchievements();
+      await sleep(STAGGER_MS);
+      refreshRecentTimes();
+      resetRefreshCountdown();
+    })();
   });
 }
 
 meInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") {
     saveState();
-    refreshLeaderboard();
-    refreshRecentAchievements();
-    refreshRecentTimes();
-    resetRefreshCountdown();
+    (async () => {
+      refreshLeaderboard();
+      await sleep(STAGGER_MS);
+      refreshRecentAchievements();
+      await sleep(STAGGER_MS);
+      refreshRecentTimes();
+      resetRefreshCountdown();
+    })();
   }
 });
 
@@ -1563,11 +1627,66 @@ if (friendInput) {
   });
 }
 
+if (usernameModalConfirmBtn) {
+  usernameModalConfirmBtn.addEventListener("click", () => {
+    const entered = clampUsername(usernameModalInput?.value || "");
+    if (!entered) {
+      if (usernameModalErrorEl) usernameModalErrorEl.textContent = "Username is required.";
+      return;
+    }
+    const apiKey = (usernameModalApiKeyInput?.value || "").trim();
+    if (apiKeyInput) apiKeyInput.value = apiKey;
+    (async () => {
+      try {
+        if (usernameModalLoadingEl) usernameModalLoadingEl.hidden = false;
+        await fetchUserSummary(entered, { silent: true });
+      } catch (e) {
+        const msg = String(e?.message || "");
+        const notFound = msg.includes("404") || msg.toLowerCase().includes("not found");
+        const apiKeyMissing = msg.toLowerCase().includes("missing ra api key");
+        const label = apiKeyMissing
+          ? "API key required to validate this user."
+          : notFound ? `User not found: ${entered}` : `Could not verify user: ${entered}`;
+        if (usernameModalErrorEl) usernameModalErrorEl.textContent = label;
+        if (usernameModalLoadingEl) usernameModalLoadingEl.hidden = true;
+        return;
+      }
+      meInput.value = entered;
+      saveState();
+      if (usernameModal) usernameModal.hidden = true;
+      if (usernameModalLoadingEl) usernameModalLoadingEl.hidden = true;
+      (async () => {
+        refreshLeaderboard();
+        await sleep(STAGGER_MS);
+        refreshRecentAchievements();
+        await sleep(STAGGER_MS);
+        refreshRecentTimes();
+        resetRefreshCountdown();
+      })();
+    })();
+  });
+}
+
+if (usernameModalInput) {
+  usernameModalInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && usernameModalConfirmBtn) {
+      usernameModalConfirmBtn.click();
+    }
+  });
+  usernameModalInput.addEventListener("input", () => {
+    if (usernameModalErrorEl) usernameModalErrorEl.textContent = "";
+  });
+}
+
 // initial load
 const ensured = ensureUsername();
 if (ensured) {
-  refreshLeaderboard();
-  refreshRecentAchievements();
-  refreshRecentTimes();
-  resetRefreshCountdown();
+  (async () => {
+    refreshLeaderboard();
+    await sleep(STAGGER_MS);
+    refreshRecentAchievements();
+    await sleep(STAGGER_MS);
+    refreshRecentTimes();
+    resetRefreshCountdown();
+  })();
 }
