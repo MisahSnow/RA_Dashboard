@@ -29,6 +29,8 @@ const refreshBtn = document.getElementById("refreshBtn");
 const tbody = document.querySelector("#leaderboard tbody");
 const statusEl = document.getElementById("status");
 const refreshCountdownEl = document.getElementById("refreshCountdown");
+const onlineUsersEl = document.getElementById("onlineUsers");
+const onlineHintEl = document.getElementById("onlineHint");
 
 const settingsBtn = document.getElementById("settingsBtn");
 const settingsModal = document.getElementById("settingsModal");
@@ -104,6 +106,14 @@ const ACHIEVEMENTS_MIN_WAIT_MS = 5000;
 const achievementsLoadStart = Date.now();
 let achievementsShowMoreCount = 0;
 const STAGGER_MS = 400;
+const PRESENCE_PING_MS = 15000;
+let presenceTimer = null;
+const PRESENCE_SESSION_KEY = "ra.presence.session";
+let presenceSessionId = sessionStorage.getItem(PRESENCE_SESSION_KEY);
+if (!presenceSessionId) {
+  presenceSessionId = Math.random().toString(36).slice(2);
+  sessionStorage.setItem(PRESENCE_SESSION_KEY, presenceSessionId);
+}
 
 function clampUsername(s) {
   return (s || "").trim().replace(/\s+/g, "");
@@ -145,6 +155,80 @@ function cacheGet(key) {
     return null;
   }
 }
+
+async function fetchPresence() {
+  return fetchJson("/api/presence", { silent: true });
+}
+
+async function sendPresence(username) {
+  try {
+    await fetch("/api/presence", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, sessionId: presenceSessionId })
+    });
+  } catch {
+    // Ignore presence failures.
+  }
+}
+
+function sendPresenceRemove() {
+  const me = clampUsername(meInput.value);
+  if (!me) return;
+  const payload = JSON.stringify({ username: me, sessionId: presenceSessionId });
+  try {
+    if (navigator.sendBeacon) {
+      navigator.sendBeacon("/api/presence/remove", payload);
+      return;
+    }
+  } catch {
+    // fall through
+  }
+  fetch("/api/presence/remove", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: payload
+  }).catch(() => {});
+}
+
+function renderPresence(users, me) {
+  if (!onlineUsersEl) return;
+  onlineUsersEl.innerHTML = "";
+  if (!users.length) {
+    onlineUsersEl.innerHTML = `<div class="meta">No active viewers yet.</div>`;
+    return;
+  }
+  for (const u of users) {
+    const div = document.createElement("div");
+    div.className = "onlineUser";
+    div.textContent = u === me ? `${u} (you)` : u;
+    onlineUsersEl.appendChild(div);
+  }
+}
+
+function startPresence() {
+  const me = clampUsername(meInput.value);
+  if (!me) {
+    if (onlineHintEl) onlineHintEl.textContent = "Set your username to appear online.";
+    return;
+  }
+  if (onlineHintEl) onlineHintEl.textContent = "Active viewers appear here.";
+  if (presenceTimer) clearInterval(presenceTimer);
+
+  const tick = async () => {
+    await sendPresence(me);
+    try {
+      const data = await fetchPresence();
+      renderPresence(data?.results || [], me);
+    } catch {
+      // ignore
+    }
+  };
+  tick();
+  presenceTimer = setInterval(tick, PRESENCE_PING_MS);
+}
+
+window.addEventListener("pagehide", sendPresenceRemove);
 
 async function fetchJson(url, { silent = false } = {}) {
   const apiKey = (apiKeyInput?.value || "").trim();
@@ -1596,6 +1680,7 @@ if (settingsSaveBtn) {
     meInput.value = clampUsername(meInput.value);
     saveState();
     closeSettings();
+    startPresence();
     (async () => {
       refreshLeaderboard();
       await sleep(STAGGER_MS);
@@ -1610,6 +1695,7 @@ if (settingsSaveBtn) {
 meInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") {
     saveState();
+    startPresence();
     (async () => {
       refreshLeaderboard();
       await sleep(STAGGER_MS);
@@ -1655,6 +1741,7 @@ if (usernameModalConfirmBtn) {
       saveState();
       if (usernameModal) usernameModal.hidden = true;
       if (usernameModalLoadingEl) usernameModalLoadingEl.hidden = true;
+      startPresence();
       (async () => {
         refreshLeaderboard();
         await sleep(STAGGER_MS);
@@ -1682,6 +1769,7 @@ if (usernameModalInput) {
 const ensured = ensureUsername();
 if (ensured) {
   (async () => {
+    startPresence();
     refreshLeaderboard();
     await sleep(STAGGER_MS);
     refreshRecentAchievements();

@@ -65,7 +65,51 @@ body::after{
   opacity: 0.45;
 }
 
-.wrap { max-width: 1200px; margin: 0 auto; }
+.wrap { max-width: 1200px; width: 100%; margin: 0 auto; flex: 1; }
+
+.layout{
+  display:flex;
+  gap:16px;
+  align-items:flex-start;
+  justify-content:center;
+}
+
+.presenceBar{
+  width: 220px;
+  padding: 12px 10px;
+  border: 1px solid #2c2448;
+  border-radius: var(--radius-sm);
+  background: rgba(8, 12, 26, 0.65);
+  box-shadow: 0 12px 22px var(--shadow);
+  position: fixed;
+  left: 16px;
+  top: 16px;
+  z-index: 5;
+}
+
+.onlineList{
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+  margin-top: 8px;
+}
+
+.onlineUser{
+  font-family: "Press Start 2P", var(--font-head);
+  font-size: 11px;
+  color: var(--accent);
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.7);
+}
+
+@media (max-width: 980px){
+  .layout{
+    flex-direction:column;
+  }
+  .presenceBar{
+    width: 100%;
+    position: static;
+  }
+}
 
 .panelHeader{
   display:flex;

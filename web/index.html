@@ -7,7 +7,13 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <div class="wrap">
+  <div class="layout">
+    <aside class="presenceBar">
+      <h2 class="sectionTitle">Online Now</h2>
+      <div id="onlineUsers" class="onlineList"></div>
+      <p class="note" id="onlineHint">Active viewers appear here.</p>
+    </aside>
+    <div class="wrap">
     <div class="panelHeader">
       <div class="panelTitle">
         <h1><span class="titlePrimary">Competetive</span> <span class="titleAccent">RetroAchievements</span></h1>
@@ -194,6 +200,7 @@
         <div id="recentTimesLoading" class="loadingWheel" hidden aria-label="Loading"></div>
       </div>
     </section>
+    </div>
   </div>
 
   <script src="app.js"></script>

@@ -16,6 +16,7 @@ if (fs.existsSync(envPath)) {
 }
 
 const app = express();
+app.use(express.json());
 
 const PORT = Number(process.env.PORT || 5179);
 const RA_API_KEY = process.env.RA_API_KEY;
@@ -40,6 +41,8 @@ function cacheSet(key, value, ttlMs) {
   _cache.set(key, { value, expiresAt: Date.now() + ttlMs });
 }
 const DEFAULT_CACHE_TTL_MS = 180 * 1000; // 3 minutes
+const PRESENCE_TTL_MS = 15 * 1000;
+const presence = new Map(); // Map<username, Map<sessionId, lastSeen>>
 
 // simple concurrency limiter
 function createLimiter(max) {
@@ -228,6 +231,48 @@ async function raGetUserSummary(username, apiKey) {
 
 // --- API routes ---
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
+
+// Online presence (best-effort)
+app.get("/api/presence", (_req, res) => {
+  const now = Date.now();
+  const active = [];
+  for (const [username, sessions] of presence.entries()) {
+    for (const [sessionId, lastSeen] of sessions.entries()) {
+      if (now - lastSeen > PRESENCE_TTL_MS) {
+        sessions.delete(sessionId);
+      }
+    }
+    if (sessions.size === 0) {
+      presence.delete(username);
+      continue;
+    }
+    const latest = Math.max(...Array.from(sessions.values()));
+    active.push({ username, lastSeen: latest });
+  }
+  active.sort((a, b) => b.lastSeen - a.lastSeen || a.username.localeCompare(b.username));
+  res.json({ count: active.length, results: active.map(a => a.username) });
+});
+
+app.post("/api/presence", (req, res) => {
+  const username = String(req.body?.username || "").trim();
+  const sessionId = String(req.body?.sessionId || "").trim();
+  if (!username || !sessionId) return res.status(400).json({ error: "Missing username or sessionId" });
+  if (!presence.has(username)) presence.set(username, new Map());
+  presence.get(username).set(sessionId, Date.now());
+  res.json({ ok: true });
+});
+
+app.post("/api/presence/remove", (req, res) => {
+  const username = String(req.body?.username || "").trim();
+  const sessionId = String(req.body?.sessionId || "").trim();
+  if (!username || !sessionId) return res.status(400).json({ error: "Missing username or sessionId" });
+  const sessions = presence.get(username);
+  if (sessions) {
+    sessions.delete(sessionId);
+    if (sessions.size === 0) presence.delete(username);
+  }
+  res.json({ ok: true });
+});
 
 // Monthly points gained (this month)
 //
