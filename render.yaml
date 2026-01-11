@@ -16,7 +16,6 @@ services:
         generateValue: true
       - key: RA_API_KEY
         value: ""
-        sync: false
 
 databases:
   - name: retroachievements-db
