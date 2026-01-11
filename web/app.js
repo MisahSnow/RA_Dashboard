@@ -747,7 +747,9 @@ function formatAchievementValue(count) {
 function setTileAchievementMeta(metaEl, counts) {
   const meText = formatAchievementValue(counts.me);
   const themText = formatAchievementValue(counts.them);
-  metaEl.innerHTML = `Achievements: <span class="me">${meText}</span> <span class="sep">|</span> <span class="them">${themText}</span>`;
+  metaEl.innerHTML = profileIsSelf
+    ? `Achievements: <span class="me">${meText}</span>`
+    : `Achievements: <span class="me">${meText}</span> <span class="sep">|</span> <span class="them">${themText}</span>`;
 }
 
 async function loadProfileGameAchievements(gameId, metaEl) {
@@ -955,7 +957,7 @@ function renderProfileSummary(summary) {
   }
 }
 
-function renderProfileInsights({ sharedCount, meSummary, themSummary }) {
+function renderProfileInsights({ sharedCount, meSummary, themSummary, isSelf }) {
   if (!profileInsightsEl) return;
   profileInsightsEl.innerHTML = "";
 
@@ -969,6 +971,12 @@ function renderProfileInsights({ sharedCount, meSummary, themSummary }) {
     const me = formatNum(meVal);
     const them = formatNum(themVal);
     if (me === null && them === null) return null;
+    if (isSelf) {
+      return {
+        label,
+        valueHtml: `<strong>${fmt(me)}</strong>`
+      };
+    }
     return {
       label,
       valueHtml: `
@@ -980,7 +988,10 @@ function renderProfileInsights({ sharedCount, meSummary, themSummary }) {
   };
 
   const rows = [
-    { label: "Shared Games", valueHtml: `<strong>${Number(sharedCount ?? 0).toLocaleString()}</strong>` },
+    {
+      label: isSelf ? "Recent Games" : "Shared Games",
+      valueHtml: `<strong>${Number(sharedCount ?? 0).toLocaleString()}</strong>`
+    },
     formatLabel("Total Points", meSummary?.totalPoints, themSummary?.totalPoints),
     formatLabel("Retro Points", meSummary?.retroPoints, themSummary?.retroPoints),
     formatLabel("Completed Games", meSummary?.completedGames, themSummary?.completedGames),
@@ -1118,7 +1129,8 @@ async function openProfile(username) {
     renderProfileInsights({
       sharedCount: unique.length,
       meSummary,
-      themSummary
+      themSummary,
+      isSelf
     });
     profilePanel.scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (e) {
