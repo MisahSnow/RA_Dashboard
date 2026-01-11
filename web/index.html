@@ -45,6 +45,12 @@
           <label for="apiKeyInput">API key (optional)</label>
           <input id="apiKeyInput" placeholder="Use your own RetroAchievements API key" autocomplete="off" />
         </div>
+        <div class="field checkboxField">
+          <label class="checkboxLabel">
+            <input type="checkbox" id="useApiKeyToggle" />
+            Use custom API key
+          </label>
+        </div>
         <div class="buttons">
           <button id="settingsSaveBtn">Save</button>
           <button id="settingsCancelBtn" class="smallBtn">Cancel</button>
@@ -83,6 +89,12 @@
         <div class="field">
           <label for="usernameModalApiKeyInput">API key (optional)</label>
           <input id="usernameModalApiKeyInput" placeholder="RetroAchievements API key" autocomplete="off" />
+        </div>
+        <div class="field checkboxField">
+          <label class="checkboxLabel">
+            <input type="checkbox" id="usernameModalUseApiKeyToggle" />
+            Use custom API key
+          </label>
         </div>
         <div id="usernameModalLoading" class="loadingWheel" hidden aria-label="Loading"></div>
         <div id="usernameModalError" class="note errorText" role="alert"></div>

@@ -238,6 +238,25 @@ h1 {
   flex: 1;
 }
 
+.checkboxField {
+  min-width: 0;
+  flex: 0 0 auto;
+}
+
+.checkboxLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+
+.checkboxLabel input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent);
+}
+
 label { color: var(--ink-muted); font-size: 12px; }
 label.tiny{ font-size:11px; color:#8fa0bd; }
 

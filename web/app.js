@@ -5,6 +5,7 @@ function sleep(ms) {
 }
 
 const LS_API_KEY = "ra.apiKey";
+const LS_USE_API_KEY = "ra.useApiKey";
 const LS_CACHE_PREFIX = "ra.cache.";
 const LS_DAILY_HISTORY = "ra.dailyHistory";
 
@@ -21,6 +22,7 @@ const addFriendLoadingEl = document.getElementById("addFriendLoading");
 const usernameModal = document.getElementById("usernameModal");
 const usernameModalInput = document.getElementById("usernameModalInput");
 const usernameModalApiKeyInput = document.getElementById("usernameModalApiKeyInput");
+const usernameModalUseApiKeyToggle = document.getElementById("usernameModalUseApiKeyToggle");
 const usernameModalConfirmBtn = document.getElementById("usernameModalConfirmBtn");
 const usernameModalErrorEl = document.getElementById("usernameModalError");
 const usernameModalLoadingEl = document.getElementById("usernameModalLoading");
@@ -37,6 +39,7 @@ const settingsModal = document.getElementById("settingsModal");
 const settingsSaveBtn = document.getElementById("settingsSaveBtn");
 const settingsCloseBtn = document.getElementById("settingsCloseBtn");
 const settingsCancelBtn = document.getElementById("settingsCancelBtn");
+const useApiKeyToggle = document.getElementById("useApiKeyToggle");
 
 const recentAchievementsEl = document.getElementById("recentAchievements");
 const recentTimesEl = document.getElementById("recentTimes");
@@ -140,10 +143,14 @@ function setCurrentUser(username) {
 
 function loadState() {
   if (apiKeyInput) apiKeyInput.value = localStorage.getItem(LS_API_KEY) || "";
+  if (useApiKeyToggle) {
+    useApiKeyToggle.checked = localStorage.getItem(LS_USE_API_KEY) === "true";
+  }
 }
 
 function saveState() {
   if (apiKeyInput) localStorage.setItem(LS_API_KEY, (apiKeyInput.value || "").trim());
+  if (useApiKeyToggle) localStorage.setItem(LS_USE_API_KEY, useApiKeyToggle.checked ? "true" : "false");
 }
 
 loadState();
@@ -386,7 +393,8 @@ window.addEventListener("pagehide", sendPresenceRemove);
 
 async function fetchJson(url, { silent = false } = {}) {
   const apiKey = (apiKeyInput?.value || "").trim();
-  const headers = apiKey ? { "x-ra-api-key": apiKey } : {};
+  const useApiKey = !!useApiKeyToggle?.checked;
+  const headers = (useApiKey && apiKey) ? { "x-ra-api-key": apiKey } : {};
   const maxRetries = 2;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
@@ -605,7 +613,7 @@ async function loginAndStart(username, { errorEl, loadingEl, closeModal } = {}) 
   try {
     if (loadingEl) loadingEl.hidden = false;
     const apiKey = (apiKeyInput?.value || "").trim();
-    if (apiKey) {
+    if (useApiKeyToggle?.checked && apiKey) {
       await fetchUserSummary(username, { silent: true });
     }
   } catch (e) {
@@ -654,7 +662,7 @@ async function addFriendFromModal() {
   try {
     if (addFriendLoadingEl) addFriendLoadingEl.hidden = false;
     const apiKey = (apiKeyInput?.value || "").trim();
-    if (apiKey) {
+    if (useApiKeyToggle?.checked && apiKey) {
       await fetchUserSummary(u, { silent: true });
     }
   } catch (e) {
@@ -702,7 +710,11 @@ function ensureUsername() {
       usernameModalInput.focus();
     }
     if (usernameModalApiKeyInput) {
-      usernameModalApiKeyInput.value = "";
+      const useApiKey = !!useApiKeyToggle?.checked;
+      usernameModalApiKeyInput.value = useApiKey ? (apiKeyInput?.value || "") : "";
+    }
+    if (usernameModalUseApiKeyToggle) {
+      usernameModalUseApiKeyToggle.checked = !!useApiKeyToggle?.checked;
     }
     if (usernameModalErrorEl) usernameModalErrorEl.textContent = "";
     if (usernameModalLoadingEl) usernameModalLoadingEl.hidden = true;
@@ -2206,6 +2218,10 @@ if (settingsSaveBtn) {
       setStatus("Username is required.");
       return;
     }
+    if (useApiKeyToggle?.checked && !(apiKeyInput?.value || "").trim()) {
+      setStatus("API key required when enabled.");
+      return;
+    }
     (async () => {
       await loginAndStart(entered, { closeModal: closeSettings });
     })();
@@ -2232,7 +2248,14 @@ if (usernameModalConfirmBtn) {
       return;
     }
     const apiKey = (usernameModalApiKeyInput?.value || "").trim();
+    const wantsCustomApiKey = !!usernameModalUseApiKeyToggle?.checked;
+    if (wantsCustomApiKey && !apiKey) {
+      if (usernameModalErrorEl) usernameModalErrorEl.textContent = "API key required when enabled.";
+      return;
+    }
     if (apiKeyInput) apiKeyInput.value = apiKey;
+    if (useApiKeyToggle) useApiKeyToggle.checked = wantsCustomApiKey && !!apiKey;
+    saveState();
     (async () => {
       await loginAndStart(entered, {
         errorEl: usernameModalErrorEl,
