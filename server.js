@@ -1,4 +1,7 @@
 import express from "express";
+import session from "express-session";
+import connectPgSimple from "connect-pg-simple";
+import pg from "pg";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
@@ -20,9 +23,34 @@ app.use(express.json());
 
 const PORT = Number(process.env.PORT || 5179);
 const RA_API_KEY = process.env.RA_API_KEY;
+const DATABASE_URL = process.env.DATABASE_URL;
+const SESSION_SECRET = process.env.SESSION_SECRET || "dev-session-secret";
 
 if (!RA_API_KEY) {
   console.warn("WARNING: RA_API_KEY is not set. Check .env next to server.js.");
+}
+if (!DATABASE_URL) {
+  console.warn("WARNING: DATABASE_URL is not set. User accounts will not persist.");
+}
+
+const { Pool } = pg;
+const useSsl = process.env.DATABASE_SSL === "true";
+const pool = DATABASE_URL
+  ? new Pool({ connectionString: DATABASE_URL, ssl: useSsl ? { rejectUnauthorized: false } : false })
+  : null;
+
+if (pool) {
+  const PgSession = connectPgSimple(session);
+  app.use(session({
+    store: new PgSession({ pool, createTableIfMissing: true }),
+    secret: SESSION_SECRET,
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production"
+    }
+  }));
 }
 
 
@@ -43,6 +71,26 @@ function cacheSet(key, value, ttlMs) {
 const DEFAULT_CACHE_TTL_MS = 180 * 1000; // 3 minutes
 const PRESENCE_TTL_MS = 15 * 1000;
 const presence = new Map(); // Map<username, Map<sessionId, lastSeen>>
+
+async function initDb() {
+  if (!pool) return;
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id SERIAL PRIMARY KEY,
+      username TEXT UNIQUE NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS friends (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      friend_username TEXT NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(user_id, friend_username)
+    );
+  `);
+}
 
 // simple concurrency limiter
 function createLimiter(max) {
@@ -231,6 +279,78 @@ async function raGetUserSummary(username, apiKey) {
 
 // --- API routes ---
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
+
+function normalizeUsername(u) {
+  return String(u || "").trim().replace(/\s+/g, "").toLowerCase();
+}
+
+function requireAuth(req, res, next) {
+  if (!req.session || !req.session.user) {
+    return res.status(401).json({ error: "Not authenticated" });
+  }
+  return next();
+}
+
+app.get("/api/auth/me", (req, res) => {
+  const user = req.session?.user;
+  if (!user) return res.json({ username: "" });
+  res.json({ username: user.username });
+});
+
+app.post("/api/auth/login", async (req, res) => {
+  if (!pool) return res.status(500).json({ error: "Database unavailable" });
+  const raw = req.body?.username;
+  const username = normalizeUsername(raw);
+  if (!username) return res.status(400).json({ error: "Missing username" });
+
+  const result = await pool.query(
+    "INSERT INTO users (username) VALUES ($1) ON CONFLICT (username) DO UPDATE SET username = EXCLUDED.username RETURNING id, username",
+    [username]
+  );
+  const user = result.rows[0];
+  req.session.user = { id: user.id, username: user.username };
+  res.json({ username: user.username });
+});
+
+app.post("/api/auth/logout", (req, res) => {
+  if (req.session) req.session.destroy(() => {});
+  res.json({ ok: true });
+});
+
+app.get("/api/friends", requireAuth, async (req, res) => {
+  if (!pool) return res.status(500).json({ error: "Database unavailable" });
+  const userId = req.session.user.id;
+  const result = await pool.query(
+    "SELECT friend_username FROM friends WHERE user_id = $1 ORDER BY friend_username",
+    [userId]
+  );
+  res.json({ results: result.rows.map(r => r.friend_username) });
+});
+
+app.post("/api/friends", requireAuth, async (req, res) => {
+  if (!pool) return res.status(500).json({ error: "Database unavailable" });
+  const userId = req.session.user.id;
+  const friend = normalizeUsername(req.body?.username);
+  if (!friend) return res.status(400).json({ error: "Missing friend username" });
+
+  await pool.query(
+    "INSERT INTO friends (user_id, friend_username) VALUES ($1, $2) ON CONFLICT (user_id, friend_username) DO NOTHING",
+    [userId, friend]
+  );
+  res.json({ ok: true });
+});
+
+app.delete("/api/friends/:username", requireAuth, async (req, res) => {
+  if (!pool) return res.status(500).json({ error: "Database unavailable" });
+  const userId = req.session.user.id;
+  const friend = normalizeUsername(req.params.username);
+  if (!friend) return res.status(400).json({ error: "Missing friend username" });
+  await pool.query(
+    "DELETE FROM friends WHERE user_id = $1 AND friend_username = $2",
+    [userId, friend]
+  );
+  res.json({ ok: true });
+});
 
 // Online presence (best-effort)
 app.get("/api/presence", (_req, res) => {
@@ -740,7 +860,20 @@ const webPath = path.join(__dirname, "web");
 app.use(express.static(webPath));
 app.get("/", (_req, res) => res.sendFile(path.join(webPath, "index.html")));
 
-app.listen(PORT, () => {
-  console.log(`Server running: http://localhost:${PORT}`);
-  console.log(`Health check : http://localhost:${PORT}/api/health`);
-});
+const startServer = () => {
+  app.listen(PORT, () => {
+    console.log(`Server running: http://localhost:${PORT}`);
+    console.log(`Health check : http://localhost:${PORT}/api/health`);
+  });
+};
+
+if (pool) {
+  initDb()
+    .then(startServer)
+    .catch((err) => {
+      console.error("Failed to initialize database:", err);
+      startServer();
+    });
+} else {
+  startServer();
+}

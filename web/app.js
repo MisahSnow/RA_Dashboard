@@ -4,8 +4,6 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-const LS_ME = "ra.me";
-const LS_FRIENDS = "ra.friends";
 const LS_API_KEY = "ra.apiKey";
 const LS_CACHE_PREFIX = "ra.cache.";
 const LS_DAILY_HISTORY = "ra.dailyHistory";
@@ -128,28 +126,27 @@ let presenceRenderTimer = null;
 let lastPresenceKey = "";
 let lastPresenceMe = "";
 let lastChartKey = "";
+let currentUser = "";
+let friends = [];
 
 function clampUsername(s) {
   return (s || "").trim().replace(/\s+/g, "");
 }
 
-function loadState() {
-  meInput.value = localStorage.getItem(LS_ME) || "";
-  if (apiKeyInput) apiKeyInput.value = localStorage.getItem(LS_API_KEY) || "";
-  try {
-    return JSON.parse(localStorage.getItem(LS_FRIENDS) || "[]");
-  } catch {
-    return [];
-  }
+function setCurrentUser(username) {
+  currentUser = clampUsername(username);
+  if (meInput) meInput.value = currentUser;
 }
 
-let friends = loadState();
+function loadState() {
+  if (apiKeyInput) apiKeyInput.value = localStorage.getItem(LS_API_KEY) || "";
+}
 
 function saveState() {
-  localStorage.setItem(LS_ME, clampUsername(meInput.value));
   if (apiKeyInput) localStorage.setItem(LS_API_KEY, (apiKeyInput.value || "").trim());
-  localStorage.setItem(LS_FRIENDS, JSON.stringify(friends));
 }
+
+loadState();
 
 function cacheSet(key, data) {
   try {
@@ -316,7 +313,7 @@ async function sendPresence(username) {
 }
 
 function sendPresenceRemove() {
-  const me = clampUsername(meInput.value);
+  const me = currentUser;
   if (!me) return;
   const payload = JSON.stringify({ username: me, sessionId: presenceSessionId });
   try {
@@ -364,7 +361,7 @@ function schedulePresenceRender(users, me) {
 }
 
 function startPresence() {
-  const me = clampUsername(meInput.value);
+  const me = currentUser;
   if (!me) {
     if (onlineHintEl) onlineHintEl.textContent = "Set your username to appear online.";
     return;
@@ -416,6 +413,31 @@ async function fetchJson(url, { silent = false } = {}) {
   throw new Error("Request failed after retries.");
 }
 
+async function fetchServerJson(url, { method = "GET", body = null, silent = false } = {}) {
+  const headers = {};
+  if (body !== null) headers["Content-Type"] = "application/json";
+  const res = await fetch(url, {
+    method,
+    headers,
+    body: body !== null ? JSON.stringify(body) : undefined,
+    credentials: "same-origin"
+  });
+  if (!res.ok) {
+    let message = "";
+    try {
+      const data = await res.json();
+      message = data?.error || data?.message || "";
+    } catch {
+      message = await res.text().catch(() => "");
+    }
+    if (!silent && message) setStatus(message);
+    throw new Error(message || `Request failed: ${res.status}`);
+  }
+  const contentType = res.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) return res.json();
+  return null;
+}
+
 async function fetchMonthly(username) {
   return fetchJson(`/api/monthly/${encodeURIComponent(username)}`);
 }
@@ -456,6 +478,46 @@ async function fetchGameAchievements(username, gameId) {
 async function fetchGameTimes(username, gameId) {
   const u = encodeURIComponent(username);
   return fetchJson(`/api/game-times/${u}/${encodeURIComponent(gameId)}`);
+}
+
+async function fetchAuthMe() {
+  try {
+    const data = await fetchServerJson("/api/auth/me", { silent: true });
+    return clampUsername(data?.username || "");
+  } catch {
+    return "";
+  }
+}
+
+async function loginUser(username) {
+  const data = await fetchServerJson("/api/auth/login", {
+    method: "POST",
+    body: { username }
+  });
+  return clampUsername(data?.username || username);
+}
+
+async function loadFriendsFromServer() {
+  try {
+    const data = await fetchServerJson("/api/friends", { silent: true });
+    const list = Array.isArray(data?.results) ? data.results : [];
+    return list.map(clampUsername).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+async function addFriendToServer(username) {
+  await fetchServerJson("/api/friends", {
+    method: "POST",
+    body: { username }
+  });
+}
+
+async function removeFriendFromServer(username) {
+  await fetchServerJson(`/api/friends/${encodeURIComponent(username)}`, {
+    method: "DELETE"
+  });
 }
 
 function setStatus(msg) {
@@ -520,10 +582,69 @@ function closeAddFriendModal() {
   if (addFriendLoadingEl) addFriendLoadingEl.hidden = true;
 }
 
+function getUserValidationError(err, username) {
+  const msg = String(err?.message || "");
+  const notFound = msg.includes("404") || msg.toLowerCase().includes("not found");
+  const apiKeyMissing = msg.toLowerCase().includes("missing ra api key");
+  if (apiKeyMissing) return "API key required to validate this user.";
+  if (notFound) return `User not found: ${username}`;
+  return `Could not verify user: ${username}`;
+}
+
+async function bootstrapAfterLogin() {
+  startPresence();
+  refreshLeaderboard();
+  await sleep(STAGGER_MS);
+  refreshRecentAchievements();
+  await sleep(STAGGER_MS);
+  refreshRecentTimes();
+  resetRefreshCountdown();
+}
+
+async function loginAndStart(username, { errorEl, loadingEl, closeModal } = {}) {
+  try {
+    if (loadingEl) loadingEl.hidden = false;
+    await fetchUserSummary(username, { silent: true });
+  } catch (e) {
+    const message = getUserValidationError(e, username);
+    if (errorEl) {
+      errorEl.textContent = message;
+    } else {
+      setStatus(message);
+    }
+    if (loadingEl) loadingEl.hidden = true;
+    return false;
+  }
+
+  try {
+    const loggedIn = await loginUser(username);
+    setCurrentUser(loggedIn);
+    friends = await loadFriendsFromServer();
+    saveState();
+  } catch (e) {
+    const message = String(e?.message || "Login failed.");
+    if (errorEl) {
+      errorEl.textContent = message;
+    } else {
+      setStatus(message);
+    }
+    if (loadingEl) loadingEl.hidden = true;
+    return false;
+  }
+
+  if (closeModal) closeModal();
+  if (loadingEl) loadingEl.hidden = true;
+  await bootstrapAfterLogin();
+  return true;
+}
+
 async function addFriendFromModal() {
   const me = ensureUsername();
   const u = clampUsername(friendInput.value);
-  if (!me) return setStatus("Set your username first.");
+  if (!me) {
+    if (addFriendErrorEl) addFriendErrorEl.textContent = "Set your username first.";
+    return;
+  }
   if (!u) return;
   if (u.toLowerCase() === me.toLowerCase()) return setStatus("That's you. Add someone else.");
 
@@ -531,22 +652,21 @@ async function addFriendFromModal() {
     if (addFriendLoadingEl) addFriendLoadingEl.hidden = false;
     await fetchUserSummary(u, { silent: true });
   } catch (e) {
-    const msg = String(e?.message || "");
-    const notFound = msg.includes("404") || msg.toLowerCase().includes("not found");
-    const apiKeyMissing = msg.toLowerCase().includes("missing ra api key");
-    const label = apiKeyMissing
-      ? "API key required to validate this user."
-      : notFound ? `User not found: ${u}` : `Could not verify user: ${u}`;
-    if (addFriendErrorEl) addFriendErrorEl.textContent = label;
+    if (addFriendErrorEl) addFriendErrorEl.textContent = getUserValidationError(e, u);
     if (addFriendLoadingEl) addFriendLoadingEl.hidden = true;
     return;
   }
 
-  if (!friends.includes(u)) friends.push(u);
-  friendInput.value = "";
-  saveState();
-  closeAddFriendModal();
-  if (addFriendLoadingEl) addFriendLoadingEl.hidden = true;
+  try {
+    await addFriendToServer(u);
+    friends = Array.from(new Set([...friends, u]));
+    friendInput.value = "";
+    closeAddFriendModal();
+  } catch (e) {
+    if (addFriendErrorEl) addFriendErrorEl.textContent = String(e?.message || "Unable to add friend.");
+  } finally {
+    if (addFriendLoadingEl) addFriendLoadingEl.hidden = true;
+  }
 
   refreshLeaderboard();
   refreshRecentAchievements();
@@ -555,6 +675,7 @@ async function addFriendFromModal() {
 
 function openSettings() {
   if (!settingsModal) return;
+  if (meInput) meInput.value = currentUser;
   settingsModal.hidden = false;
   meInput.focus();
 }
@@ -565,7 +686,7 @@ function closeSettings() {
 }
 
 function ensureUsername() {
-  const existing = clampUsername(meInput.value);
+  const existing = currentUser;
   if (existing) return existing;
 
   if (usernameModal) {
@@ -660,11 +781,17 @@ tr.innerHTML = `
       const removeBtn = e.target.closest("button[data-remove]");
       if (removeBtn) {
         const u = removeBtn.getAttribute("data-remove");
-        friends = friends.filter(x => x !== u);
-        saveState();
-        refreshLeaderboard();
-        refreshRecentAchievements();
-        refreshRecentTimes();
+        (async () => {
+          try {
+            await removeFriendFromServer(u);
+            friends = friends.filter(x => x !== u);
+            refreshLeaderboard();
+            refreshRecentAchievements();
+            refreshRecentTimes();
+          } catch (err) {
+            setStatus(String(err?.message || "Unable to remove friend."));
+          }
+        })();
       }
     });
   }
@@ -1662,7 +1789,7 @@ function renderRecentTimes(items) {
 }
 
 function getUsersIncludingMe() {
-  const me = clampUsername(meInput.value);
+  const me = currentUser;
   const users = Array.from(new Set([me, ...friends].map(clampUsername).filter(Boolean)));
   return { me, users };
 }
@@ -2068,33 +2195,20 @@ if (settingsCancelBtn) {
 }
 if (settingsSaveBtn) {
   settingsSaveBtn.addEventListener("click", () => {
-    meInput.value = clampUsername(meInput.value);
-    saveState();
-    closeSettings();
-    startPresence();
+    const entered = clampUsername(meInput.value);
+    if (!entered) {
+      setStatus("Username is required.");
+      return;
+    }
     (async () => {
-      refreshLeaderboard();
-      await sleep(STAGGER_MS);
-      refreshRecentAchievements();
-      await sleep(STAGGER_MS);
-      refreshRecentTimes();
-      resetRefreshCountdown();
+      await loginAndStart(entered, { closeModal: closeSettings });
     })();
   });
 }
 
 meInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") {
-    saveState();
-    startPresence();
-    (async () => {
-      refreshLeaderboard();
-      await sleep(STAGGER_MS);
-      refreshRecentAchievements();
-      await sleep(STAGGER_MS);
-      refreshRecentTimes();
-      resetRefreshCountdown();
-    })();
+    if (settingsSaveBtn) settingsSaveBtn.click();
   }
 });
 
@@ -2114,33 +2228,13 @@ if (usernameModalConfirmBtn) {
     const apiKey = (usernameModalApiKeyInput?.value || "").trim();
     if (apiKeyInput) apiKeyInput.value = apiKey;
     (async () => {
-      try {
-        if (usernameModalLoadingEl) usernameModalLoadingEl.hidden = false;
-        await fetchUserSummary(entered, { silent: true });
-      } catch (e) {
-        const msg = String(e?.message || "");
-        const notFound = msg.includes("404") || msg.toLowerCase().includes("not found");
-        const apiKeyMissing = msg.toLowerCase().includes("missing ra api key");
-        const label = apiKeyMissing
-          ? "API key required to validate this user."
-          : notFound ? `User not found: ${entered}` : `Could not verify user: ${entered}`;
-        if (usernameModalErrorEl) usernameModalErrorEl.textContent = label;
-        if (usernameModalLoadingEl) usernameModalLoadingEl.hidden = true;
-        return;
-      }
-      meInput.value = entered;
-      saveState();
-      if (usernameModal) usernameModal.hidden = true;
-      if (usernameModalLoadingEl) usernameModalLoadingEl.hidden = true;
-      startPresence();
-      (async () => {
-        refreshLeaderboard();
-        await sleep(STAGGER_MS);
-        refreshRecentAchievements();
-        await sleep(STAGGER_MS);
-        refreshRecentTimes();
-        resetRefreshCountdown();
-      })();
+      await loginAndStart(entered, {
+        errorEl: usernameModalErrorEl,
+        loadingEl: usernameModalLoadingEl,
+        closeModal: () => {
+          if (usernameModal) usernameModal.hidden = true;
+        }
+      });
     })();
   });
 }
@@ -2157,15 +2251,13 @@ if (usernameModalInput) {
 }
 
 // initial load
-const ensured = ensureUsername();
-if (ensured) {
-  (async () => {
-    startPresence();
-    refreshLeaderboard();
-    await sleep(STAGGER_MS);
-    refreshRecentAchievements();
-    await sleep(STAGGER_MS);
-    refreshRecentTimes();
-    resetRefreshCountdown();
-  })();
-}
+(async () => {
+  const me = await fetchAuthMe();
+  if (me) {
+    setCurrentUser(me);
+    friends = await loadFriendsFromServer();
+    await bootstrapAfterLogin();
+  } else {
+    ensureUsername();
+  }
+})();

@@ -14,6 +14,10 @@ A lightweight dashboard for comparing RetroAchievements friends: monthly points,
 
 2) Create `.env` next to `server.js` and set:
    RA_API_KEY=YOUR_KEY
+   DATABASE_URL=YOUR_POSTGRES_URL
+   SESSION_SECRET=YOUR_RANDOM_SECRET
+   # Optional (Render often needs SSL)
+   DATABASE_SSL=true
 
 3) Run:
    npm start
@@ -30,7 +34,12 @@ A lightweight dashboard for comparing RetroAchievements friends: monthly points,
 - /api/game-achievements/:username/:gameId
 - /api/game-times/:username/:gameId
 - /api/now-playing/:username (query: ?window=seconds)
+- /api/auth/me
+- /api/auth/login
+- /api/auth/logout
+- /api/friends
 
 ## Notes
 - Uses RetroAchievements API. Provide your own API key in `.env` or via the UI settings.
 - Recent times and other endpoints are cached for a few minutes to reduce 429s.
+- Friends are stored per-account in Postgres and loaded via cookie sessions.

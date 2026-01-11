@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: retroachievements
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: retroachievements-db
+          property: connectionString
+      - key: DATABASE_SSL
+        value: "true"
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: RA_API_KEY
+        value: ""
+        sync: false
+
+databases:
+  - name: retroachievements-db
+    plan: free
