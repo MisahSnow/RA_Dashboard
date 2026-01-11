@@ -186,6 +186,21 @@ async function upsertDailyPoints(username, dayKey, mode, points) {
   );
 }
 
+async function computeDailyPointsWithRetry(username, includeSoftcore, apiKey, retries = 10) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await computeDailyPoints(username, includeSoftcore, apiKey);
+    } catch (err) {
+      const msg = String(err?.message || err || "");
+      const is429 = msg.includes("429") || msg.includes("Too Many Attempts");
+      if (!is429 || attempt >= retries) throw err;
+      const delayMs = Math.min(30000, 750 * Math.pow(2, attempt));
+      await sleep(delayMs);
+    }
+  }
+  throw new Error("Failed to fetch daily points after retries.");
+}
+
 async function raFetchJson(url, { retries = 2 } = {}) {
   let attempt = 0;
   while (true) {
@@ -634,16 +649,20 @@ app.post("/api/daily-snapshot", requireSnapshotSecret, async (req, res) => {
     const dayKey = getDayRange().start.toISOString().slice(0, 10);
     const limitDaily = createLimiter(2);
 
+    const skipped = [];
     await Promise.all(usernames.map((username) => limitDaily(async () => {
       try {
-        const { points } = await computeDailyPoints(username, includeSoftcore, RA_API_KEY);
+        const { points } = await computeDailyPointsWithRetry(username, includeSoftcore, RA_API_KEY, 10);
         await upsertDailyPoints(username, dayKey, mode, points);
       } catch {
-        // ignore snapshot failures per user
+        skipped.push(username);
       }
     })));
 
-    res.json({ ok: true, count: usernames.length });
+    if (skipped.length) {
+      console.warn(`Daily snapshot skipped ${skipped.length} user(s): ${skipped.join(", ")}`);
+    }
+    res.json({ ok: true, count: usernames.length, skipped });
   } catch (err) {
     res.status(500).json({ error: err?.message || "Failed to snapshot daily points" });
   }
