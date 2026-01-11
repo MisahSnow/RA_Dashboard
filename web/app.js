@@ -149,6 +149,11 @@ let challengesPollTimer = null;
 let challengesTotalsTimer = null;
 const challengeTotalsCache = new Map();
 const activeChallengeCache = new Map();
+let lastChallengesKey = "";
+let lastLeaderboardKey = "";
+let lastLeaderboardRows = [];
+let lastRecentAchievementsKey = "";
+let lastRecentTimesKey = "";
 
 function clampUsername(s) {
   return (s || "").trim().replace(/\s+/g, "");
@@ -1054,6 +1059,20 @@ async function refreshChallenges({ includeTotals = true } = {}) {
 }
 
 function renderLeaderboard(rows, me) {
+  const key = JSON.stringify(rows.map(r => [
+    r.username,
+    r.points,
+    r.deltaVsYou,
+    r.unlocks,
+    r.nowPlayingHtml,
+    r.nowPlayingText,
+    r.dailyPoints,
+    r.avatarUrl
+  ]));
+  if (key === lastLeaderboardKey) return;
+  lastLeaderboardKey = key;
+  lastLeaderboardRows = rows.map(r => ({ ...r }));
+
   tbody.innerHTML = "";
   cacheSet("leaderboard", { rows, me });
   const total = rows.length;
@@ -1982,6 +2001,13 @@ async function openGameCompare(game) {
 }
 
 function renderRecentAchievements(items) {
+  const key = JSON.stringify({
+    visible: recentAchievementsVisible,
+    items: items.map(a => [a.achievementId, a.date, a.username])
+  });
+  if (key === lastRecentAchievementsKey) return;
+  lastRecentAchievementsKey = key;
+
   recentAchievementsEl.innerHTML = "";
   recentAchievementsItems = items;
   cacheSet("recentAchievements", { items });
@@ -2061,6 +2087,13 @@ function renderRecentAchievements(items) {
 
 
 function renderRecentTimes(items) {
+  const key = JSON.stringify({
+    visible: recentTimesVisible,
+    items: items.map(t => [t.leaderboardId, t.dateUpdated, t.username, t.score])
+  });
+  if (key === lastRecentTimesKey) return;
+  lastRecentTimesKey = key;
+
   recentTimesEl.innerHTML = "";
   recentTimesItems = items;
   cacheSet("recentTimes", { items });
@@ -2143,14 +2176,23 @@ async function refreshLeaderboard() {
     const myPoints = map[me]?.points ?? 0;
 
     // Initial rows: show placeholder in Now Playing while we fetch presence.
-    const rows = users.map(u => ({
-      username: u,
-      points: map[u]?.points ?? 0,
-      deltaVsYou: (map[u]?.points ?? 0) - myPoints,
-      unlocks: map[u]?.unlockCount ?? 0,
-      nowPlayingHtml: "Loading...",
-      dailyPoints: null
-    }));
+    const previousByUser = Object.fromEntries(
+      (lastLeaderboardRows || []).map(r => [r.username, r])
+    );
+    const rows = users.map(u => {
+      const prev = previousByUser[u];
+      const prevNow = prev?.nowPlayingHtml || "";
+      const keepNow = prevNow && !prevNow.includes("Loading");
+      return {
+        username: u,
+        points: map[u]?.points ?? 0,
+        deltaVsYou: (map[u]?.points ?? 0) - myPoints,
+        unlocks: map[u]?.unlockCount ?? 0,
+        nowPlayingHtml: keepNow ? prevNow : "Loading...",
+        dailyPoints: prev?.dailyPoints ?? null,
+        avatarUrl: prev?.avatarUrl ?? null
+      };
+    });
 
     rows.sort((a, b) => (b.points - a.points) || a.username.localeCompare(b.username));
     renderLeaderboard(rows, me);
