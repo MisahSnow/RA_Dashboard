@@ -653,7 +653,10 @@ async function addFriendFromModal() {
 
   try {
     if (addFriendLoadingEl) addFriendLoadingEl.hidden = false;
-    await fetchUserSummary(u, { silent: true });
+    const apiKey = (apiKeyInput?.value || "").trim();
+    if (apiKey) {
+      await fetchUserSummary(u, { silent: true });
+    }
   } catch (e) {
     if (addFriendErrorEl) addFriendErrorEl.textContent = getUserValidationError(e, u);
     if (addFriendLoadingEl) addFriendLoadingEl.hidden = true;

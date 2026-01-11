@@ -333,6 +333,17 @@ app.post("/api/friends", requireAuth, async (req, res) => {
   const friend = normalizeUsername(req.body?.username);
   if (!friend) return res.status(400).json({ error: "Missing friend username" });
 
+  if (RA_API_KEY) {
+    try {
+      await raGetUserSummary(friend, RA_API_KEY);
+    } catch (err) {
+      const msg = String(err?.message || "");
+      const notFound = msg.includes("404") || msg.toLowerCase().includes("not found");
+      if (notFound) return res.status(404).json({ error: `User not found: ${friend}` });
+      return res.status(502).json({ error: `Unable to verify user: ${friend}` });
+    }
+  }
+
   await pool.query(
     "INSERT INTO friends (user_id, friend_username) VALUES ($1, $2) ON CONFLICT (user_id, friend_username) DO NOTHING",
     [userId, friend]
