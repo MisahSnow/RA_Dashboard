@@ -124,6 +124,10 @@ if (!presenceSessionId) {
   presenceSessionId = Math.random().toString(36).slice(2);
   sessionStorage.setItem(PRESENCE_SESSION_KEY, presenceSessionId);
 }
+let presenceRenderTimer = null;
+let lastPresenceKey = "";
+let lastPresenceMe = "";
+let lastChartKey = "";
 
 function clampUsername(s) {
   return (s || "").trim().replace(/\s+/g, "");
@@ -259,6 +263,10 @@ function renderLeaderboardChart(rows) {
     color: r.nameColor || userColor(r.username)
   }));
 
+  const chartKey = JSON.stringify(series.map(s => [s.username, s.values]));
+  if (chartKey === lastChartKey) return;
+  lastChartKey = chartKey;
+
   const max = Math.max(1, ...series.flatMap(s => s.values));
   const width = 800;
   const height = 160;
@@ -328,17 +336,31 @@ function sendPresenceRemove() {
 
 function renderPresence(users, me) {
   if (!onlineUsersEl) return;
-  onlineUsersEl.innerHTML = "";
   if (!users.length) {
     onlineUsersEl.innerHTML = `<div class="meta">No active viewers yet.</div>`;
     return;
   }
+  onlineUsersEl.innerHTML = "";
+  const frag = document.createDocumentFragment();
   for (const u of users) {
     const div = document.createElement("div");
     div.className = "onlineUser";
     div.textContent = u === me ? `${u} (you)` : u;
-    onlineUsersEl.appendChild(div);
+    frag.appendChild(div);
   }
+  onlineUsersEl.appendChild(frag);
+}
+
+function schedulePresenceRender(users, me) {
+  const key = JSON.stringify(users);
+  if (key === lastPresenceKey && me === lastPresenceMe) return;
+  if (presenceRenderTimer) return;
+  presenceRenderTimer = setTimeout(() => {
+    presenceRenderTimer = null;
+    lastPresenceKey = key;
+    lastPresenceMe = me;
+    renderPresence(users, me);
+  }, 200);
 }
 
 function startPresence() {
@@ -354,7 +376,7 @@ function startPresence() {
     await sendPresence(me);
     try {
       const data = await fetchPresence();
-      renderPresence(data?.results || [], me);
+      schedulePresenceRender(data?.results || [], me);
     } catch {
       // ignore
     }
@@ -590,16 +612,16 @@ function setActiveCompareTab(name) {
 function renderLeaderboard(rows, me) {
   tbody.innerHTML = "";
   cacheSet("leaderboard", { rows, me });
-  renderLeaderboardChart(rows);
   const total = rows.length;
-  for (const r of rows) {
+  const frag = document.createDocumentFragment();
+  rows.forEach((r, idx) => {
     const tr = document.createElement("tr");
 
     const delta = r.deltaVsYou;
     const cls = delta > 0 ? "delta-neg" : delta < 0 ? "delta-pos" : "delta-zero";
     const isMe = (r.username && me) ? r.username.toLowerCase() === me.toLowerCase() : false;
-    tr.innerHTML = `
-      <td><button class="linkBtn" type="button" data-profile="${safeText(r.username)}"><span class="nameRank">${rows.indexOf(r) + 1}.</span> <strong>${safeText(r.username)}</strong></button>${isMe ? ' <span class="note">(you)</span>' : ""}</td>
+tr.innerHTML = `
+      <td><button class="linkBtn" type="button" data-profile="${safeText(r.username)}"><span class="nameRank">${idx + 1}.</span> <strong>${safeText(r.username)}</strong></button>${isMe ? ' <span class="note">(you)</span>' : ""}</td>
       <td>
         <strong>${Math.round(r.points)}</strong>
         ${r.dailyPoints !== null ? `<span class="dailyPoints">(+${Math.round(r.dailyPoints)})</span>` : ""}
@@ -612,35 +634,40 @@ function renderLeaderboard(rows, me) {
       </td>
     `;
 
-    tbody.appendChild(tr);
+    frag.appendChild(tr);
 
     const nameBtn = tr.querySelector("button[data-profile]");
-    if (nameBtn) {
-      if (total > 1) {
-        const idx = rows.indexOf(r);
-        const ratio = Math.min(1, Math.max(0, idx / (total - 1)));
-        const startHue = 45; // gold
-        const endHue = 215; // blue
-        const hue = Math.round(startHue + (endHue - startHue) * ratio);
-        r.nameColor = `hsl(${hue}, 70%, 60%)`;
-        nameBtn.style.setProperty("--name-color", r.nameColor);
-      }
-      nameBtn.addEventListener("click", () => {
-        openProfile(nameBtn.getAttribute("data-profile"));
-      });
+    if (nameBtn && total > 1) {
+      const ratio = Math.min(1, Math.max(0, idx / (total - 1)));
+      const startHue = 45; // gold
+      const endHue = 215; // blue
+      const hue = Math.round(startHue + (endHue - startHue) * ratio);
+      r.nameColor = `hsl(${hue}, 70%, 60%)`;
+      nameBtn.style.setProperty("--name-color", r.nameColor);
     }
-  }
-
-  tbody.querySelectorAll("button[data-remove]").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const u = btn.getAttribute("data-remove");
-      friends = friends.filter(x => x !== u);
-      saveState();
-      refreshLeaderboard();
-      refreshRecentAchievements();
-      refreshRecentTimes();
-    });
   });
+  tbody.appendChild(frag);
+  renderLeaderboardChart(rows);
+
+  if (!tbody.dataset.bound) {
+    tbody.dataset.bound = "true";
+    tbody.addEventListener("click", (e) => {
+      const profileBtn = e.target.closest("button[data-profile]");
+      if (profileBtn) {
+        openProfile(profileBtn.getAttribute("data-profile"));
+        return;
+      }
+      const removeBtn = e.target.closest("button[data-remove]");
+      if (removeBtn) {
+        const u = removeBtn.getAttribute("data-remove");
+        friends = friends.filter(x => x !== u);
+        saveState();
+        refreshLeaderboard();
+        refreshRecentAchievements();
+        refreshRecentTimes();
+      }
+    });
+  }
 }
 
 function formatDate(d) {
@@ -668,6 +695,7 @@ function renderProfileGamesList(games, emptyMessage) {
     return;
   }
 
+  const frag = document.createDocumentFragment();
   for (const g of games) {
     const tile = document.createElement("div");
     const allowOpen = profileIsSelf || profileAllowCompare;
@@ -693,7 +721,7 @@ function renderProfileGamesList(games, emptyMessage) {
     tile.appendChild(img);
     tile.appendChild(title);
     tile.appendChild(meta);
-    profileSharedGamesEl.appendChild(tile);
+    frag.appendChild(tile);
 
     if (allowOpen) {
       const open = () => profileIsSelf ? openSelfGame(g) : openGameCompare(g);
@@ -709,6 +737,7 @@ function renderProfileGamesList(games, emptyMessage) {
       loadProfileGameAchievements(g.gameId, meta);
     }
   }
+  profileSharedGamesEl.appendChild(frag);
 }
 
 function applyProfileGameFilter() {
@@ -1157,62 +1186,68 @@ function renderCompareList(items) {
     { label: "Unlocked by you or them", items: haveItems },
     { label: "Neither earned", items: noneItems }
   ];
+
+  const frag = document.createDocumentFragment();
   const renderDivider = (label) => {
     const div = document.createElement("div");
     div.className = "selfDivider";
     div.textContent = label;
-    compareAchievementsEl.appendChild(div);
+    frag.appendChild(div);
   };
+
   let renderedAny = false;
   for (const section of sections) {
     if (!section.items.length) continue;
     if (renderedAny) renderDivider(section.label);
     renderedAny = true;
+
     for (const a of section.items) {
-    const row = document.createElement("div");
-    row.className = `compareItem${a.shared ? " shared" : ""}`;
+      const row = document.createElement("div");
+      row.className = `compareItem${a.shared ? " shared" : ""}`;
 
-    const img = document.createElement("img");
-    img.className = "compareBadge";
-    img.alt = safeText(a.title || "achievement");
-    img.loading = "lazy";
-    img.src = iconUrl(a.badgeUrl);
+      const img = document.createElement("img");
+      img.className = "compareBadge";
+      img.alt = safeText(a.title || "achievement");
+      img.loading = "lazy";
+      img.src = iconUrl(a.badgeUrl);
 
-    const main = document.createElement("div");
-    main.className = "compareMain";
+      const main = document.createElement("div");
+      main.className = "compareMain";
 
-    const title = document.createElement("div");
-    title.className = "compareTitle";
-    title.textContent = a.title || `Achievement ${safeText(a.id)}`;
+      const title = document.createElement("div");
+      title.className = "compareTitle";
+      title.textContent = a.title || `Achievement ${safeText(a.id)}`;
 
-    const desc = document.createElement("div");
-    desc.className = "compareDesc";
-    const points = (a.points !== undefined && a.points !== null) ? ` (${a.points} pts)` : "";
-    desc.textContent = `${a.description || ""}${points}`;
+      const desc = document.createElement("div");
+      desc.className = "compareDesc";
+      const points = (a.points !== undefined && a.points !== null) ? ` (${a.points} pts)` : "";
+      desc.textContent = `${a.description || ""}${points}`;
 
-    main.appendChild(title);
-    main.appendChild(desc);
+      main.appendChild(title);
+      main.appendChild(desc);
 
-    const statusWrap = document.createElement("div");
-    statusWrap.className = "statusWrap";
+      const statusWrap = document.createElement("div");
+      statusWrap.className = "statusWrap";
 
-    const status = document.createElement("div");
-    status.className = `statusPill ${a.statusClass}`;
-    status.textContent = a.statusLabel;
+      const status = document.createElement("div");
+      status.className = `statusPill ${a.statusClass}`;
+      status.textContent = a.statusLabel;
 
-    const pointsPill = document.createElement("div");
-    pointsPill.className = "statusPill points";
-    pointsPill.textContent = `+${a.points ?? 0} pts`;
+      const pointsPill = document.createElement("div");
+      pointsPill.className = "statusPill points";
+      pointsPill.textContent = `+${a.points ?? 0} pts`;
 
-    statusWrap.appendChild(status);
-    statusWrap.appendChild(pointsPill);
+      statusWrap.appendChild(status);
+      statusWrap.appendChild(pointsPill);
 
-    row.appendChild(img);
-    row.appendChild(main);
-    row.appendChild(statusWrap);
-    compareAchievementsEl.appendChild(row);
+      row.appendChild(img);
+      row.appendChild(main);
+      row.appendChild(statusWrap);
+      frag.appendChild(row);
+    }
   }
-  }
+
+  compareAchievementsEl.appendChild(frag);
 }
 
 function renderCompareTimes(items) {
@@ -1273,67 +1308,74 @@ function renderSelfAchievements(items) {
     selfGameAchievementsEl.innerHTML = `<div class="meta">No achievements found for this game.</div>`;
     return;
   }
+
   const earnedItems = items.filter(a => a.earned);
   const lockedItems = items.filter(a => !a.earned);
   const sections = [
     { label: "Earned", items: earnedItems },
     { label: "Locked", items: lockedItems }
   ];
+
+  const frag = document.createDocumentFragment();
   const renderDivider = (label) => {
     const div = document.createElement("div");
     div.className = "selfDivider";
     div.textContent = label;
-    selfGameAchievementsEl.appendChild(div);
+    frag.appendChild(div);
   };
+
   let renderedAny = false;
   for (const section of sections) {
     if (!section.items.length) continue;
     if (renderedAny) renderDivider(section.label);
     renderedAny = true;
+
     for (const a of section.items) {
-    const row = document.createElement("div");
-    row.className = `compareItem${a.earned ? " earned" : ""}`;
+      const row = document.createElement("div");
+      row.className = `compareItem${a.earned ? " earned" : ""}`;
 
-    const img = document.createElement("img");
-    img.className = "compareBadge";
-    img.alt = safeText(a.title || "achievement");
-    img.loading = "lazy";
-    img.src = iconUrl(a.badgeUrl);
+      const img = document.createElement("img");
+      img.className = "compareBadge";
+      img.alt = safeText(a.title || "achievement");
+      img.loading = "lazy";
+      img.src = iconUrl(a.badgeUrl);
 
-    const main = document.createElement("div");
-    main.className = "compareMain";
+      const main = document.createElement("div");
+      main.className = "compareMain";
 
-    const title = document.createElement("div");
-    title.className = "compareTitle";
-    title.textContent = a.title || `Achievement ${safeText(a.id)}`;
+      const title = document.createElement("div");
+      title.className = "compareTitle";
+      title.textContent = a.title || `Achievement ${safeText(a.id)}`;
 
-    const desc = document.createElement("div");
-    desc.className = "compareDesc";
-    desc.textContent = a.description || "";
+      const desc = document.createElement("div");
+      desc.className = "compareDesc";
+      desc.textContent = a.description || "";
 
-    main.appendChild(title);
-    main.appendChild(desc);
+      main.appendChild(title);
+      main.appendChild(desc);
 
-    const statusWrap = document.createElement("div");
-    statusWrap.className = "statusWrap";
+      const statusWrap = document.createElement("div");
+      statusWrap.className = "statusWrap";
 
-    const status = document.createElement("div");
-    status.className = `statusPill ${a.earned ? "me" : "none"}`;
-    status.textContent = a.earned ? "Earned" : "Locked";
+      const status = document.createElement("div");
+      status.className = `statusPill ${a.earned ? "me" : "none"}`;
+      status.textContent = a.earned ? "Earned" : "Locked";
 
-    const points = document.createElement("div");
-    points.className = "statusPill points";
-    points.textContent = `+${a.points ?? 0} pts`;
+      const pointsPill = document.createElement("div");
+      pointsPill.className = "statusPill points";
+      pointsPill.textContent = `+${a.points ?? 0} pts`;
 
-    statusWrap.appendChild(status);
-    statusWrap.appendChild(points);
+      statusWrap.appendChild(status);
+      statusWrap.appendChild(pointsPill);
 
-    row.appendChild(img);
-    row.appendChild(main);
-    row.appendChild(statusWrap);
-    selfGameAchievementsEl.appendChild(row);
+      row.appendChild(img);
+      row.appendChild(main);
+      row.appendChild(statusWrap);
+      frag.appendChild(row);
     }
   }
+
+  selfGameAchievementsEl.appendChild(frag);
 }
 
 async function openSelfGame(game) {
@@ -1496,6 +1538,7 @@ function renderRecentAchievements(items) {
   }
 
   const visible = items.slice(0, Math.max(RECENT_DEFAULT_ROWS, recentAchievementsVisible));
+  const frag = document.createDocumentFragment();
   for (const a of visible) {
     const div = document.createElement("div");
     div.className = "item";
@@ -1543,8 +1586,9 @@ function renderRecentAchievements(items) {
 
     div.appendChild(badge);
     div.appendChild(main);
-    recentAchievementsEl.appendChild(div);
+    frag.appendChild(div);
   }
+  recentAchievementsEl.appendChild(frag);
 
   if (recentAchievementsToggleBtn) {
     const canLoadMore =
@@ -1572,6 +1616,7 @@ function renderRecentTimes(items) {
   }
 
   const visible = items.slice(0, Math.max(RECENT_DEFAULT_ROWS, recentTimesVisible));
+  const frag = document.createDocumentFragment();
   for (const t of visible) {
     const div = document.createElement("div");
     div.className = "item";
@@ -1606,8 +1651,9 @@ function renderRecentTimes(items) {
     div.appendChild(img);
     div.appendChild(main);
 
-    recentTimesEl.appendChild(div);
+    frag.appendChild(div);
   }
+  recentTimesEl.appendChild(frag);
 
   if (recentTimesToggleBtn) {
     recentTimesToggleBtn.hidden = visible.length >= items.length;
