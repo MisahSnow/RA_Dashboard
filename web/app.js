@@ -4,9 +4,53 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+const CLIENT_REQUEST_INTERVAL_MS = 500;
+const clientRequestQueue = [];
+let clientQueueRunning = false;
+let lastClientRequestAt = 0;
+
+function enqueueClientFetch(url, options) {
+  return new Promise((resolve, reject) => {
+    clientRequestQueue.push({ url, options, resolve, reject });
+    if (apiQueueCounterEl) {
+      apiQueueCounterEl.textContent = `API Calls in Queue: ${clientRequestQueue.length}`;
+    }
+    logApiQueueEvent(url, options);
+    processClientQueue();
+  });
+}
+
+function processClientQueue() {
+  if (clientQueueRunning || clientRequestQueue.length === 0) return;
+  const now = Date.now();
+  const waitMs = Math.max(0, CLIENT_REQUEST_INTERVAL_MS - (now - lastClientRequestAt));
+  if (apiQueueCounterEl) {
+    apiQueueCounterEl.textContent = `API Calls in Queue: ${clientRequestQueue.length}`;
+  }
+  clientQueueRunning = true;
+  setTimeout(async () => {
+    const job = clientRequestQueue.shift();
+    lastClientRequestAt = Date.now();
+    try {
+      const res = await fetch(job.url, job.options);
+      job.resolve(res);
+    } catch (err) {
+      job.reject(err);
+    } finally {
+      clientQueueRunning = false;
+      if (apiQueueCounterEl) {
+        apiQueueCounterEl.textContent = `API Calls in Queue: ${clientRequestQueue.length}`;
+      }
+      processClientQueue();
+    }
+  }, waitMs);
+}
+
+
 const LS_API_KEY = "ra.apiKey";
 const LS_USE_API_KEY = "ra.useApiKey";
 const LS_CACHE_PREFIX = "ra.cache.";
+const LS_CHALLENGE_LEAD_CACHE = "ra.challengeLeadCache";
 
 const meInput = document.getElementById("meInput");
 const apiKeyInput = document.getElementById("apiKeyInput");
@@ -31,10 +75,31 @@ const statusEl = document.getElementById("status");
 const refreshCountdownEl = document.getElementById("refreshCountdown");
 const onlineUsersEl = document.getElementById("onlineUsers");
 const onlineHintEl = document.getElementById("onlineHint");
+const apiQueueCounterEl = document.getElementById("apiQueueCounter");
+const apiQueueLogEntriesEl = document.getElementById("apiQueueLogEntries");
 const leaderboardChartEl = document.getElementById("leaderboardChart");
 const pageButtons = document.querySelectorAll(".pageBtn");
 const dashboardPage = document.getElementById("dashboardPage");
 const challengesPage = document.getElementById("challengesPage");
+
+if (apiQueueCounterEl) {
+  apiQueueCounterEl.textContent = "API Calls in Queue: 0";
+}
+
+function logApiQueueEvent(url, options) {
+  if (!apiQueueLogEntriesEl) return;
+  const entry = document.createElement("div");
+  entry.className = "apiQueueLogEntry";
+  const method = options?.method || "GET";
+  const ts = new Date().toLocaleTimeString();
+  entry.textContent = `[${ts}] ${method} ${url}`;
+  apiQueueLogEntriesEl.appendChild(entry);
+  const maxEntries = 200;
+  while (apiQueueLogEntriesEl.childElementCount > maxEntries) {
+    apiQueueLogEntriesEl.removeChild(apiQueueLogEntriesEl.firstChild);
+  }
+  apiQueueLogEntriesEl.scrollTop = apiQueueLogEntriesEl.scrollHeight;
+}
 
 const settingsBtn = document.getElementById("settingsBtn");
 const settingsModal = document.getElementById("settingsModal");
@@ -167,6 +232,7 @@ let dailyHistoryCache = {};
 const challengeAvatarCache = new Map();
 let challengesPollTimer = null;
 let challengesTotalsTimer = null;
+let challengesScoreTimer = null;
 const challengeTotalsCache = new Map();
 const activeChallengeCache = new Map();
 let lastChallengesKey = "";
@@ -175,6 +241,7 @@ let lastLeaderboardRows = [];
 let lastRecentAchievementsKey = "";
 let lastRecentTimesKey = "";
 let authResolved = false;
+let challengeLeadCache = loadChallengeLeadCache();
 let scoreAttackSharedGames = [];
 let scoreAttackSelectedGame = null;
 let scoreAttackSelectedBoard = null;
@@ -267,6 +334,35 @@ function getLocalDateKey(d = new Date()) {
 
 function setDailyHistory(history) {
   dailyHistoryCache = history || {};
+}
+
+function loadChallengeLeadCache() {
+  try {
+    const raw = localStorage.getItem(LS_CHALLENGE_LEAD_CACHE);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveChallengeLeadCache() {
+  try {
+    localStorage.setItem(LS_CHALLENGE_LEAD_CACHE, JSON.stringify(challengeLeadCache));
+  } catch {
+    // Ignore cache failures.
+  }
+}
+
+function pruneChallengeLeadCache(activeItems) {
+  const keep = new Set(activeItems.map(item => String(item.id)));
+  let changed = false;
+  for (const key of Object.keys(challengeLeadCache)) {
+    if (!keep.has(key)) {
+      delete challengeLeadCache[key];
+      changed = true;
+    }
+  }
+  if (changed) saveChallengeLeadCache();
 }
 
 function userColor(username) {
@@ -424,30 +520,12 @@ async function fetchJson(url, { silent = false } = {}) {
   const apiKey = (apiKeyInput?.value || "").trim();
   const useApiKey = !!useApiKeyToggle?.checked;
   const headers = (useApiKey && apiKey) ? { "x-ra-api-key": apiKey } : {};
-  const maxRetries = 2;
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      const res = await fetch(url, { headers });
-      if (res.status === 429 && attempt < maxRetries) {
-        const delayMs = 750 * Math.pow(2, attempt);
-        if (!silent) setStatus(`Rate limited by RA API. Retrying in ${Math.round(delayMs / 1000)}s...`);
-        await sleep(delayMs);
-        continue;
-      }
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        throw new Error(text || `Request failed: ${res.status}`);
-      }
-      if (attempt > 0 && !silent) setStatus("");
-      return res.json();
-    } catch (e) {
-      if (attempt >= maxRetries) throw e;
-      const delayMs = 750 * Math.pow(2, attempt);
-      if (!silent) setStatus(`Connection issue. Retrying in ${Math.round(delayMs / 1000)}s...`);
-      await sleep(delayMs);
-    }
+  const res = await enqueueClientFetch(url, { headers });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `Request failed: ${res.status}`);
   }
-  throw new Error("Request failed after retries.");
+  return res.json();
 }
 
 async function fetchServerJson(url, { method = "GET", body = null, silent = false } = {}) {
@@ -456,7 +534,7 @@ async function fetchServerJson(url, { method = "GET", body = null, silent = fals
   const useApiKey = !!useApiKeyToggle?.checked;
   if (useApiKey && apiKey) headers["x-ra-api-key"] = apiKey;
   if (body !== null) headers["Content-Type"] = "application/json";
-  const res = await fetch(url, {
+  const res = await enqueueClientFetch(url, {
     method,
     headers,
     body: body !== null ? JSON.stringify(body) : undefined,
@@ -560,10 +638,34 @@ async function hydrateChallengeAvatars(items) {
       challengeAvatarCache.set(normalizeUserKey(name), "");
     }
   })));
+
+  applyChallengeAvatars();
 }
 
 function getChallengeAvatar(username) {
   return challengeAvatarCache.get(normalizeUserKey(username)) || "";
+}
+
+function applyChallengeAvatars() {
+  const nodes = document.querySelectorAll("[data-avatar-user]");
+  nodes.forEach((node) => {
+    const username = node.getAttribute("data-avatar-user") || "";
+    const url = getChallengeAvatar(username);
+    if (!url) return;
+    if (node.tagName === "IMG") {
+      if (node.getAttribute("src")) return;
+      node.setAttribute("src", iconUrl(url));
+      node.classList.remove("placeholder");
+      return;
+    }
+    const img = document.createElement("img");
+    img.className = "challengeAvatar";
+    img.loading = "lazy";
+    img.alt = "";
+    img.setAttribute("data-avatar-user", username);
+    img.src = iconUrl(url);
+    node.replaceWith(img);
+  });
 }
 async function fetchRecentAchievements(username, minutes, limit) {
   const u = encodeURIComponent(username);
@@ -613,9 +715,6 @@ async function fetchAuthMeWithRetry(retries = 2) {
   for (let attempt = 0; attempt <= retries; attempt++) {
     const username = await fetchAuthMe();
     if (username) return username;
-    if (attempt < retries) {
-      await sleep(500 * (attempt + 1));
-    }
   }
   return "";
 }
@@ -725,9 +824,7 @@ function getUserValidationError(err, username) {
 async function bootstrapAfterLogin() {
   startPresence();
   refreshLeaderboard();
-  await sleep(STAGGER_MS);
   refreshRecentAchievements();
-  await sleep(STAGGER_MS);
   refreshRecentTimes();
   refreshChallenges({ includeTotals: true });
   resetRefreshCountdown();
@@ -892,6 +989,10 @@ function stopChallengePolling() {
   if (challengesTotalsTimer) {
     clearInterval(challengesTotalsTimer);
     challengesTotalsTimer = null;
+  }
+  if (challengesScoreTimer) {
+    clearInterval(challengesScoreTimer);
+    challengesScoreTimer = null;
   }
 }
 
@@ -1080,12 +1181,90 @@ function formatTimeLeft(endAt) {
   return `${minutes}m left`;
 }
 
+function formatLeaderboardDelta(value, format) {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "--";
+  const fmt = String(format || "").toUpperCase();
+  if (fmt.includes("MILLI")) {
+    const centisTotal = Math.max(0, Math.round(value));
+    const minutes = Math.floor(centisTotal / 6000);
+    const seconds = Math.floor((centisTotal % 6000) / 100);
+    const centis = centisTotal % 100;
+    return `${minutes}:${String(seconds).padStart(2, "0")}.${String(centis).padStart(2, "0")}`;
+  }
+  if (fmt.includes("SEC") || fmt.includes("TIME")) {
+    const totalSeconds = Math.max(0, Math.round(value));
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    if (hours > 0) {
+      return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+    }
+    return `${minutes}:${String(seconds).padStart(2, "0")}`;
+  }
+  if (fmt.includes("FRAME")) {
+    return `${Math.round(value)}f`;
+  }
+  return String(Math.round(value));
+}
+
+function inferLeaderboardFormat(text) {
+  if (!text) return "";
+  const trimmed = String(text).trim();
+  if (!trimmed) return "";
+  if (trimmed.includes(":")) return "MILLISECS";
+  if (trimmed.includes(".")) return "MILLISECS";
+  return "";
+}
+
+function parseLeaderboardScore(text, format) {
+  if (!text) return null;
+  const trimmed = String(text).trim();
+  if (!trimmed) return null;
+  const fmt = String(format || "").toUpperCase() || inferLeaderboardFormat(trimmed);
+  if (fmt.includes("MILLI")) {
+    const [head, fracRaw] = trimmed.split(/[.,]/);
+    const parts = head.split(":").map(p => Number(p));
+    if (parts.some(n => Number.isNaN(n))) return null;
+    let totalSeconds = 0;
+    for (const part of parts) {
+      totalSeconds = totalSeconds * 60 + part;
+    }
+    const centis = fracRaw ? Number(String(fracRaw).padEnd(2, "0").slice(0, 2)) : 0;
+    if (Number.isNaN(centis)) return null;
+    return totalSeconds * 100 + centis;
+  }
+  if (fmt.includes("SEC") || fmt.includes("TIME")) {
+    const parts = trimmed.split(":").map(p => Number(p));
+    if (parts.some(n => Number.isNaN(n))) return null;
+    let totalSeconds = 0;
+    for (const part of parts) {
+      totalSeconds = totalSeconds * 60 + part;
+    }
+    return totalSeconds;
+  }
+  if (fmt.includes("FRAME")) {
+    const frames = Number(trimmed);
+    return Number.isFinite(frames) ? frames : null;
+  }
+  const numeric = Number(trimmed.replace(/,/g, ""));
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
 function renderChallengeList(items, container, type, me) {
   if (!container) return;
   container.innerHTML = "";
   if (!items.length) {
     container.innerHTML = `<div class="meta">No challenges yet.</div>`;
     return;
+  }
+  if (type === "active") {
+    const hasScore = items.some(item => item.challenge_type === "score");
+    if (hasScore && !challengesScoreTimer) {
+      challengesScoreTimer = setInterval(() => refreshChallenges({ includeTotals: true }), 20000);
+    } else if (!hasScore && challengesScoreTimer) {
+      clearInterval(challengesScoreTimer);
+      challengesScoreTimer = null;
+    }
   }
   const frag = document.createDocumentFragment();
   for (const item of items) {
@@ -1143,48 +1322,88 @@ function renderChallengeList(items, container, type, me) {
     }
     meta.textContent = parts.join(" | ");
 
-      if (type === "active") {
-        const creatorPoints = item.creator_points;
-        const opponentPoints = item.opponent_points;
-        const creatorPointsText = creatorPoints === null || creatorPoints === undefined ? "--" : `+${creatorPoints}`;
-        const opponentPointsText = opponentPoints === null || opponentPoints === undefined ? "--" : `+${opponentPoints}`;
-        let winner = null;
-        if (creatorPoints !== null && opponentPoints !== null) {
-          if (creatorPoints > opponentPoints) winner = "creator";
-          else if (opponentPoints > creatorPoints) winner = "opponent";
+    if (type === "active") {
+      const creatorPoints = item.creator_points;
+      const opponentPoints = item.opponent_points;
+      const creatorPointsText = creatorPoints === null || creatorPoints === undefined ? "--" : `+${creatorPoints}`;
+      const opponentPointsText = opponentPoints === null || opponentPoints === undefined ? "--" : `+${opponentPoints}`;
+      const scoreMode = item.challenge_type === "score";
+      const inferredFormat = item.leaderboard_format || inferLeaderboardFormat(item.creator_current_score || item.opponent_current_score);
+      const creatorScoreValue = parseLeaderboardScore(item.creator_current_score, inferredFormat)
+        ?? (Number.isFinite(item.creator_current_score_value) ? item.creator_current_score_value : 0);
+      const opponentScoreValue = parseLeaderboardScore(item.opponent_current_score, inferredFormat)
+        ?? (Number.isFinite(item.opponent_current_score_value) ? item.opponent_current_score_value : 0);
+      const hasScoreData = Boolean(
+        item.creator_current_score ||
+        item.opponent_current_score ||
+        Number.isFinite(item.creator_current_score_value) ||
+        Number.isFinite(item.opponent_current_score_value)
+      );
+      const lowerIsBetter = item.leaderboard_lower_is_better === true;
+      let winner = null;
+      let lead = 0;
+      if (scoreMode && hasScoreData && creatorScoreValue !== null && opponentScoreValue !== null) {
+        if (creatorScoreValue === opponentScoreValue) {
+          winner = null;
+          lead = 0;
+        } else if (lowerIsBetter ? creatorScoreValue < opponentScoreValue : creatorScoreValue > opponentScoreValue) {
+          winner = "creator";
+          lead = Math.abs(creatorScoreValue - opponentScoreValue);
+        } else {
+          winner = "opponent";
+          lead = Math.abs(creatorScoreValue - opponentScoreValue);
         }
-      const lead = winner
-        ? Math.abs((creatorPoints ?? 0) - (opponentPoints ?? 0))
-        : 0;
+        challengeLeadCache[String(item.id)] = {
+          winner,
+          lead,
+          format: inferredFormat || null,
+          ts: Date.now()
+        };
+        saveChallengeLeadCache();
+      } else if (creatorPoints !== null && opponentPoints !== null) {
+        if (creatorPoints > opponentPoints) winner = "creator";
+        else if (opponentPoints > creatorPoints) winner = "opponent";
+        lead = winner
+          ? Math.abs((creatorPoints ?? 0) - (opponentPoints ?? 0))
+          : 0;
+      } else if (scoreMode && !hasScoreData) {
+        const cached = challengeLeadCache[String(item.id)];
+        if (cached) {
+          winner = cached.winner || null;
+          lead = Number.isFinite(cached.lead) ? cached.lead : 0;
+        }
+      }
+      const cachedFormat = challengeLeadCache[String(item.id)]?.format;
+      const scoreLeadText = scoreMode ? formatLeaderboardDelta(lead, inferredFormat || cachedFormat) : null;
 
       const left = document.createElement("div");
       left.className = "challengeSide" + (winner === "creator" ? " win" : winner === "opponent" ? " lose" : "");
       const right = document.createElement("div");
       right.className = "challengeSide" + (winner === "opponent" ? " win" : winner === "creator" ? " lose" : "");
 
-      const leftAvatarUrl = getChallengeAvatar(item.creator_username);
-      const rightAvatarUrl = getChallengeAvatar(item.opponent_username);
-      const creatorBest = item.creator_start_score ?? "--";
-      const opponentBest = item.opponent_start_score ?? "--";
+    const leftAvatarUrl = getChallengeAvatar(item.creator_username);
+    const rightAvatarUrl = getChallengeAvatar(item.opponent_username);
+      const creatorBest = item.creator_current_score ?? item.creator_start_score ?? "--";
+      const opponentBest = item.opponent_current_score ?? item.opponent_start_score ?? "--";
+      const creatorTopText = scoreMode ? creatorBest : creatorPointsText;
+      const opponentTopText = scoreMode ? opponentBest : opponentPointsText;
       left.innerHTML = `
-          <div class="challengeSideTop">
-            ${leftAvatarUrl ? `<img class="challengeAvatar" src="${iconUrl(leftAvatarUrl)}" alt="" loading="lazy" />` : `<span class="challengeAvatar placeholder"></span>`}
-            <div class="challengeName">${safeText(item.creator_username)}</div>
-          </div>
-          <div class="challengePoints">${creatorPointsText}</div>
-          ${item.challenge_type === "score" ? `<div class="challengeBest">Best: ${safeText(creatorBest)}</div>` : ""}
-          ${winner === "creator" ? `<div class="challengeLead">+${lead} lead</div>` : ""}
-        `;
+      <div class="challengeSideTop">
+        ${leftAvatarUrl ? `<img class="challengeAvatar" src="${iconUrl(leftAvatarUrl)}" alt="" loading="lazy" data-avatar-user="${safeText(item.creator_username)}" />` : `<span class="challengeAvatar placeholder" data-avatar-user="${safeText(item.creator_username)}"></span>`}
+        <div class="challengeName">${safeText(item.creator_username)}</div>
+      </div>
+        <div class="challengePoints">${safeText(creatorTopText)}</div>
+        ${winner === "creator" ? `<div class="challengeLead">${scoreMode ? safeText(scoreLeadText) : `+${lead}`} lead</div>` : ""}
+      `;
 
       right.innerHTML = `
-          <div class="challengeSideTop">
-            ${rightAvatarUrl ? `<img class="challengeAvatar" src="${iconUrl(rightAvatarUrl)}" alt="" loading="lazy" />` : `<span class="challengeAvatar placeholder"></span>`}
-            <div class="challengeName">${safeText(item.opponent_username)}</div>
-          </div>
-          <div class="challengePoints">${opponentPointsText}</div>
-          ${item.challenge_type === "score" ? `<div class="challengeBest">Best: ${safeText(opponentBest)}</div>` : ""}
-          ${winner === "opponent" ? `<div class="challengeLead">+${lead} lead</div>` : ""}
-        `;
+      <div class="challengeSideTop">
+        ${rightAvatarUrl ? `<img class="challengeAvatar" src="${iconUrl(rightAvatarUrl)}" alt="" loading="lazy" data-avatar-user="${safeText(item.opponent_username)}" />` : `<span class="challengeAvatar placeholder" data-avatar-user="${safeText(item.opponent_username)}"></span>`}
+        <div class="challengeName">${safeText(item.opponent_username)}</div>
+      </div>
+        <div class="challengePoints">${safeText(opponentTopText)}</div>
+        ${winner === "opponent" ? `<div class="challengeLead">${scoreMode ? safeText(scoreLeadText) : `+${lead}`} lead</div>` : ""}
+      `;
 
       const vs = document.createElement("div");
       vs.className = "challengeVs";
@@ -1205,6 +1424,16 @@ function renderChallengeList(items, container, type, me) {
       actions.className = "challengeActions";
       actions.appendChild(cancelBtn);
 
+      if (item.challenge_type === "score" && item.game_title && item.leaderboard_title) {
+        const info = document.createElement("div");
+        info.className = "challengeScoreInfo";
+        info.innerHTML = `
+          <span class="challengeScoreLabel">Score Attack</span>
+          <span class="challengeScoreTitle">${safeText(item.game_title)} | ${safeText(item.leaderboard_title)}</span>
+        `;
+        card.appendChild(info);
+      }
+
       card.appendChild(body);
       card.appendChild(actions);
       card.appendChild(meta);
@@ -1215,6 +1444,26 @@ function renderChallengeList(items, container, type, me) {
     frag.appendChild(card);
   }
   container.appendChild(frag);
+}
+
+function getChallengeRenderSignature(item) {
+  return JSON.stringify([
+    item.id,
+    item.status,
+    item.creator_username,
+    item.opponent_username,
+    item.duration_hours,
+    item.end_at,
+    item.challenge_type,
+    item.game_title,
+    item.leaderboard_title,
+    item.creator_points,
+    item.opponent_points,
+    item.creator_current_score,
+    item.opponent_current_score,
+    item.leaderboard_format,
+    item.leaderboard_lower_is_better
+  ]);
 }
 
 function renderChallengeHistory(items) {
@@ -1231,13 +1480,18 @@ function renderChallengeHistory(items) {
     const creator = safeText(item.creator_username);
     const opponent = safeText(item.opponent_username);
     const winner = item.winner === "tie" ? "Tie" : safeText(item.winner || "Pending");
-    const lead = item.lead !== null && item.lead !== undefined ? `+${item.lead} lead` : "--";
-    const meta = new Date(item.end_at || item.start_at || item.created_at).toLocaleString();
-    const extra = item.challenge_type === "score" && item.game_title && item.leaderboard_title
-      ? `${safeText(item.game_title)} | ${safeText(item.leaderboard_title)}`
-      : "";
-    const creatorPoints = item.creator_points ?? "--";
-    const opponentPoints = item.opponent_points ?? "--";
+  const leadValue = item.lead !== null && item.lead !== undefined ? item.lead : null;
+  const lead = item.challenge_type === "score"
+    ? (leadValue !== null ? `${formatLeaderboardDelta(leadValue, item.leaderboard_format)} lead` : "--")
+    : (leadValue !== null ? `+${leadValue} lead` : "--");
+  const meta = new Date(item.end_at || item.start_at || item.created_at).toLocaleString();
+  const extra = item.challenge_type === "score" && item.game_title && item.leaderboard_title
+    ? `${safeText(item.game_title)} | ${safeText(item.leaderboard_title)}`
+    : "";
+  const creatorPoints = item.creator_points ?? "--";
+  const opponentPoints = item.opponent_points ?? "--";
+  const creatorFinalScore = item.creator_final_score ?? "--";
+  const opponentFinalScore = item.opponent_final_score ?? "--";
 
     card.innerHTML = `
       <div class="challengeRow">
@@ -1248,9 +1502,12 @@ function renderChallengeHistory(items) {
         <div class="challengeMeta">Winner: ${winner}</div>
         <div class="challengeMeta">Lead: ${lead}</div>
       </div>
-      <div class="challengeMeta">${creator}: +${creatorPoints} | ${opponent}: +${opponentPoints}</div>
-      ${extra ? `<div class="challengeMeta">${extra}</div>` : ""}
-    `;
+    ${item.challenge_type === "score"
+      ? `<div class="challengeMeta">${creator}: ${safeText(creatorFinalScore)} | ${opponent}: ${safeText(opponentFinalScore)}</div>`
+      : `<div class="challengeMeta">${creator}: +${creatorPoints} | ${opponent}: +${opponentPoints}</div>`
+    }
+    ${extra ? `<div class="challengeMeta">${extra}</div>` : ""}
+  `;
     frag.appendChild(card);
   }
   challengeHistoryList.appendChild(frag);
@@ -1289,58 +1546,71 @@ async function refreshChallenges({ includeTotals = true } = {}) {
   if (challengeErrorEl) challengeErrorEl.textContent = "";
   setLoading(challengesLoadingEl, true);
   try {
-    const data = await fetchChallenges({ includeTotals });
-    const incoming = Array.isArray(data?.incoming) ? data.incoming : [];
-    const outgoing = Array.isArray(data?.outgoing) ? data.outgoing : [];
-    const active = Array.isArray(data?.active) ? data.active : [];
-    if (data?.warnings?.length) {
-      if (challengeErrorEl) challengeErrorEl.textContent = data.warnings[0];
-    }
-    for (const item of active) {
-      if (item.creator_points !== null && item.opponent_points !== null) {
-        challengeTotalsCache.set(String(item.id), {
-          creator_points: item.creator_points,
-          opponent_points: item.opponent_points
-        });
-      }
+    const baseData = includeTotals
+      ? await fetchChallenges({ includeTotals: false })
+      : await fetchChallenges({ includeTotals });
+    const incoming = Array.isArray(baseData?.incoming) ? baseData.incoming : [];
+    const outgoing = Array.isArray(baseData?.outgoing) ? baseData.outgoing : [];
+    const active = Array.isArray(baseData?.active) ? baseData.active : [];
+    if (baseData?.warnings?.length) {
+      if (challengeErrorEl) challengeErrorEl.textContent = baseData.warnings[0];
     }
     let activeForRender = active;
-    if (includeTotals) {
-      await hydrateChallengeAvatars(active);
-      for (const item of active) {
-        challengeTotalsCache.set(String(item.id), {
-          creator_points: item.creator_points,
-          opponent_points: item.opponent_points
-        });
-        activeChallengeCache.set(String(item.id), item);
-      }
-      const activeIds = new Set(active.map(item => String(item.id)));
-      for (const id of activeChallengeCache.keys()) {
-        if (!activeIds.has(id)) activeChallengeCache.delete(id);
-      }
-    } else {
-      const activeIds = new Set(active.map(item => String(item.id)));
-      for (const id of activeChallengeCache.keys()) {
-        if (!activeIds.has(id)) activeChallengeCache.delete(id);
-      }
-      for (const item of active) {
-        const id = String(item.id);
-        const cached = activeChallengeCache.get(id) || item;
-        activeChallengeCache.set(id, { ...cached, ...item });
-      }
-      activeForRender = Array.from(activeChallengeCache.values()).map((item) => {
-        const cachedTotals = challengeTotalsCache.get(String(item.id));
-        if (!cachedTotals) return item;
-        return {
-          ...item,
-          creator_points: cachedTotals.creator_points,
-          opponent_points: cachedTotals.opponent_points
-        };
-      });
+    const activeIds = new Set(active.map(item => String(item.id)));
+    for (const id of activeChallengeCache.keys()) {
+      if (!activeIds.has(id)) activeChallengeCache.delete(id);
     }
+    for (const item of active) {
+      const id = String(item.id);
+      const cached = activeChallengeCache.get(id) || item;
+      activeChallengeCache.set(id, { ...cached, ...item });
+    }
+    activeForRender = Array.from(activeChallengeCache.values()).map((item) => {
+      const cachedTotals = challengeTotalsCache.get(String(item.id));
+      if (!cachedTotals) return item;
+      return {
+        ...item,
+        creator_points: cachedTotals.creator_points,
+        opponent_points: cachedTotals.opponent_points
+      };
+    });
+
+    activeForRender.sort((a, b) => {
+      const aEnd = a.end_at ? Date.parse(a.end_at) : Number.POSITIVE_INFINITY;
+      const bEnd = b.end_at ? Date.parse(b.end_at) : Number.POSITIVE_INFINITY;
+      return aEnd - bEnd;
+    });
+
     renderChallengeList(incoming, challengeIncomingEl, "incoming", ensured);
     renderChallengeList(outgoing, challengeOutgoingEl, "outgoing", ensured);
     renderChallengeList(activeForRender, challengeActiveEl, "active", ensured);
+    pruneChallengeLeadCache(activeForRender);
+    hydrateChallengeAvatars(active);
+
+    if (includeTotals) {
+      const totalsData = await fetchChallenges({ includeTotals: true });
+      if (totalsData?.warnings?.length) {
+        if (challengeErrorEl) challengeErrorEl.textContent = totalsData.warnings[0];
+      }
+      const totalsActive = Array.isArray(totalsData?.active) ? totalsData.active : [];
+      for (const item of totalsActive) {
+        if (item.creator_points !== null && item.opponent_points !== null) {
+          challengeTotalsCache.set(String(item.id), {
+            creator_points: item.creator_points,
+            opponent_points: item.opponent_points
+          });
+        }
+        activeChallengeCache.set(String(item.id), item);
+      }
+      const totalsActiveForRender = Array.from(activeChallengeCache.values());
+      totalsActiveForRender.sort((a, b) => {
+        const aEnd = a.end_at ? Date.parse(a.end_at) : Number.POSITIVE_INFINITY;
+        const bEnd = b.end_at ? Date.parse(b.end_at) : Number.POSITIVE_INFINITY;
+        return aEnd - bEnd;
+      });
+      renderChallengeList(totalsActiveForRender, challengeActiveEl, "active", ensured);
+      hydrateChallengeAvatars(totalsActive);
+    }
   } catch (e) {
     const msg = String(e?.message || "");
     if (msg.includes("429") || msg.includes("Too Many Attempts")) {
@@ -2498,23 +2768,21 @@ async function refreshLeaderboard() {
 
     async function fetchNowPlayingWithRetry(username, windowSeconds, {
       retries = 4,
-      delayMs = 1000,
-      onRetry = () => {}
-    } = {}) {
-      for (let attempt = 1; attempt <= retries; attempt++) {
-        try {
-          return await fetchNowPlaying(username, windowSeconds);
+    onRetry = () => {}
+  } = {}) {
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        return await fetchNowPlaying(username, windowSeconds);
         } catch (e) {
           const msg = String(e?.message || e || "");
           const is429 = msg.includes("429") || msg.includes("Too Many Attempts");
           if (!is429 || attempt === retries) throw e;
 
-          onRetry(attempt);
-          await sleep(delayMs);
-        }
+        onRetry(attempt);
       }
-      return null;
     }
+    return null;
+  }
 
     const presencePromise = (async () => {
       const presencePairs = await Promise.all(users.map(async (u) => {
@@ -2794,9 +3062,7 @@ if (addFriendConfirmBtn) {
 refreshBtn.addEventListener("click", () => {
   (async () => {
     refreshLeaderboard();
-    await sleep(STAGGER_MS);
     refreshRecentAchievements();
-    await sleep(STAGGER_MS);
     refreshRecentTimes();
     resetRefreshCountdown();
   })();
