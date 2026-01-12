@@ -422,6 +422,26 @@ function requireSnapshotSecret(req, res, next) {
   return next();
 }
 
+function withChallengeWinner(row) {
+  const creatorPoints = row.creator_points ?? null;
+  const opponentPoints = row.opponent_points ?? null;
+  let winner = "";
+  let lead = null;
+  if (creatorPoints !== null && opponentPoints !== null) {
+    if (creatorPoints > opponentPoints) {
+      winner = row.creator_username;
+      lead = creatorPoints - opponentPoints;
+    } else if (opponentPoints > creatorPoints) {
+      winner = row.opponent_username;
+      lead = opponentPoints - creatorPoints;
+    } else {
+      winner = "tie";
+      lead = 0;
+    }
+  }
+  return { ...row, winner, lead };
+}
+
 app.get("/api/auth/me", (req, res) => {
   const user = req.session?.user;
   if (!user) return res.json({ username: "" });
@@ -558,6 +578,14 @@ app.get("/api/challenges", requireAuth, async (req, res) => {
           `,
           [creatorPoints, opponentPoints, row.id]
         );
+        await pool.query(
+          `
+            UPDATE challenges
+            SET status = 'completed'
+            WHERE id = $1 AND status = 'active' AND end_at IS NOT NULL AND end_at <= NOW()
+          `,
+          [row.id]
+        );
         return { ...row, creator_points: creatorPoints, opponent_points: opponentPoints };
       } catch (err) {
         const msg = String(err?.message || "");
@@ -691,6 +719,24 @@ app.post("/api/challenges/:id/cancel", requireAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
+app.get("/api/challenges-history", requireAuth, async (req, res) => {
+  if (!pool) return res.status(500).json({ error: "Database unavailable" });
+  const me = normalizeUsername(req.session.user.username);
+  const result = await pool.query(
+    `
+      SELECT id, creator_username, opponent_username, duration_hours, status,
+             created_at, accepted_at, start_at, end_at,
+             creator_points, opponent_points, points_updated_at
+      FROM challenges
+      WHERE status = 'completed' AND (creator_username = $1 OR opponent_username = $1)
+      ORDER BY end_at DESC
+    `,
+    [me]
+  );
+  const rows = result.rows.map(withChallengeWinner);
+  res.json({ results: rows });
+});
+
 // Challenge totals snapshot (intended for cron)
 app.post("/api/challenges-snapshot", requireSnapshotSecret, async (_req, res) => {
   try {
@@ -723,6 +769,14 @@ app.post("/api/challenges-snapshot", requireSnapshotSecret, async (_req, res) =>
             WHERE id = $3
           `,
           [creatorPoints, opponentPoints, row.id]
+        );
+        await pool.query(
+          `
+            UPDATE challenges
+            SET status = 'completed'
+            WHERE id = $1 AND status = 'active' AND end_at IS NOT NULL AND end_at <= NOW()
+          `,
+          [row.id]
         );
       } catch {
         skipped.push(row.id);

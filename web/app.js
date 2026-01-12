@@ -87,6 +87,10 @@ const challengeErrorEl = document.getElementById("challengeError");
 const challengeIncomingEl = document.getElementById("challengeIncoming");
 const challengeOutgoingEl = document.getElementById("challengeOutgoing");
 const challengeActiveEl = document.getElementById("challengeActive");
+const challengeHistoryBtn = document.getElementById("challengeHistoryBtn");
+const challengeHistoryModal = document.getElementById("challengeHistoryModal");
+const challengeHistoryCloseBtn = document.getElementById("challengeHistoryCloseBtn");
+const challengeHistoryList = document.getElementById("challengeHistoryList");
 
 const compareTabButtons = document.querySelectorAll(".compareTabBtn");
 const compareTabPanels = document.querySelectorAll(".compareTabPanel");
@@ -488,6 +492,10 @@ async function cancelChallenge(id) {
   return fetchServerJson(`/api/challenges/${encodeURIComponent(id)}/cancel`, {
     method: "POST"
   });
+}
+
+async function fetchChallengeHistory() {
+  return fetchServerJson("/api/challenges-history", { silent: true });
 }
 
 async function hydrateChallengeAvatars(items) {
@@ -971,6 +979,38 @@ function renderChallengeList(items, container, type, me) {
     frag.appendChild(card);
   }
   container.appendChild(frag);
+}
+
+function renderChallengeHistory(items) {
+  if (!challengeHistoryList) return;
+  challengeHistoryList.innerHTML = "";
+  if (!items.length) {
+    challengeHistoryList.innerHTML = `<div class="meta">No completed challenges yet.</div>`;
+    return;
+  }
+  const frag = document.createDocumentFragment();
+  for (const item of items) {
+    const card = document.createElement("div");
+    card.className = "challengeItem";
+    const creator = safeText(item.creator_username);
+    const opponent = safeText(item.opponent_username);
+    const winner = item.winner === "tie" ? "Tie" : safeText(item.winner || "Pending");
+    const lead = item.lead !== null && item.lead !== undefined ? `+${item.lead} lead` : "--";
+    const meta = new Date(item.end_at || item.start_at || item.created_at).toLocaleString();
+
+    card.innerHTML = `
+      <div class="challengeRow">
+        <div>${creator} vs ${opponent}</div>
+        <div class="challengeMeta">${meta}</div>
+      </div>
+      <div class="challengeRow">
+        <div class="challengeMeta">Winner: ${winner}</div>
+        <div class="challengeMeta">Lead: ${lead}</div>
+      </div>
+    `;
+    frag.appendChild(card);
+  }
+  challengeHistoryList.appendChild(frag);
 }
 
 function renderChallengeFriendOptions(list) {
@@ -2663,6 +2703,36 @@ if (challengeSendBtn) {
       setLoading(challengesLoadingEl, false);
     }
   });
+}
+
+function openChallengeHistory() {
+  if (!challengeHistoryModal) return;
+  challengeHistoryModal.hidden = false;
+  if (challengeHistoryList) challengeHistoryList.innerHTML = "";
+  (async () => {
+    try {
+      const data = await fetchChallengeHistory();
+      const items = Array.isArray(data?.results) ? data.results : [];
+      renderChallengeHistory(items);
+    } catch (err) {
+      if (challengeHistoryList) {
+        challengeHistoryList.innerHTML = `<div class="meta">Failed to load history.</div>`;
+      }
+    }
+  })();
+}
+
+function closeChallengeHistory() {
+  if (!challengeHistoryModal) return;
+  challengeHistoryModal.hidden = true;
+}
+
+if (challengeHistoryBtn) {
+  challengeHistoryBtn.addEventListener("click", openChallengeHistory);
+}
+
+if (challengeHistoryCloseBtn) {
+  challengeHistoryCloseBtn.addEventListener("click", closeChallengeHistory);
 }
 
 if (challengeIncomingEl) {

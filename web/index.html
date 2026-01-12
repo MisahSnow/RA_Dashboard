@@ -237,7 +237,10 @@
       <section class="card">
         <div class="sectionHead">
           <h2 class="sectionTitle">Challenges</h2>
-          <div id="challengesLoading" class="loadingWheel" hidden aria-label="Loading"></div>
+          <div class="sectionControls">
+            <button id="challengeHistoryBtn" class="smallBtn">History</button>
+            <div id="challengesLoading" class="loadingWheel" hidden aria-label="Loading"></div>
+          </div>
         </div>
         <div class="challengeLayout">
           <div class="challengeForm">
@@ -272,6 +275,15 @@
         </div>
       </section>
     </section>
+    <div id="challengeHistoryModal" class="modal" hidden>
+      <div class="modalCard">
+        <div class="sectionHead">
+          <h2 class="sectionTitle">Challenge History</h2>
+          <button id="challengeHistoryCloseBtn" class="smallBtn">Close</button>
+        </div>
+        <div id="challengeHistoryList" class="challengeList"></div>
+      </div>
+    </div>
     </div>
   </div>
 
