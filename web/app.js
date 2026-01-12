@@ -430,9 +430,18 @@ function userColor(username) {
   return `hsl(${hue}, 75%, 62%)`;
 }
 
+function leaderboardRankColor(idx, total) {
+  const ratio = total > 1 ? Math.min(1, Math.max(0, idx / (total - 1))) : 0;
+  const startHue = 45; // gold
+  const endHue = 215; // blue
+  const hue = Math.round(startHue + (endHue - startHue) * ratio);
+  return `hsl(${hue}, 70%, 60%)`;
+}
+
 function renderLeaderboardChart(rows) {
   if (!leaderboardChartEl) return;
   const history = dailyHistoryCache || {};
+  const total = rows.length;
   const days = [];
   const today = new Date();
   for (let i = 6; i >= 0; i--) {
@@ -441,10 +450,10 @@ function renderLeaderboardChart(rows) {
     days.push(getLocalDateKey(d));
   }
 
-  const series = rows.map(r => ({
+  const series = rows.map((r, idx) => ({
     username: r.username,
     values: days.map(day => Number(history[normalizeUserKey(r.username)]?.[day] || 0)),
-    color: r.nameColor || userColor(r.username)
+    color: r.nameColor || leaderboardRankColor(idx, total) || userColor(r.username)
   }));
 
   const chartKey = JSON.stringify(series.map(s => [s.username, s.values]));
@@ -1749,12 +1758,8 @@ tr.innerHTML = `
     frag.appendChild(tr);
 
     const nameBtn = tr.querySelector("button[data-profile]");
-    if (nameBtn && total > 1) {
-      const ratio = Math.min(1, Math.max(0, idx / (total - 1)));
-      const startHue = 45; // gold
-      const endHue = 215; // blue
-      const hue = Math.round(startHue + (endHue - startHue) * ratio);
-      r.nameColor = `hsl(${hue}, 70%, 60%)`;
+    r.nameColor = leaderboardRankColor(idx, total);
+    if (nameBtn) {
       nameBtn.style.setProperty("--name-color", r.nameColor);
     }
   });
