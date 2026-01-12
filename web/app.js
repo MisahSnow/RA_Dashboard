@@ -4,9 +4,11 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-const CLIENT_REQUEST_INTERVAL_MS = 500;
+const CLIENT_REQUEST_INTERVAL_MS = 10;
+const CLIENT_MAX_CONCURRENT = 4;
 const clientRequestQueue = [];
-let clientQueueRunning = false;
+let clientQueueActive = 0;
+let clientQueueTimer = null;
 let lastClientRequestAt = 0;
 
 function enqueueClientFetch(url, options) {
@@ -21,29 +23,46 @@ function enqueueClientFetch(url, options) {
 }
 
 function processClientQueue() {
-  if (clientQueueRunning || clientRequestQueue.length === 0) return;
+  if (clientQueueActive >= CLIENT_MAX_CONCURRENT || clientRequestQueue.length === 0) return;
   const now = Date.now();
   const waitMs = Math.max(0, CLIENT_REQUEST_INTERVAL_MS - (now - lastClientRequestAt));
   if (apiQueueCounterEl) {
     apiQueueCounterEl.textContent = `API Calls in Queue: ${clientRequestQueue.length}`;
   }
-  clientQueueRunning = true;
-  setTimeout(async () => {
-    const job = clientRequestQueue.shift();
-    lastClientRequestAt = Date.now();
-    try {
-      const res = await fetch(job.url, job.options);
-      job.resolve(res);
-    } catch (err) {
-      job.reject(err);
-    } finally {
-      clientQueueRunning = false;
+  if (waitMs > 0) {
+    if (!clientQueueTimer) {
+      clientQueueTimer = setTimeout(() => {
+        clientQueueTimer = null;
+        processClientQueue();
+      }, waitMs);
+    }
+    return;
+  }
+  const job = clientRequestQueue.shift();
+  clientQueueActive += 1;
+  lastClientRequestAt = Date.now();
+  (async () => {
+    const res = await fetch(job.url, job.options);
+    logApiQueueEvent(job.url, job.options, res.status);
+    if (res.status === 429 && (job.retries || 0) < 3) {
+      clientRequestQueue.unshift({ ...job, retries: (job.retries || 0) + 1 });
       if (apiQueueCounterEl) {
         apiQueueCounterEl.textContent = `API Calls in Queue: ${clientRequestQueue.length}`;
       }
-      processClientQueue();
+    } else {
+      job.resolve(res);
     }
-  }, waitMs);
+  })().catch((err) => {
+    logApiQueueEvent(job.url, job.options, 0);
+    job.reject(err);
+  }).finally(() => {
+    clientQueueActive -= 1;
+    if (apiQueueCounterEl) {
+      apiQueueCounterEl.textContent = `API Calls in Queue: ${clientRequestQueue.length}`;
+    }
+    processClientQueue();
+  });
+  processClientQueue();
 }
 
 
@@ -51,6 +70,7 @@ const LS_API_KEY = "ra.apiKey";
 const LS_USE_API_KEY = "ra.useApiKey";
 const LS_CACHE_PREFIX = "ra.cache.";
 const LS_CHALLENGE_LEAD_CACHE = "ra.challengeLeadCache";
+const LS_DEBUG_UI = "ra.debugUi";
 
 const meInput = document.getElementById("meInput");
 const apiKeyInput = document.getElementById("apiKeyInput");
@@ -86,13 +106,22 @@ if (apiQueueCounterEl) {
   apiQueueCounterEl.textContent = "API Calls in Queue: 0";
 }
 
-function logApiQueueEvent(url, options) {
+function logApiQueueEvent(url, options, status) {
   if (!apiQueueLogEntriesEl) return;
+  if (localStorage.getItem(LS_DEBUG_UI) !== "true") return;
   const entry = document.createElement("div");
   entry.className = "apiQueueLogEntry";
   const method = options?.method || "GET";
   const ts = new Date().toLocaleTimeString();
-  entry.textContent = `[${ts}] ${method} ${url}`;
+  const statusLabel = Number.isFinite(status) ? ` ${status}` : "";
+  entry.textContent = `[${ts}] ${method} ${url}${statusLabel}`;
+  if (Number.isFinite(status)) {
+    if (status === 423 || status === 429) {
+      entry.classList.add("status423");
+    } else if (status >= 400) {
+      entry.classList.add("error");
+    }
+  }
   apiQueueLogEntriesEl.appendChild(entry);
   const maxEntries = 200;
   while (apiQueueLogEntriesEl.childElementCount > maxEntries) {
@@ -101,12 +130,26 @@ function logApiQueueEvent(url, options) {
   apiQueueLogEntriesEl.scrollTop = apiQueueLogEntriesEl.scrollHeight;
 }
 
+function applyDebugUiState() {
+  const enabled = localStorage.getItem(LS_DEBUG_UI) === "true";
+  if (apiQueueCounterEl) {
+    apiQueueCounterEl.hidden = !enabled;
+    apiQueueCounterEl.classList.toggle("debugHidden", !enabled);
+  }
+  const logEl = document.getElementById("apiQueueLog");
+  if (logEl) {
+    logEl.hidden = !enabled;
+    logEl.classList.toggle("debugHidden", !enabled);
+  }
+}
+
 const settingsBtn = document.getElementById("settingsBtn");
 const settingsModal = document.getElementById("settingsModal");
 const settingsSaveBtn = document.getElementById("settingsSaveBtn");
 const settingsCloseBtn = document.getElementById("settingsCloseBtn");
 const settingsCancelBtn = document.getElementById("settingsCancelBtn");
 const useApiKeyToggle = document.getElementById("useApiKeyToggle");
+const debugUiToggle = document.getElementById("debugUiToggle");
 
 const recentAchievementsEl = document.getElementById("recentAchievements");
 const recentTimesEl = document.getElementById("recentTimes");
@@ -131,6 +174,7 @@ const profileGamesNoteEl = document.getElementById("profileGamesNote");
 const profileGameSearchEl = document.getElementById("profileGameSearch");
 const profileLegendMeEl = document.getElementById("profileLegendMe");
 const profileLegendThemEl = document.getElementById("profileLegendThem");
+let activeActivityTab = "achievements";
 
 const comparePanel = document.getElementById("comparePanel");
 const compareTitleGameEl = document.getElementById("compareTitleGame");
@@ -213,6 +257,8 @@ let achievementsMaxResults = ACHIEVEMENTS_DEFAULT_MAX;
 const ACHIEVEMENTS_MIN_WAIT_MS = 5000;
 const achievementsLoadStart = Date.now();
 let achievementsShowMoreCount = 0;
+let recentAchievementsLoading = false;
+let recentTimesLoading = false;
 const STAGGER_MS = 400;
 const PRESENCE_PING_MS = 15000;
 let presenceTimer = null;
@@ -270,15 +316,24 @@ function setCurrentUser(username) {
 }
 
 function loadState() {
+  if (localStorage.getItem(LS_DEBUG_UI) === null) {
+    localStorage.setItem(LS_DEBUG_UI, "false");
+  }
   if (apiKeyInput) apiKeyInput.value = localStorage.getItem(LS_API_KEY) || "";
   if (useApiKeyToggle) {
     useApiKeyToggle.checked = localStorage.getItem(LS_USE_API_KEY) === "true";
   }
+  if (debugUiToggle) {
+    debugUiToggle.checked = localStorage.getItem(LS_DEBUG_UI) === "true";
+  }
+  applyDebugUiState();
 }
 
 function saveState() {
   if (apiKeyInput) localStorage.setItem(LS_API_KEY, (apiKeyInput.value || "").trim());
   if (useApiKeyToggle) localStorage.setItem(LS_USE_API_KEY, useApiKeyToggle.checked ? "true" : "false");
+  if (debugUiToggle) localStorage.setItem(LS_DEBUG_UI, debugUiToggle.checked ? "true" : "false");
+  applyDebugUiState();
 }
 
 loadState();
@@ -751,7 +806,12 @@ async function removeFriendFromServer(username) {
 }
 
 function setStatus(msg) {
-  statusEl.textContent = msg || "";
+  const text = msg || "";
+  const lowered = text.toLowerCase();
+  if (lowered.includes("ra api error 429") || lowered.includes("too many attempts") || lowered.includes("too_many_requests")) {
+    return;
+  }
+  statusEl.textContent = text;
 }
 
 function setLoading(el, isLoading) {
@@ -778,13 +838,16 @@ function startRefreshCountdown() {
   refreshCountdownTimer = setInterval(() => {
     if (!nextRefreshAt) return;
     const remaining = nextRefreshAt - Date.now();
-    if (remaining <= 0) {
-      refreshLeaderboard();
-      refreshRecentAchievements();
-      refreshRecentTimes();
-      setNextRefresh();
-      return;
-    }
+      if (remaining <= 0) {
+        refreshLeaderboard();
+        if (activeActivityTab === "times") {
+          refreshRecentTimes();
+        } else {
+          refreshRecentAchievements();
+        }
+        setNextRefresh();
+        return;
+      }
     if (refreshCountdownEl) {
       refreshCountdownEl.textContent = `Auto refresh in ${formatCountdown(remaining)}`;
     }
@@ -796,13 +859,13 @@ function resetRefreshCountdown() {
   startRefreshCountdown();
 }
 
-function openAddFriendModal() {
-  if (!addFriendModal) return;
-  addFriendModal.hidden = false;
-  if (addFriendErrorEl) addFriendErrorEl.textContent = "";
-  if (addFriendLoadingEl) addFriendLoadingEl.hidden = true;
-  friendInput.focus();
-}
+  function openAddFriendModal() {
+    if (!addFriendModal) return;
+    addFriendModal.hidden = false;
+    if (addFriendErrorEl) addFriendErrorEl.textContent = "";
+    if (addFriendLoadingEl) addFriendLoadingEl.hidden = true;
+    friendInput.focus();
+  }
 
 function closeAddFriendModal() {
   if (!addFriendModal) return;
@@ -824,8 +887,11 @@ function getUserValidationError(err, username) {
 async function bootstrapAfterLogin() {
   startPresence();
   refreshLeaderboard();
-  refreshRecentAchievements();
-  refreshRecentTimes();
+  if (activeActivityTab === "times") {
+    refreshRecentTimes();
+  } else {
+    refreshRecentAchievements();
+  }
   refreshChallenges({ includeTotals: true });
   resetRefreshCountdown();
 }
@@ -906,13 +972,19 @@ async function addFriendFromModal() {
   }
 
   refreshLeaderboard();
-  refreshRecentAchievements();
-  refreshRecentTimes();
+  if (activeActivityTab === "times") {
+    refreshRecentTimes();
+  } else {
+    refreshRecentAchievements();
+  }
 }
 
 function openSettings() {
   if (!settingsModal) return;
   if (meInput) meInput.value = currentUser;
+  if (debugUiToggle) {
+    debugUiToggle.checked = localStorage.getItem(LS_DEBUG_UI) === "true";
+  }
   settingsModal.hidden = false;
   meInput.focus();
 }
@@ -946,6 +1018,7 @@ function ensureUsername({ prompt = true } = {}) {
 }
 
 function setActiveTab(name) {
+  const wasActive = activeActivityTab;
   tabButtons.forEach(btn => {
     const isActive = btn.dataset.tab === name;
     btn.classList.toggle("active", isActive);
@@ -956,6 +1029,14 @@ function setActiveTab(name) {
     const isActive = panel.id === `tab-${name}`;
     panel.classList.toggle("active", isActive);
   });
+  activeActivityTab = name;
+  if (name !== wasActive) {
+    if (name === "achievements") {
+      refreshRecentAchievements();
+    } else if (name === "times") {
+      refreshRecentTimes();
+    }
+  }
 }
 
 function setActiveCompareTab(name) {
@@ -1697,8 +1778,11 @@ tr.innerHTML = `
             friends = friends.filter(x => x !== u);
             renderChallengeFriendOptions(friends);
             refreshLeaderboard();
-            refreshRecentAchievements();
-            refreshRecentTimes();
+            if (activeActivityTab === "times") {
+              refreshRecentTimes();
+            } else {
+              refreshRecentAchievements();
+            }
           } catch (err) {
             setStatus(String(err?.message || "Unable to remove friend."));
           }
@@ -2898,8 +2982,10 @@ async function refreshLeaderboard() {
 
 
 async function refreshRecentAchievements({ reset = true } = {}) {
+  if (activeActivityTab !== "achievements") return;
   const { me, users } = getUsersIncludingMe();
   if (!me) return;
+  if (recentAchievementsLoading) return;
 
   const cached = cacheGet("recentAchievements");
   if (cached?.items?.length) {
@@ -2913,6 +2999,7 @@ async function refreshRecentAchievements({ reset = true } = {}) {
     achievementsShowMoreCount = 0;
   }
 
+  recentAchievementsLoading = true;
   setLoading(recentAchievementsLoadingEl, true);
   const minutes = Math.max(1, Math.floor(achievementsLookbackHours * 60));
   const perUserLimit = 10;
@@ -2928,19 +3015,23 @@ async function refreshRecentAchievements({ reset = true } = {}) {
   } catch {
     // keep quiet; leaderboard is primary
   } finally {
+    recentAchievementsLoading = false;
     setLoading(recentAchievementsLoadingEl, false);
   }
 }
 
 async function refreshRecentTimes() {
+  if (activeActivityTab !== "times") return;
   const { me, users } = getUsersIncludingMe();
   if (!me) return;
+  if (recentTimesLoading) return;
 
   const cached = cacheGet("recentTimes");
   if (cached?.items?.length) {
     renderRecentTimes(cached.items);
   }
 
+  recentTimesLoading = true;
   setLoading(recentTimesLoadingEl, true);
   const games = Math.max(1, Number(recentGamesEl.value || 50));
   const perUserLimit = 10;
@@ -2969,6 +3060,7 @@ async function refreshRecentTimes() {
   } catch (e) {
     setStatus(e?.message || "Failed to load recent scores.");
   } finally {
+    recentTimesLoading = false;
     setLoading(recentTimesLoadingEl, false);
   }
 }
@@ -3062,8 +3154,11 @@ if (addFriendConfirmBtn) {
 refreshBtn.addEventListener("click", () => {
   (async () => {
     refreshLeaderboard();
-    refreshRecentAchievements();
-    refreshRecentTimes();
+    if (activeActivityTab === "times") {
+      refreshRecentTimes();
+    } else {
+      refreshRecentAchievements();
+    }
     resetRefreshCountdown();
   })();
 });

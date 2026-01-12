@@ -55,6 +55,12 @@
             Use custom API key
           </label>
         </div>
+        <div class="field checkboxField">
+          <label class="checkboxLabel">
+            <input type="checkbox" id="debugUiToggle" />
+            Debug UI
+          </label>
+        </div>
         <div class="buttons">
           <button id="settingsSaveBtn">Save</button>
           <button id="settingsCancelBtn" class="smallBtn">Cancel</button>
@@ -345,11 +351,11 @@
         <div id="scoreAttackSelection" class="note"></div>
       </div>
     </div>
-    <div id="apiQueueLog" class="apiQueueLog" aria-live="polite">
+    <div id="apiQueueLog" class="apiQueueLog debugHidden" aria-live="polite" hidden>
       <div class="apiQueueLogTitle">API Queue Log</div>
       <div id="apiQueueLogEntries" class="apiQueueLogEntries"></div>
     </div>
-    <div id="apiQueueCounter" class="apiQueueCounter" aria-live="polite"></div>
+    <div id="apiQueueCounter" class="apiQueueCounter debugHidden" aria-live="polite" hidden></div>
     </div>
   </div>
 
