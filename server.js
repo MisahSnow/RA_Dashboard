@@ -185,6 +185,10 @@ let raQueueActive = 0;
 let raQueueTimer = null;
 let lastRaRequestAt = 0;
 
+const RA_FAST_MAX_CONCURRENT = 10;
+const raFastQueue = [];
+let raFastActive = 0;
+
 function enqueueRaRequest(url, retries = 0) {
   return new Promise((resolve, reject) => {
     raQueue.push({ url, resolve, reject, retries });
@@ -239,6 +243,33 @@ function getDayRange(now = new Date()) {
   const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
   const end = new Date(now);
   return { start, end };
+}
+
+function enqueueRaFastRequest(url, retries = 0) {
+  return new Promise((resolve, reject) => {
+    raFastQueue.push({ url, resolve, reject, retries });
+    processRaFastQueue();
+  });
+}
+
+function processRaFastQueue() {
+  if (raFastActive >= RA_FAST_MAX_CONCURRENT || raFastQueue.length === 0) return;
+  const job = raFastQueue.shift();
+  raFastActive += 1;
+  (async () => {
+    const res = await fetch(job.url, { headers: { Accept: "application/json" } });
+    if (res.status === 429 && (job.retries || 0) < 3) {
+      raFastQueue.push({ ...job, retries: (job.retries || 0) + 1 });
+    } else {
+      job.resolve(res);
+    }
+  })().catch((err) => {
+    job.reject(err);
+  }).finally(() => {
+    raFastActive -= 1;
+    processRaFastQueue();
+  });
+  processRaFastQueue();
 }
 
 function getHourRange(now = new Date()) {
@@ -375,10 +406,10 @@ async function computePointsBetween(username, fromDate, toDate, includeSoftcore,
     throw new Error("Failed to fetch hourly points after retries.");
   }
 
-  async function raFetchJson(url, { retries = 2 } = {}) {
+  async function raFetchJson(url, { retries = 2, fast = false } = {}) {
     let attempt = 0;
     while (true) {
-      const res = await enqueueRaRequest(url);
+      const res = await (fast ? enqueueRaFastRequest(url) : enqueueRaRequest(url));
 
       if (res.status === 429 && attempt < retries) {
         attempt++;
@@ -503,7 +534,7 @@ async function raGetGameInfoAndUserProgress(username, gameId, apiKey) {
   url.searchParams.set("g", String(gameId));
   url.searchParams.set("y", apiKey);
 
-  return raFetchJson(url.toString());
+  return raFetchJson(url.toString(), { fast: true });
 }
 
 async function raGetUserSummary(username, apiKey) {

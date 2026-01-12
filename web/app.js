@@ -10,15 +10,32 @@ const clientRequestQueue = [];
 let clientQueueActive = 0;
 let clientQueueTimer = null;
 let lastClientRequestAt = 0;
+const FAST_MAX_CONCURRENT = CLIENT_MAX_CONCURRENT;
+const fastRequestQueue = [];
+let fastQueueActive = 0;
+
+function updateQueueCounter() {
+  if (apiQueueCounterEl) {
+    const total = clientRequestQueue.length + fastRequestQueue.length;
+    apiQueueCounterEl.textContent = `API Calls in Queue: ${total}`;
+  }
+}
 
 function enqueueClientFetch(url, options) {
   return new Promise((resolve, reject) => {
     clientRequestQueue.push({ url, options, resolve, reject });
-    if (apiQueueCounterEl) {
-      apiQueueCounterEl.textContent = `API Calls in Queue: ${clientRequestQueue.length}`;
-    }
+    updateQueueCounter();
     logApiQueueEvent(url, options);
     processClientQueue();
+  });
+}
+
+function enqueueFastFetch(url, options) {
+  return new Promise((resolve, reject) => {
+    fastRequestQueue.push({ url, options, resolve, reject });
+    updateQueueCounter();
+    logApiQueueEvent(url, options);
+    processFastQueue();
   });
 }
 
@@ -26,9 +43,7 @@ function processClientQueue() {
   if (clientQueueActive >= CLIENT_MAX_CONCURRENT || clientRequestQueue.length === 0) return;
   const now = Date.now();
   const waitMs = Math.max(0, CLIENT_REQUEST_INTERVAL_MS - (now - lastClientRequestAt));
-  if (apiQueueCounterEl) {
-    apiQueueCounterEl.textContent = `API Calls in Queue: ${clientRequestQueue.length}`;
-  }
+  updateQueueCounter();
   if (waitMs > 0) {
     if (!clientQueueTimer) {
       clientQueueTimer = setTimeout(() => {
@@ -46,9 +61,7 @@ function processClientQueue() {
     logApiQueueEvent(job.url, job.options, res.status);
     if (res.status === 429 && (job.retries || 0) < 3) {
       clientRequestQueue.unshift({ ...job, retries: (job.retries || 0) + 1 });
-      if (apiQueueCounterEl) {
-        apiQueueCounterEl.textContent = `API Calls in Queue: ${clientRequestQueue.length}`;
-      }
+      updateQueueCounter();
     } else {
       job.resolve(res);
     }
@@ -57,14 +70,36 @@ function processClientQueue() {
     job.reject(err);
   }).finally(() => {
     clientQueueActive -= 1;
-    if (apiQueueCounterEl) {
-      apiQueueCounterEl.textContent = `API Calls in Queue: ${clientRequestQueue.length}`;
-    }
+    updateQueueCounter();
     processClientQueue();
   });
   processClientQueue();
 }
 
+function processFastQueue() {
+  if (fastQueueActive >= FAST_MAX_CONCURRENT || fastRequestQueue.length === 0) return;
+  const job = fastRequestQueue.shift();
+  fastQueueActive += 1;
+  (async () => {
+    const res = await fetch(job.url, job.options);
+    logApiQueueEvent(job.url, job.options, res.status);
+    const shouldRetry = (res.status === 429 || res.status === 423 || res.status === 503 || res.status === 504);
+    if (shouldRetry && (job.retries || 0) < 10) {
+      fastRequestQueue.push({ ...job, retries: (job.retries || 0) + 1 });
+      updateQueueCounter();
+    } else {
+      job.resolve(res);
+    }
+  })().catch((err) => {
+    logApiQueueEvent(job.url, job.options, 0);
+    job.reject(err);
+  }).finally(() => {
+    fastQueueActive -= 1;
+    updateQueueCounter();
+    processFastQueue();
+  });
+  processFastQueue();
+}
 
 const LS_API_KEY = "ra.apiKey";
 const LS_USE_API_KEY = "ra.useApiKey";
@@ -113,6 +148,9 @@ const leaderboardTabButtons = document.querySelectorAll(".leaderboardTab");
 const pageButtons = document.querySelectorAll(".pageBtn");
 const dashboardPage = document.getElementById("dashboardPage");
 const challengesPage = document.getElementById("challengesPage");
+const profilePage = document.getElementById("profilePage");
+const profileHostDashboard = document.getElementById("profileHostDashboard");
+const profileHostProfile = document.getElementById("profileHostProfile");
 
 if (apiQueueCounterEl) {
   apiQueueCounterEl.textContent = "API Calls in Queue: 0";
@@ -138,6 +176,9 @@ function logApiQueueEvent(url, options, status) {
   const ts = new Date().toLocaleTimeString();
   const statusLabel = Number.isFinite(status) ? ` ${status}` : "";
   entry.textContent = `[${ts}] ${method} ${url}${statusLabel}`;
+  if (url?.startsWith("/api/game-achievements")) {
+    entry.classList.add("fastQueue");
+  }
   if (Number.isFinite(status)) {
     if (status === 423 || status === 429) {
       entry.classList.add("status423");
@@ -250,6 +291,7 @@ let currentProfileUser = "";
 let profileSharedGames = [];
 let profileDisplayedGames = [];
 let profileAllGamesLoaded = false;
+let profileGamesFetchCount = 60;
 let profileGamesEmptyMessage = "No shared games found in recent play history.";
 let profileAutoLoadingAll = false;
 let profileSkipAutoLoadOnce = false;
@@ -280,6 +322,9 @@ let achievementsMaxResults = ACHIEVEMENTS_DEFAULT_MAX;
 const ACHIEVEMENTS_MIN_WAIT_MS = 5000;
 const achievementsLoadStart = Date.now();
 let achievementsShowMoreCount = 0;
+const PROFILE_GAMES_INITIAL = 60;
+const PROFILE_GAMES_STEP = 10;
+const PROFILE_GAMES_MAX = 200;
 let recentAchievementsLoading = false;
 let recentTimesLoading = false;
 const STAGGER_MS = 400;
@@ -558,6 +603,18 @@ function updateLeaderboardRangeNote() {
   if (leaderboardPointsNoteEl) leaderboardPointsNoteEl.textContent = note;
 }
 
+function updateChallengeFormState() {
+  const opponent = clampUsername(challengeOpponentInput?.value || "");
+  const hours = Number(challengeDurationInput?.value || 0);
+  const hasFriend = Boolean(opponent);
+  const validHours = Number.isFinite(hours) && hours >= 1;
+  const type = String(challengeTypeSelect?.value || "points");
+  const needsScore = type === "score";
+  const hasScore = Boolean(scoreAttackSelectedGame && scoreAttackSelectedBoard);
+  const canSend = hasFriend && validHours && (!needsScore || hasScore);
+  if (challengeSendBtn) challengeSendBtn.disabled = !canSend;
+}
+
 function setLeaderboardRange(range) {
   leaderboardRange = range;
   localStorage.setItem(LS_LEADERBOARD_RANGE, leaderboardRange);
@@ -831,7 +888,8 @@ async function fetchJson(url, { silent = false } = {}) {
   const apiKey = (apiKeyInput?.value || "").trim();
   const useApiKey = !!useApiKeyToggle?.checked;
   const headers = (useApiKey && apiKey) ? { "x-ra-api-key": apiKey } : {};
-  const res = await enqueueClientFetch(url, { headers });
+  const useFast = url.startsWith("/api/game-achievements");
+  const res = await (useFast ? enqueueFastFetch(url, { headers }) : enqueueClientFetch(url, { headers }));
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(text || `Request failed: ${res.status}`);
@@ -845,12 +903,18 @@ async function fetchServerJson(url, { method = "GET", body = null, silent = fals
   const useApiKey = !!useApiKeyToggle?.checked;
   if (useApiKey && apiKey) headers["x-ra-api-key"] = apiKey;
   if (body !== null) headers["Content-Type"] = "application/json";
-  const res = await enqueueClientFetch(url, {
+  const useFast = url.startsWith("/api/game-achievements");
+  const res = await (useFast ? enqueueFastFetch(url, {
     method,
     headers,
     body: body !== null ? JSON.stringify(body) : undefined,
     credentials: "same-origin"
-  });
+  }) : enqueueClientFetch(url, {
+    method,
+    headers,
+    body: body !== null ? JSON.stringify(body) : undefined,
+    credentials: "same-origin"
+  }));
   if (!res.ok) {
     let message = "";
     try {
@@ -1318,6 +1382,13 @@ function setActiveCompareTab(name) {
   });
 }
 
+function moveProfilePanel(targetHost) {
+  if (!profilePanel || !targetHost) return;
+  if (profilePanel.parentElement !== targetHost) {
+    targetHost.appendChild(profilePanel);
+  }
+}
+
 function setActivePage(name) {
   pageButtons.forEach(btn => {
     const isActive = btn.dataset.page === name;
@@ -1326,6 +1397,15 @@ function setActivePage(name) {
   });
   if (dashboardPage) dashboardPage.hidden = name !== "dashboard";
   if (challengesPage) challengesPage.hidden = name !== "challenges";
+  if (profilePage) profilePage.hidden = name !== "profile";
+  if (name === "profile") {
+    moveProfilePanel(profileHostProfile);
+    if (currentUser) {
+      openProfile(currentUser);
+    }
+  } else {
+    moveProfilePanel(profileHostDashboard);
+  }
 }
 
 function stopChallengePolling() {
@@ -1348,11 +1428,13 @@ function updateScoreAttackSelectionText() {
   if (!scoreAttackSelectedGame || !scoreAttackSelectedBoard) {
     scoreAttackSelectionEl.textContent = "Select a game and leaderboard for Score Attack.";
     if (challengeScoreSummaryEl) challengeScoreSummaryEl.textContent = "";
+    updateChallengeFormState();
     return;
   }
   const text = `${scoreAttackSelectedGame.title} | ${scoreAttackSelectedBoard.title}`;
   scoreAttackSelectionEl.textContent = text;
   if (challengeScoreSummaryEl) challengeScoreSummaryEl.textContent = `Selected: ${text}`;
+  updateChallengeFormState();
 }
 
 function renderScoreAttackGames(games) {
@@ -2032,7 +2114,14 @@ tr.innerHTML = `
     tbody.addEventListener("click", (e) => {
       const profileBtn = e.target.closest("button[data-profile]");
       if (profileBtn) {
-        openProfile(profileBtn.getAttribute("data-profile"));
+        const target = profileBtn.getAttribute("data-profile");
+        const isSelf = currentUser && target && currentUser.toLowerCase() === target.toLowerCase();
+        if (isSelf) {
+          setActivePage("profile");
+        } else {
+          setActivePage("dashboard");
+        }
+        openProfile(target);
         return;
       }
       const removeBtn = e.target.closest("button[data-remove]");
@@ -2128,26 +2217,12 @@ function renderProfileGamesList(games, emptyMessage) {
     }
   }
   profileSharedGamesEl.appendChild(frag);
+  profileDisplayedGames = games;
 }
 
 function applyProfileGameFilter() {
   const query = (profileGameSearchEl?.value || "").trim().toLowerCase();
   const base = profileDisplayedGames || [];
-
-  if (query && !profileAllGamesLoaded) {
-    if (profileSkipAutoLoadOnce) {
-      profileSkipAutoLoadOnce = false;
-    } else {
-    if (!profileAutoLoadingAll) {
-      profileAutoLoadingAll = true;
-      profileSharedGamesEl.innerHTML = `<div class="meta">Loading more games...</div>`;
-      loadAllProfileGames().finally(() => {
-        profileAutoLoadingAll = false;
-      });
-    }
-    return;
-    }
-  }
 
   if (!query) {
     renderProfileGamesList(base, profileGamesEmptyMessage);
@@ -2255,34 +2330,46 @@ function mergeGameLists(primary, secondary) {
   return merged;
 }
 
-async function loadAllProfileGames() {
+async function loadMoreProfileGames() {
   const target = clampUsername(currentProfileUser);
   if (!target || !profileShowMoreBtn) return;
+  const { me } = getUsersIncludingMe();
+  if (!me) {
+    setStatus("Set your username first.");
+    return;
+  }
+
+  const nextCount = Math.min(PROFILE_GAMES_MAX, profileGamesFetchCount + PROFILE_GAMES_STEP);
+  if (nextCount <= profileGamesFetchCount) {
+    profileShowMoreBtn.hidden = true;
+    return;
+  }
 
   profileShowMoreBtn.disabled = true;
   profileShowMoreBtn.textContent = "Loading...";
   setLoading(profileLoadingEl, true);
 
   try {
-    const theirs = await fetchRecentGames(target, 200);
-    const allGames = (theirs.results || []).map(g => ({
-      gameId: g.gameId,
-      title: g.title,
-      imageIcon: g.imageIcon
-    }));
+    const [mine, theirs] = await Promise.all([
+      fetchRecentGames(me, nextCount),
+      profileIsSelf ? null : fetchRecentGames(target, nextCount)
+    ]);
 
-    const combined = mergeGameLists(profileSharedGames, allGames);
-    renderSharedGames(combined, "No games found for this user.");
+    const mineResults = mine?.results || [];
+    const theirsResults = profileIsSelf ? [] : (theirs?.results || []);
+    const combined = buildProfileGameList(mineResults, theirsResults, profileIsSelf);
+    const newAdded = combined.length - profileSharedGames.length;
 
-    if (profileGamesNoteEl) {
-      profileGamesNoteEl.textContent = profileIsSelf
-        ? "Your full recent list."
-        : "Shared games plus their full recent list.";
-    }
+    profileSharedGames = combined;
+    profileDisplayedGames = combined;
+    profileGamesFetchCount = nextCount;
+    renderSharedGames(combined, profileIsSelf ? "No recent games found." : "No shared games found in recent play history.");
 
-    profileAllGamesLoaded = true;
+    const noMore = newAdded <= 0 || nextCount >= PROFILE_GAMES_MAX;
+    profileShowMoreBtn.hidden = noMore;
     profileShowMoreBtn.disabled = false;
-    profileShowMoreBtn.textContent = "Show less";
+    profileShowMoreBtn.textContent = "Show more";
+    profileAllGamesLoaded = noMore;
   } catch (e) {
     profileShowMoreBtn.disabled = false;
     profileShowMoreBtn.textContent = "Show more";
@@ -2292,24 +2379,12 @@ async function loadAllProfileGames() {
   }
 }
 
+async function loadAllProfileGames() {
+  // Deprecated in favor of incremental loading.
+}
+
 function collapseProfileGames() {
-  profileAllGamesLoaded = false;
-  profileDisplayedGames = profileSharedGames;
-  profileGamesEmptyMessage = isSelf
-    ? "No recent games found."
-    : "No shared games found in recent play history.";
-  if (profileGamesNoteEl) {
-    profileGamesNoteEl.textContent = profileIsSelf
-      ? "Your recent games."
-      : "Shows recently played games you both have in common.";
-  }
-  if (profileShowMoreBtn) {
-    profileShowMoreBtn.textContent = "Show more";
-  }
-  if ((profileGameSearchEl?.value || "").trim()) {
-    profileSkipAutoLoadOnce = true;
-  }
-  renderSharedGames(profileSharedGames, profileGamesEmptyMessage);
+  // Deprecated in favor of incremental loading.
 }
 
 function renderProfileSummary(summary) {
@@ -2440,6 +2515,41 @@ function renderProfileInsights({ sharedCount, meSummary, themSummary, isSelf }) 
   }
 }
 
+function buildProfileGameList(mineResults, theirsResults, isSelf) {
+  if (isSelf) {
+    const seen = new Set();
+    return (mineResults || []).map(g => ({
+      gameId: g.gameId,
+      title: g.title,
+      imageIcon: g.imageIcon
+    })).filter(g => {
+      const key = String(g.gameId ?? "");
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
+  const myMap = new Map((mineResults || []).map(g => [g.gameId, g]));
+  const shared = [];
+  for (const g of (theirsResults || [])) {
+    if (!myMap.has(g.gameId)) continue;
+    const mineGame = myMap.get(g.gameId);
+    shared.push({
+      gameId: g.gameId,
+      title: g.title || mineGame?.title,
+      imageIcon: g.imageIcon || mineGame?.imageIcon
+    });
+  }
+  const seen = new Set();
+  return shared.filter(g => {
+    const key = String(g.gameId ?? "");
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 async function openProfile(username) {
   const target = clampUsername(username);
   if (!target) return;
@@ -2462,6 +2572,8 @@ async function openProfile(username) {
   profileGamesEmptyMessage = "No shared games found in recent play history.";
   profileAutoLoadingAll = false;
   profileSkipAutoLoadOnce = false;
+  profileGamesFetchCount = PROFILE_GAMES_INITIAL;
+  profileAllGamesLoaded = false;
   profileGameAchievementCounts = new Map();
   profileGameAchievementPending = new Map();
   profileAllowCompare = !isSelf;
@@ -2474,6 +2586,7 @@ async function openProfile(username) {
   }
   if (profileShowMoreBtn) {
     profileShowMoreBtn.disabled = false;
+    profileShowMoreBtn.hidden = false;
     profileShowMoreBtn.textContent = "Show more";
   }
   if (profileGamesNoteEl) {
@@ -2491,7 +2604,7 @@ async function openProfile(username) {
   setLoading(profileLoadingEl, true);
 
   try {
-    const count = 60;
+    const count = PROFILE_GAMES_INITIAL;
     const [mine, theirs, meSummary, themSummaryRaw] = await Promise.all([
       fetchRecentGames(me, count),
       fetchRecentGames(target, count),
@@ -2507,44 +2620,15 @@ async function openProfile(username) {
       profileSummaryEl.innerHTML = `<div class="meta">Profile summary unavailable.</div>`;
     }
 
-    let unique = [];
-    if (isSelf) {
-      const seen = new Set();
-      unique = (mine.results || []).map(g => ({
-        gameId: g.gameId,
-        title: g.title,
-        imageIcon: g.imageIcon
-      })).filter(g => {
-        const key = String(g.gameId ?? "");
-        if (!key || seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      });
-    } else {
-      const myMap = new Map((mine.results || []).map(g => [g.gameId, g]));
-      const shared = [];
-
-      for (const g of (theirs.results || [])) {
-        if (!myMap.has(g.gameId)) continue;
-        const mineGame = myMap.get(g.gameId);
-        shared.push({
-          gameId: g.gameId,
-          title: g.title || mineGame?.title,
-          imageIcon: g.imageIcon || mineGame?.imageIcon
-        });
-      }
-
-      const seen = new Set();
-      unique = shared.filter(g => {
-        const key = String(g.gameId ?? "");
-        if (!key || seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      });
-    }
+    const unique = buildProfileGameList(mine.results || [], theirs.results || [], isSelf);
 
     profileSharedGames = unique;
+    profileDisplayedGames = unique;
+    profileAllGamesLoaded = unique.length >= PROFILE_GAMES_MAX;
     renderSharedGames(unique, isSelf ? "No recent games found." : "No shared games found in recent play history.");
+    if (profileShowMoreBtn) {
+      profileShowMoreBtn.hidden = profileAllGamesLoaded;
+    }
     renderProfileInsights({
       sharedCount: unique.length,
       meSummary,
@@ -3367,11 +3451,7 @@ compareTabButtons.forEach(btn => {
 
 if (profileShowMoreBtn) {
   profileShowMoreBtn.addEventListener("click", () => {
-    if (profileAllGamesLoaded) {
-      collapseProfileGames();
-    } else {
-      loadAllProfileGames();
-    }
+    loadMoreProfileGames();
   });
 }
 
@@ -3539,15 +3619,17 @@ pageButtons.forEach(btn => {
   btn.addEventListener("click", () => {
     const page = btn.dataset.page;
     setActivePage(page);
-    if (page === "challenges") {
-      refreshChallenges({ includeTotals: true });
-      stopChallengePolling();
-      challengesPollTimer = setInterval(() => refreshChallenges({ includeTotals: false }), 10000);
-      challengesTotalsTimer = setInterval(() => refreshChallenges({ includeTotals: true }), 60000);
-    } else {
-      stopChallengePolling();
-    }
-  });
+  if (page === "challenges") {
+    refreshChallenges({ includeTotals: true });
+    stopChallengePolling();
+    challengesPollTimer = setInterval(() => refreshChallenges({ includeTotals: false }), 10000);
+    challengesTotalsTimer = setInterval(() => refreshChallenges({ includeTotals: true }), 60000);
+  } else if (page === "profile") {
+    stopChallengePolling();
+  } else {
+    stopChallengePolling();
+  }
+});
 });
 if (settingsSaveBtn) {
   settingsSaveBtn.addEventListener("click", () => {
@@ -3611,6 +3693,12 @@ if (challengeSendBtn) {
   });
 }
 
+if (challengeDurationInput) {
+  challengeDurationInput.addEventListener("input", () => {
+    updateChallengeFormState();
+  });
+}
+
 function openChallengeHistory() {
   if (!challengeHistoryModal) return;
   challengeHistoryModal.hidden = false;
@@ -3661,6 +3749,8 @@ if (challengeScoreSelectBtn) {
     if (scoreAttackBoardsSearch) scoreAttackBoardsSearch.value = scoreAttackBoardQuery;
   });
 }
+
+updateChallengeFormState();
 
 if (challengeScoreCloseBtn) {
   challengeScoreCloseBtn.addEventListener("click", () => {
@@ -3726,6 +3816,7 @@ if (challengeTypeSelect) {
       updateScoreAttackSelectionText();
       if (challengeScoreSummaryEl) challengeScoreSummaryEl.textContent = "";
     }
+    updateChallengeFormState();
   });
   challengeScoreSelectBtn.hidden = challengeTypeSelect.value !== "score";
 }
@@ -3751,6 +3842,7 @@ if (challengeOpponentInput) {
     }
     updateScoreAttackSelectionText();
     updateScoreAttackView(scoreAttackView);
+    updateChallengeFormState();
   });
 }
 

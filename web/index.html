@@ -19,19 +19,20 @@
         <h1><span class="titlePrimary">Competetive</span> <span class="titleAccent">RetroAchievements</span></h1>
         <p class="subtitle">Group Leaderboard and Achievement Tracking</p>
       </div>
-      <div class="panelActions">
+      <div class="topActions">
         <div class="refreshBlock">
-          <span id="refreshCountdown" class="note"></span>
           <div class="refreshRow">
             <button id="settingsBtn" class="smallBtn">Settings</button>
             <button id="refreshBtn" class="smallBtn">Refresh</button>
           </div>
+          <span id="refreshCountdown" class="note"></span>
         </div>
       </div>
     </div>
     <div class="pageTabs" role="tablist" aria-label="Pages">
       <button class="pageBtn active" data-page="dashboard" role="tab" aria-selected="true">Dashboard</button>
       <button class="pageBtn" data-page="challenges" role="tab" aria-selected="false">Challenges</button>
+      <button class="pageBtn profileTab" data-page="profile" role="tab" aria-selected="false">My Profile</button>
     </div>
     <div class="status" id="status"></div>
 
@@ -160,6 +161,7 @@
       </div>
     </section>
 
+    <div id="profileHostDashboard">
     <section class="card profilePanel" id="profilePanel" hidden>
       <div class="sectionHead">
         <h2 class="sectionTitle">Profile: <span id="profileTitleName"></span></h2>
@@ -198,6 +200,7 @@
       </div>
       <p class="note">Shared achievements are listed first.</p>
     </section>
+    </div>
 
     <section class="card selfGamePanel" id="selfGamePanel" hidden>
       <div class="sectionHead">
@@ -250,6 +253,9 @@
       </div>
     </section>
     </section>
+    <section id="profilePage" class="page" hidden>
+      <div id="profileHostProfile"></div>
+    </section>
 
     <section id="challengesPage" class="page" hidden>
       <section class="card">
@@ -268,19 +274,19 @@
             </div>
             <div class="field">
               <label for="challengeType">Challenge type</label>
-              <select id="challengeType">
+              <select id="challengeType" class="mutedSelect">
                 <option value="points">Points Race</option>
                 <option value="score">Score Attack</option>
               </select>
-            </div>
-            <div class="field">
-              <label for="challengeDuration">Duration (hours)</label>
-              <input id="challengeDuration" type="number" min="1" max="168" value="24" />
             </div>
             <div class="buttons">
               <button id="challengeScoreSelectBtn" class="smallBtn" hidden>Select Game &amp; Score</button>
             </div>
             <div id="challengeScoreSummary" class="note"></div>
+            <div class="field">
+              <label for="challengeDuration">Duration (hours)</label>
+              <input id="challengeDuration" type="number" min="1" max="168" value="24" />
+            </div>
             <div class="buttons">
               <button id="challengeSendBtn">Send Challenge</button>
             </div>
