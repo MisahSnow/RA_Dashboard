@@ -238,24 +238,28 @@
         <div class="sectionHead">
           <h2 class="sectionTitle">Challenges</h2>
           <div class="sectionControls">
-            <button id="challengeHistoryBtn" class="smallBtn">History</button>
             <div id="challengesLoading" class="loadingWheel" hidden aria-label="Loading"></div>
           </div>
         </div>
         <div class="challengeLayout">
-          <div class="challengeForm">
-            <div class="field">
-              <label for="challengeOpponent">Friend</label>
-              <select id="challengeOpponent"></select>
+          <div class="challengeSidebar">
+            <div class="challengeForm">
+              <div class="field">
+                <label for="challengeOpponent">Friend</label>
+                <select id="challengeOpponent"></select>
+              </div>
+              <div class="field">
+                <label for="challengeDuration">Duration (hours)</label>
+                <input id="challengeDuration" type="number" min="1" max="168" value="24" />
+              </div>
+              <div class="buttons">
+                <button id="challengeSendBtn">Send Challenge</button>
+              </div>
+              <div id="challengeError" class="note errorText" role="alert"></div>
             </div>
-            <div class="field">
-              <label for="challengeDuration">Duration (hours)</label>
-              <input id="challengeDuration" type="number" min="1" max="168" value="24" />
+            <div class="challengeHistoryWrap">
+              <button id="challengeHistoryBtn" class="smallBtn">Challenge History</button>
             </div>
-            <div class="buttons">
-              <button id="challengeSendBtn">Send Challenge</button>
-            </div>
-            <div id="challengeError" class="note errorText" role="alert"></div>
           </div>
 
           <div class="challengeLists">

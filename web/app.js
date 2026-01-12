@@ -158,6 +158,7 @@ let lastLeaderboardKey = "";
 let lastLeaderboardRows = [];
 let lastRecentAchievementsKey = "";
 let lastRecentTimesKey = "";
+let authResolved = false;
 
 function clampUsername(s) {
   return (s || "").trim().replace(/\s+/g, "");
@@ -170,6 +171,9 @@ function normalizeUserKey(s) {
 function setCurrentUser(username) {
   currentUser = clampUsername(username);
   if (meInput) meInput.value = currentUser;
+  if (currentUser && usernameModal) {
+    usernameModal.hidden = true;
+  }
 }
 
 function loadState() {
@@ -564,6 +568,17 @@ async function fetchAuthMe() {
   }
 }
 
+async function fetchAuthMeWithRetry(retries = 2) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const username = await fetchAuthMe();
+    if (username) return username;
+    if (attempt < retries) {
+      await sleep(500 * (attempt + 1));
+    }
+  }
+  return "";
+}
+
 async function loginUser(username) {
   const data = await fetchServerJson("/api/auth/login", {
     method: "POST",
@@ -769,11 +784,11 @@ function closeSettings() {
   settingsModal.hidden = true;
 }
 
-function ensureUsername() {
+function ensureUsername({ prompt = true } = {}) {
   const existing = currentUser;
   if (existing) return existing;
 
-  if (usernameModal) {
+  if (prompt && usernameModal) {
     usernameModal.hidden = false;
     if (usernameModalInput) {
       usernameModalInput.value = "";
@@ -1036,7 +1051,7 @@ function renderChallengeFriendOptions(list) {
 }
 
 async function refreshChallenges({ includeTotals = true } = {}) {
-  const ensured = ensureUsername();
+  const ensured = ensureUsername({ prompt: true });
   if (!ensured) return;
   renderChallengeFriendOptions(friends);
   if (challengeErrorEl) challengeErrorEl.textContent = "";
@@ -2205,7 +2220,7 @@ function getUsersIncludingMe() {
 }
 
 async function refreshLeaderboard() {
-  const ensured = ensureUsername();
+  const ensured = ensureUsername({ prompt: false });
   if (!ensured) return;
   const { me, users } = getUsersIncludingMe();
   if (!me) return;
@@ -2848,7 +2863,8 @@ if (usernameModalInput) {
 
 // initial load
 (async () => {
-  const me = await fetchAuthMe();
+  const me = await fetchAuthMeWithRetry(3);
+  authResolved = true;
   if (me) {
     setCurrentUser(me);
     friends = await loadFriendsFromServer();

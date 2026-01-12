@@ -390,6 +390,20 @@ button:hover {
     0 0 24px rgba(0, 0, 0, 0.45);
 }
 
+.challengeHistoryWrap {
+  display: flex;
+  justify-content: flex-start;
+  margin-top: -8px;
+  margin-bottom: 18px;
+  width: 100%;
+  align-self: stretch;
+}
+
+.challengeHistoryWrap .smallBtn {
+  width: 100%;
+  box-sizing: border-box;
+}
+
 .challengeLists {
   display: flex;
   flex-direction: column;
@@ -403,11 +417,20 @@ button:hover {
   align-items: start;
 }
 
+.challengeSidebar {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  width: 100%;
+}
+
 .challengeForm {
   position: sticky;
   top: 18px;
   align-self: start;
   min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 
