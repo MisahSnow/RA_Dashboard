@@ -71,6 +71,12 @@ const LS_USE_API_KEY = "ra.useApiKey";
 const LS_CACHE_PREFIX = "ra.cache.";
 const LS_CHALLENGE_LEAD_CACHE = "ra.challengeLeadCache";
 const LS_DEBUG_UI = "ra.debugUi";
+const LS_LEADERBOARD_RANGE = "ra.leaderboardRange";
+const storedLeaderboardRange = localStorage.getItem(LS_LEADERBOARD_RANGE);
+let leaderboardRange = ["daily", "weekly", "monthly"].includes(storedLeaderboardRange)
+  ? storedLeaderboardRange
+  : "monthly";
+let activeChart = "daily";
 
 const meInput = document.getElementById("meInput");
 const apiKeyInput = document.getElementById("apiKeyInput");
@@ -98,6 +104,12 @@ const onlineHintEl = document.getElementById("onlineHint");
 const apiQueueCounterEl = document.getElementById("apiQueueCounter");
 const apiQueueLogEntriesEl = document.getElementById("apiQueueLogEntries");
 const leaderboardChartEl = document.getElementById("leaderboardChart");
+const leaderboardHourlyChartEl = document.getElementById("leaderboardHourlyChart");
+const leaderboardChartTitleEl = document.getElementById("leaderboardChartTitle");
+const chartTabButtons = document.querySelectorAll(".chartTab");
+const leaderboardPointsNoteEl = document.getElementById("leaderboardPointsNote");
+const leaderboardTitleEl = document.getElementById("leaderboardTitle");
+const leaderboardTabButtons = document.querySelectorAll(".leaderboardTab");
 const pageButtons = document.querySelectorAll(".pageBtn");
 const dashboardPage = document.getElementById("dashboardPage");
 const challengesPage = document.getElementById("challengesPage");
@@ -105,6 +117,17 @@ const challengesPage = document.getElementById("challengesPage");
 if (apiQueueCounterEl) {
   apiQueueCounterEl.textContent = "API Calls in Queue: 0";
 }
+
+leaderboardTabButtons.forEach((btn) => {
+  btn.addEventListener("click", () => setLeaderboardRange(btn.dataset.range));
+});
+updateLeaderboardRangeNote();
+updateLeaderboardTabState();
+
+chartTabButtons.forEach((btn) => {
+  btn.addEventListener("click", () => setActiveChart(btn.dataset.chart));
+});
+setActiveChart(activeChart);
 
 function logApiQueueEvent(url, options, status) {
   if (!apiQueueLogEntriesEl) return;
@@ -272,9 +295,11 @@ let presenceRenderTimer = null;
 let lastPresenceKey = "";
 let lastPresenceMe = "";
 let lastChartKey = "";
+let lastHourlyChartKey = "";
 let currentUser = "";
 let friends = [];
 let dailyHistoryCache = {};
+let hourlyHistoryCache = {};
 const challengeAvatarCache = new Map();
 let challengesPollTimer = null;
 let challengesTotalsTimer = null;
@@ -284,6 +309,7 @@ const activeChallengeCache = new Map();
 let lastChallengesKey = "";
 let lastLeaderboardKey = "";
 let lastLeaderboardRows = [];
+let leaderboardBaseRows = [];
 let lastRecentAchievementsKey = "";
 let lastRecentTimesKey = "";
 let authResolved = false;
@@ -318,6 +344,9 @@ function setCurrentUser(username) {
 function loadState() {
   if (localStorage.getItem(LS_DEBUG_UI) === null) {
     localStorage.setItem(LS_DEBUG_UI, "false");
+  }
+  if (localStorage.getItem(LS_LEADERBOARD_RANGE) === null) {
+    localStorage.setItem(LS_LEADERBOARD_RANGE, leaderboardRange);
   }
   if (apiKeyInput) apiKeyInput.value = localStorage.getItem(LS_API_KEY) || "";
   if (useApiKeyToggle) {
@@ -387,8 +416,18 @@ function getLocalDateKey(d = new Date()) {
   return `${year}-${month}-${day}`;
 }
 
+function getHourKey(d = new Date()) {
+  const hour = new Date(d);
+  hour.setMinutes(0, 0, 0);
+  return hour.toISOString();
+}
+
 function setDailyHistory(history) {
   dailyHistoryCache = history || {};
+}
+
+function setHourlyHistory(history) {
+  hourlyHistoryCache = history || {};
 }
 
 function loadChallengeLeadCache() {
@@ -438,6 +477,114 @@ function leaderboardRankColor(idx, total) {
   return `hsl(${hue}, 70%, 60%)`;
 }
 
+function getLeaderboardRangePoints(row) {
+  if (leaderboardRange === "daily") {
+    return row.dailyPoints ?? getDailyPointsFromHistory(row.username) ?? 0;
+  }
+  if (leaderboardRange === "weekly") {
+    return row.weeklyPoints ?? getWeeklyPointsFromHistory(row.username) ?? 0;
+  }
+  return row.points ?? 0;
+}
+
+function getDailyPointsFromHistory(username) {
+  const history = dailyHistoryCache?.[normalizeUserKey(username)];
+  if (!history) return null;
+  const todayKey = getLocalDateKey();
+  return Number(history?.[todayKey] || 0);
+}
+
+function getWeeklyPointsFromHistory(username) {
+  const history = dailyHistoryCache?.[normalizeUserKey(username)];
+  if (!history) return null;
+  const today = new Date();
+  const day = today.getDay(); // 0=Sun, 1=Mon
+  const offset = (day + 6) % 7; // Monday=0, Sunday=6
+  const weekStart = new Date(today);
+  weekStart.setDate(today.getDate() - offset);
+  const days = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(weekStart);
+    d.setDate(weekStart.getDate() + i);
+    days.push(getLocalDateKey(d));
+  }
+  return days.reduce((sum, dayKey) => sum + Number(history?.[dayKey] || 0), 0);
+}
+
+function applyWeeklyPoints(rows) {
+  rows.forEach((row) => {
+    row.weeklyPoints = getWeeklyPointsFromHistory(row.username);
+  });
+}
+
+function renderLeaderboardForRange(baseRows, me) {
+  if (!Array.isArray(baseRows) || !baseRows.length) return;
+  const myRow = baseRows.find(r => r.username === me);
+  const myPoints = myRow ? getLeaderboardRangePoints(myRow) : 0;
+  const rows = baseRows.map((row) => {
+    const points = getLeaderboardRangePoints(row);
+    return {
+      ...row,
+      points,
+      deltaVsYou: points - myPoints,
+      showDailyPoints: leaderboardRange === "monthly"
+    };
+  });
+  rows.sort((a, b) => (b.points - a.points) || a.username.localeCompare(b.username));
+  renderLeaderboard(rows, me);
+  updateLeaderboardRangeNote();
+  updateLeaderboardTabState();
+}
+
+function updateLeaderboardTabState() {
+  leaderboardTabButtons.forEach((btn) => {
+    const active = btn.dataset.range === leaderboardRange;
+    btn.classList.toggle("active", active);
+    btn.setAttribute("aria-selected", active ? "true" : "false");
+  });
+}
+
+function updateLeaderboardRangeNote() {
+  let title = "Monthly Leaderboard";
+  let note = "Points column shows monthly total with today in parentheses.";
+  if (leaderboardRange === "daily") {
+    title = "Daily Leaderboard";
+    note = "Points column shows today's total.";
+  } else if (leaderboardRange === "weekly") {
+    title = "Weekly Leaderboard";
+    note = "Points column shows the last 7 days total.";
+  }
+  if (leaderboardTitleEl) leaderboardTitleEl.textContent = title;
+  if (leaderboardPointsNoteEl) leaderboardPointsNoteEl.textContent = note;
+}
+
+function setLeaderboardRange(range) {
+  leaderboardRange = range;
+  localStorage.setItem(LS_LEADERBOARD_RANGE, leaderboardRange);
+  if (leaderboardBaseRows.length && currentUser) {
+    renderLeaderboardForRange(leaderboardBaseRows, currentUser);
+  } else {
+    updateLeaderboardRangeNote();
+    updateLeaderboardTabState();
+  }
+}
+
+function setActiveChart(mode) {
+  activeChart = mode === "hourly" ? "hourly" : "daily";
+  chartTabButtons.forEach((btn) => {
+    const active = btn.dataset.chart === activeChart;
+    btn.classList.toggle("active", active);
+    btn.setAttribute("aria-selected", active ? "true" : "false");
+  });
+  if (leaderboardChartEl) leaderboardChartEl.hidden = activeChart !== "daily";
+  if (leaderboardHourlyChartEl) leaderboardHourlyChartEl.hidden = activeChart !== "hourly";
+  if (leaderboardChartTitleEl) {
+    leaderboardChartTitleEl.textContent = activeChart === "daily"
+      ? "Daily Points (Last 7 Days)"
+      : "Hourly Points (Last 24 Hours)";
+  }
+}
+
 function renderLeaderboardChart(rows) {
   if (!leaderboardChartEl) return;
   const history = dailyHistoryCache || {};
@@ -463,17 +610,34 @@ function renderLeaderboardChart(rows) {
   const max = Math.max(1, ...series.flatMap(s => s.values));
   const width = 800;
   const height = 160;
-  const pad = 12;
-  const xStep = (width - pad * 2) / (days.length - 1);
+  const pad = 8;
+  const labelPad = 30;
+  const xStep = (width - (pad * 2) - labelPad) / (days.length - 1);
   const yScale = (val) => height - pad - ((val / max) * (height - pad * 2));
+  const xFor = (idx) => pad + xStep * idx;
+  const yFor = (val) => yScale(val);
 
   const axisY = `<line class="chartAxis" x1="${pad}" y1="${pad}" x2="${pad}" y2="${height - pad}" />`;
-  const axisX = `<line class="chartAxis" x1="${pad}" y1="${height - pad}" x2="${width - pad}" y2="${height - pad}" />`;
+  const axisX = `<line class="chartAxis" x1="${pad}" y1="${height - pad}" x2="${width - pad - labelPad}" y2="${height - pad}" />`;
+
+  const yTicks = 4;
+  const yLabels = Array.from({ length: yTicks + 1 }, (_, i) => {
+    const value = Math.round((max / yTicks) * i);
+    const y = yFor(value);
+    return `<text class="chartLabel" x="${width - pad - labelPad + 6}" y="${y}" text-anchor="start" dominant-baseline="middle">${value}</text>`;
+  }).join("");
+
+  const xLabels = days.map((day, idx) => {
+    const label = day.slice(5);
+    const x = xFor(idx);
+    const y = height - pad + labelPad;
+    return `<text class="chartLabel" x="${x}" y="${y}" text-anchor="middle">${label}</text>`;
+  }).join("");
 
   const paths = series.map(s => {
     const d = s.values.map((v, idx) => {
-      const x = pad + xStep * idx;
-      const y = yScale(v);
+      const x = xFor(idx);
+      const y = yFor(v);
       return `${idx === 0 ? "M" : "L"} ${x} ${y}`;
     }).join(" ");
     return `<path class="chartLine" stroke="${s.color}" d="${d}" />`;
@@ -487,10 +651,93 @@ function renderLeaderboardChart(rows) {
   `).join("");
 
   leaderboardChartEl.innerHTML = `
-    <svg viewBox="0 0 ${width} ${height}" width="100%" height="${height}" role="img" aria-label="Daily points chart">
+    <svg viewBox="0 0 ${width} ${height + labelPad + 6}" width="100%" height="${height + labelPad + 6}" preserveAspectRatio="none" role="img" aria-label="Daily points chart">
       ${axisY}
       ${axisX}
+      ${yLabels}
       ${paths}
+      ${xLabels}
+    </svg>
+    <div class="chartLegend">${legend}</div>
+  `;
+}
+
+function renderHourlyChart(rows) {
+  if (!leaderboardHourlyChartEl) return;
+  const history = hourlyHistoryCache || {};
+  const total = rows.length;
+  const hours = [];
+  const now = new Date();
+  now.setMinutes(0, 0, 0);
+  for (let i = 23; i >= 0; i--) {
+    const d = new Date(now);
+    d.setHours(now.getHours() - i);
+    hours.push(d);
+  }
+
+  const series = rows.map((r, idx) => ({
+    username: r.username,
+    values: hours.map((d) => {
+      const key = getHourKey(d);
+      return Number(history[normalizeUserKey(r.username)]?.[key] || 0);
+    }),
+    color: r.nameColor || leaderboardRankColor(idx, total) || userColor(r.username)
+  }));
+
+  const chartKey = JSON.stringify(series.map(s => [s.username, s.values]));
+  if (chartKey === lastHourlyChartKey) return;
+  lastHourlyChartKey = chartKey;
+
+  const max = Math.max(1, ...series.flatMap(s => s.values));
+  const width = 800;
+  const height = 160;
+  const pad = 8;
+  const labelPad = 30;
+  const xStep = (width - (pad * 2) - labelPad) / (hours.length - 1);
+  const yScale = (val) => height - pad - ((val / max) * (height - pad * 2));
+  const xFor = (idx) => pad + xStep * idx;
+  const yFor = (val) => yScale(val);
+
+  const axisY = `<line class="chartAxis" x1="${pad}" y1="${pad}" x2="${pad}" y2="${height - pad}" />`;
+  const axisX = `<line class="chartAxis" x1="${pad}" y1="${height - pad}" x2="${width - pad - labelPad}" y2="${height - pad}" />`;
+
+  const yTicks = 4;
+  const yLabels = Array.from({ length: yTicks + 1 }, (_, i) => {
+    const value = Math.round((max / yTicks) * i);
+    const y = yFor(value);
+    return `<text class="chartLabel" x="${width - pad - labelPad + 6}" y="${y}" text-anchor="start" dominant-baseline="middle">${value}</text>`;
+  }).join("");
+
+  const xLabels = hours.map((d, idx) => {
+    const label = d.toLocaleTimeString([], { hour: "numeric" });
+    const x = xFor(idx);
+    const y = height - pad + labelPad;
+    return `<text class="chartLabel" x="${x}" y="${y}" text-anchor="middle">${label}</text>`;
+  }).join("");
+
+  const paths = series.map(s => {
+    const d = s.values.map((v, idx) => {
+      const x = xFor(idx);
+      const y = yFor(v);
+      return `${idx === 0 ? "M" : "L"} ${x} ${y}`;
+    }).join(" ");
+    return `<path class="chartLine" stroke="${s.color}" d="${d}" />`;
+  }).join("");
+
+  const legend = series.map(s => `
+    <div class="chartLegendItem">
+      <span class="chartLegendSwatch" style="background:${s.color}"></span>
+      <span class="chartLegendLabel">${safeText(s.username)}</span>
+    </div>
+  `).join("");
+
+  leaderboardHourlyChartEl.innerHTML = `
+    <svg viewBox="0 0 ${width} ${height + labelPad + 6}" width="100%" height="${height + labelPad + 6}" preserveAspectRatio="none" role="img" aria-label="Hourly points chart">
+      ${axisY}
+      ${axisX}
+      ${yLabels}
+      ${paths}
+      ${xLabels}
     </svg>
     <div class="chartLegend">${legend}</div>
   `;
@@ -635,6 +882,16 @@ async function fetchDailyHistory(users, days = 7) {
   params.set("users", list.join(","));
   params.set("days", String(days));
   const data = await fetchJson(`/api/daily-history?${params.toString()}`);
+  return data?.results || {};
+}
+
+async function fetchHourlyHistory(users, hours = 24) {
+  const list = users.map(normalizeUserKey).filter(Boolean);
+  if (!list.length) return {};
+  const params = new URLSearchParams();
+  params.set("users", list.join(","));
+  params.set("hours", String(hours));
+  const data = await fetchJson(`/api/hourly-history?${params.toString()}`);
   return data?.results || {};
 }
 
@@ -1722,14 +1979,17 @@ function renderLeaderboard(rows, me) {
     r.nowPlayingHtml,
     r.nowPlayingText,
     r.dailyPoints,
-    r.avatarUrl
+    r.weeklyPoints,
+    r.avatarUrl,
+    r.showDailyPoints
   ]));
   if (key === lastLeaderboardKey) return;
   lastLeaderboardKey = key;
   lastLeaderboardRows = rows.map(r => ({ ...r }));
 
   tbody.innerHTML = "";
-  cacheSet("leaderboard", { rows, me });
+  const cacheRows = leaderboardBaseRows.length ? leaderboardBaseRows : rows;
+  cacheSet("leaderboard", { rows: cacheRows, me });
   const total = rows.length;
   const frag = document.createDocumentFragment();
   rows.forEach((r, idx) => {
@@ -1745,7 +2005,7 @@ tr.innerHTML = `
       <td><button class="linkBtn" type="button" data-profile="${safeText(r.username)}">${avatar}<span class="leaderboardIdentity"><span class="nameRank">${idx + 1}.</span><span class="leaderboardName"><strong>${safeText(r.username)}</strong></span>${isMe ? '<span class="note">(you)</span>' : ""}</span></button></td>
       <td>
         <strong>${Math.round(r.points)}</strong>
-        ${r.dailyPoints !== null ? `<span class="dailyPoints">(+${Math.round(r.dailyPoints)})</span>` : ""}
+        ${r.showDailyPoints && r.dailyPoints !== null ? `<span class="dailyPoints">(+${Math.round(r.dailyPoints)})</span>` : ""}
       </td>
       <td class="${cls}"><strong>${delta > 0 ? "+" : ""}${Math.round(delta)}</strong></td>
       <td>${r.unlocks}</td>
@@ -1765,6 +2025,7 @@ tr.innerHTML = `
   });
   tbody.appendChild(frag);
   renderLeaderboardChart(rows);
+  renderHourlyChart(rows);
 
   if (!tbody.dataset.bound) {
     tbody.dataset.bound = "true";
@@ -2818,7 +3079,8 @@ async function refreshLeaderboard() {
 
   const cached = cacheGet("leaderboard");
   if (cached?.rows?.length) {
-    renderLeaderboard(cached.rows, cached.me || me);
+    leaderboardBaseRows = cached.rows.map(r => ({ ...r }));
+    renderLeaderboardForRange(leaderboardBaseRows, cached.me || me);
   }
 
   setLoading(leaderboardLoadingEl, true);
@@ -2833,30 +3095,38 @@ async function refreshLeaderboard() {
     const previousByUser = Object.fromEntries(
       (lastLeaderboardRows || []).map(r => [r.username, r])
     );
-    const rows = users.map(u => {
+    const baseRows = users.map(u => {
       const prev = previousByUser[u];
       const prevNow = prev?.nowPlayingHtml || "";
       const keepNow = prevNow && !prevNow.includes("Loading");
       return {
         username: u,
         points: map[u]?.points ?? 0,
+        monthlyPoints: map[u]?.points ?? 0,
         deltaVsYou: (map[u]?.points ?? 0) - myPoints,
         unlocks: map[u]?.unlockCount ?? 0,
         nowPlayingHtml: keepNow ? prevNow : "Loading...",
         dailyPoints: prev?.dailyPoints ?? null,
+        weeklyPoints: prev?.weeklyPoints ?? null,
         avatarUrl: prev?.avatarUrl ?? null
       };
     });
 
-    rows.sort((a, b) => (b.points - a.points) || a.username.localeCompare(b.username));
-    renderLeaderboard(rows, me);
+    baseRows.sort((a, b) => (b.points - a.points) || a.username.localeCompare(b.username));
+    leaderboardBaseRows = baseRows.map(r => ({ ...r }));
+    renderLeaderboardForRange(leaderboardBaseRows, me);
 
     // 2) Load daily history from the DB for a quick chart render.
     (async () => {
       try {
         const history = await fetchDailyHistory(users, 7);
         setDailyHistory(history);
-        renderLeaderboardChart(rows);
+        const hourly = await fetchHourlyHistory(users, 24);
+        setHourlyHistory(hourly);
+        applyWeeklyPoints(leaderboardBaseRows);
+        renderLeaderboardForRange(leaderboardBaseRows, me);
+        renderLeaderboardChart(leaderboardBaseRows);
+        renderHourlyChart(leaderboardBaseRows);
       } catch {
         // ignore history errors
       }
@@ -2891,10 +3161,10 @@ async function refreshLeaderboard() {
             retries: 4,
             delayMs: 1000,
             onRetry: (attempt) => {
-              const row = rows.find(r => r.username === u);
+              const row = leaderboardBaseRows.find(r => r.username === u);
               if (row) {
                 row.nowPlayingHtml = `Loading... (retry ${attempt}/4)`;
-                renderLeaderboard(rows, me);
+                renderLeaderboardForRange(leaderboardBaseRows, me);
               }
             }
           });
@@ -2905,7 +3175,7 @@ async function refreshLeaderboard() {
       }));
       const presence = Object.fromEntries(presencePairs);
 
-      for (const r of rows) {
+      for (const r of leaderboardBaseRows) {
         const p = presence[r.username];
         if (p && p.title) {
           const age = (typeof p.ageSeconds === "number")
@@ -2942,7 +3212,7 @@ async function refreshLeaderboard() {
         }
       }
 
-      renderLeaderboard(rows, me);
+      renderLeaderboardForRange(leaderboardBaseRows, me);
     })().catch(() => {
       // Ignore background errors; leaderboard already rendered.
     });
@@ -2959,21 +3229,26 @@ async function refreshLeaderboard() {
         }
       }));
       const daily = Object.fromEntries(dailyPairs);
-      for (const r of rows) {
+      for (const r of leaderboardBaseRows) {
         r.dailyPoints = daily[r.username];
       }
-      renderLeaderboard(rows, me);
+      renderLeaderboardForRange(leaderboardBaseRows, me);
 
       try {
         const history = await fetchDailyHistory(users, 7);
         setDailyHistory(history);
-        renderLeaderboardChart(rows);
+        const hourly = await fetchHourlyHistory(users, 24);
+        setHourlyHistory(hourly);
+        applyWeeklyPoints(leaderboardBaseRows);
+        renderLeaderboardForRange(leaderboardBaseRows, me);
+        renderLeaderboardChart(leaderboardBaseRows);
+        renderHourlyChart(leaderboardBaseRows);
       } catch {
         // ignore history errors
       }
     })().catch(() => {});
 
-    // 4) Fetch avatars in the background.
+    // 5) Fetch avatars in the background.
     (async () => {
       const avatarPairs = await Promise.all(users.map((u) => summaryLimiter(async () => {
         try {
@@ -2984,10 +3259,10 @@ async function refreshLeaderboard() {
         }
       })));
       const avatarMap = Object.fromEntries(avatarPairs);
-      for (const r of rows) {
+      for (const r of leaderboardBaseRows) {
         r.avatarUrl = avatarMap[r.username];
       }
-      renderLeaderboard(rows, me);
+      renderLeaderboardForRange(leaderboardBaseRows, me);
     })().catch(() => {});
 
   } catch (e) {

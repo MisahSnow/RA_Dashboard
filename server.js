@@ -104,6 +104,17 @@ async function initDb() {
     );
   `);
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS hourly_points (
+      id SERIAL PRIMARY KEY,
+      username TEXT NOT NULL,
+      hour_start TIMESTAMPTZ NOT NULL,
+      mode TEXT NOT NULL DEFAULT 'hc',
+      points INTEGER NOT NULL DEFAULT 0,
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(username, hour_start, mode)
+    );
+  `);
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS challenges (
       id SERIAL PRIMARY KEY,
       creator_username TEXT NOT NULL,
@@ -230,6 +241,20 @@ function getDayRange(now = new Date()) {
   return { start, end };
 }
 
+function getHourRange(now = new Date()) {
+  const start = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+    now.getHours(),
+    0,
+    0,
+    0
+  );
+  const end = new Date(now);
+  return { start, end };
+}
+
 async function computeDailyPoints(username, includeSoftcore, apiKey) {
   const { start, end } = getDayRange();
   const unlocks = await raGetAchievementsEarnedBetween(username, start, end, apiKey);
@@ -258,6 +283,12 @@ async function computeDailyPoints(username, includeSoftcore, apiKey) {
   };
 }
 
+async function computeHourlyPoints(username, includeSoftcore, apiKey) {
+  const { start, end } = getHourRange();
+  const points = await computePointsBetween(username, start, end, includeSoftcore, apiKey);
+  return { start, end, points };
+}
+
 async function upsertDailyPoints(username, dayKey, mode, points) {
   if (!pool) return;
   await pool.query(
@@ -268,6 +299,19 @@ async function upsertDailyPoints(username, dayKey, mode, points) {
       DO UPDATE SET points = EXCLUDED.points, updated_at = NOW()
     `,
     [username, dayKey, mode, points]
+  );
+}
+
+async function upsertHourlyPoints(username, hourStart, mode, points) {
+  if (!pool) return;
+  await pool.query(
+    `
+      INSERT INTO hourly_points (username, hour_start, mode, points, updated_at)
+      VALUES ($1, $2, $3, $4, NOW())
+      ON CONFLICT (username, hour_start, mode)
+      DO UPDATE SET points = EXCLUDED.points, updated_at = NOW()
+    `,
+    [username, hourStart, mode, points]
   );
 }
 
@@ -316,6 +360,19 @@ async function computePointsBetween(username, fromDate, toDate, includeSoftcore,
       }
     }
     throw new Error("Failed to fetch points after retries.");
+  }
+
+  async function computeHourlyPointsWithRetry(username, includeSoftcore, apiKey, retries = 10) {
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        return await computeHourlyPoints(username, includeSoftcore, apiKey);
+      } catch (err) {
+        const msg = String(err?.message || err || "");
+        const is429 = msg.includes("429") || msg.includes("Too Many Attempts");
+        if (!is429 || attempt >= retries) throw err;
+      }
+    }
+    throw new Error("Failed to fetch hourly points after retries.");
   }
 
   async function raFetchJson(url, { retries = 2 } = {}) {
@@ -1382,6 +1439,50 @@ app.get("/api/daily-history", async (req, res) => {
   }
 });
 
+// Hourly points history from DB (default last 24 hours)
+app.get("/api/hourly-history", async (req, res) => {
+  try {
+    if (!pool) return res.status(500).json({ error: "Database unavailable" });
+    const usersParam = typeof req.query.users === "string" ? req.query.users : "";
+    const users = usersParam
+      .split(",")
+      .map(normalizeUsername)
+      .filter(Boolean);
+    if (!users.length) return res.status(400).json({ error: "Missing users" });
+
+    const hoursParam = typeof req.query.hours === "string" ? Number(req.query.hours) : 24;
+    const hours = Math.max(1, Math.min(72, Number.isFinite(hoursParam) ? hoursParam : 24));
+    const modeQ = typeof req.query.mode === "string" ? req.query.mode.toLowerCase() : "hc";
+    const mode = modeQ === "all" ? "all" : "hc";
+
+    const start = new Date();
+    start.setMinutes(0, 0, 0);
+    start.setHours(start.getHours() - (hours - 1));
+
+    const result = await pool.query(
+      `
+        SELECT username, hour_start, points
+        FROM hourly_points
+        WHERE username = ANY($1) AND mode = $2 AND hour_start >= $3
+        ORDER BY hour_start ASC
+      `,
+      [users, mode, start.toISOString()]
+    );
+
+    const map = {};
+    for (const row of result.rows) {
+      const user = row.username;
+      const hourKey = new Date(row.hour_start).toISOString();
+      if (!map[user]) map[user] = {};
+      map[user][hourKey] = Number(row.points || 0);
+    }
+
+    res.json({ hours, mode, results: map });
+  } catch (err) {
+    res.status(500).json({ error: err?.message || "Failed to fetch hourly history" });
+  }
+});
+
 // Daily points snapshot for all known users (intended for cron)
 app.post("/api/daily-snapshot", requireSnapshotSecret, async (req, res) => {
   try {
@@ -1419,6 +1520,46 @@ app.post("/api/daily-snapshot", requireSnapshotSecret, async (req, res) => {
     res.json({ ok: true, count: usernames.length, skipped });
   } catch (err) {
     res.status(500).json({ error: err?.message || "Failed to snapshot daily points" });
+  }
+});
+
+// Hourly points snapshot for all known users (intended for cron)
+app.post("/api/hourly-snapshot", requireSnapshotSecret, async (req, res) => {
+  try {
+    if (!pool) return res.status(500).json({ error: "Database unavailable" });
+    if (!RA_API_KEY) return res.status(400).json({ error: "Missing RA API key" });
+
+    const userRows = await pool.query("SELECT username FROM users");
+    const friendRows = await pool.query("SELECT DISTINCT friend_username AS username FROM friends");
+    const usernames = Array.from(new Set([
+      ...userRows.rows.map(r => normalizeUsername(r.username)),
+      ...friendRows.rows.map(r => normalizeUsername(r.username))
+    ])).filter(Boolean);
+
+    if (!usernames.length) return res.json({ ok: true, count: 0 });
+
+    const modeQ = typeof req.query.mode === "string" ? req.query.mode.toLowerCase() : "hc";
+    const includeSoftcore = modeQ === "all";
+    const mode = includeSoftcore ? "all" : "hc";
+    const hourStart = getHourRange().start;
+    const limitHourly = createLimiter(1);
+
+    const skipped = [];
+    await Promise.all(usernames.map((username) => limitHourly(async () => {
+      try {
+        const { points } = await computeHourlyPointsWithRetry(username, includeSoftcore, RA_API_KEY, 10);
+        await upsertHourlyPoints(username, hourStart.toISOString(), mode, points);
+      } catch {
+        skipped.push(username);
+      }
+    })));
+
+    if (skipped.length) {
+      console.warn(`Hourly snapshot skipped ${skipped.length} user(s): ${skipped.join(", ")}`);
+    }
+    res.json({ ok: true, count: usernames.length, skipped });
+  } catch (err) {
+    res.status(500).json({ error: err?.message || "Failed to snapshot hourly points" });
   }
 });
 

@@ -117,8 +117,13 @@
     <section id="dashboardPage" class="page active">
     <section class="card">
       <div class="sectionHead">
-        <h2 class="sectionTitle">Monthly Leaderboard</h2>
+        <h2 class="sectionTitle" id="leaderboardTitle">Monthly Leaderboard</h2>
         <div class="sectionControls">
+          <div class="leaderboardTabs" role="tablist" aria-label="Leaderboard ranges">
+            <button class="smallBtn leaderboardTab" data-range="daily" role="tab" aria-selected="false">Daily</button>
+            <button class="smallBtn leaderboardTab" data-range="weekly" role="tab" aria-selected="false">Weekly</button>
+            <button class="smallBtn leaderboardTab" data-range="monthly" role="tab" aria-selected="true">Monthly</button>
+          </div>
           <button id="addFriendOpenBtn" class="smallBtn primaryBtn">Add Friend</button>
           <div id="leaderboardLoading" class="loadingWheel" hidden aria-label="Loading"></div>
         </div>
@@ -141,10 +146,17 @@
       <div class="leaderboardHintWrap">
         <p class="note leaderboardHint">Click name to view profile.</p>
       </div>
-      <p class="note">Points column shows monthly total with today in parentheses.</p>
+      <p class="note" id="leaderboardPointsNote">Points column shows monthly total with today in parentheses.</p>
       <div class="chartCard">
-        <h3 class="chartTitle">Daily Points (Last 7 Days)</h3>
+        <div class="chartHeader">
+          <h3 class="chartTitle" id="leaderboardChartTitle">Daily Points (Last 7 Days)</h3>
+          <div class="chartTabs" role="tablist" aria-label="Points charts">
+            <button class="smallBtn chartTab active" data-chart="daily" role="tab" aria-selected="true">Daily</button>
+            <button class="smallBtn chartTab" data-chart="hourly" role="tab" aria-selected="false">Hourly</button>
+          </div>
+        </div>
         <div id="leaderboardChart" class="chartWrap"></div>
+        <div id="leaderboardHourlyChart" class="chartWrap" hidden></div>
       </div>
     </section>
 

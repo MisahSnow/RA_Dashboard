@@ -192,6 +192,18 @@ h1 {
   flex-wrap:wrap;
 }
 
+.leaderboardTabs{
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.leaderboardTab.active{
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(0, 245, 212, 0.35), 0 0 12px rgba(0, 245, 212, 0.2);
+}
+
 #recentAchievementsLoading,
 #recentTimesLoading{
   position: absolute;
@@ -897,8 +909,29 @@ tbody tr:nth-child(even){
   box-shadow: 0 10px 20px var(--shadow);
 }
 
+.chartHeader{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  flex-wrap:wrap;
+  margin-bottom: 8px;
+}
+
+.chartTabs{
+  display:inline-flex;
+  gap:6px;
+  align-items:center;
+}
+
+.chartTab.active{
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(0, 245, 212, 0.35), 0 0 12px rgba(0, 245, 212, 0.2);
+}
+
 .chartTitle{
-  margin: 0 0 8px;
+  margin: 0;
   font-family: var(--font-head);
   font-size: 12px;
   text-transform: uppercase;
@@ -907,8 +940,14 @@ tbody tr:nth-child(even){
 }
 
 .chartWrap{
-  width: 100%;
+  width: calc(100% - 20px);
   min-height: 160px;
+  margin: 20px 10px 0;
+}
+
+.chartWrap svg{
+  display: block;
+  width: 100%;
 }
 
 .chartLegend{
@@ -945,6 +984,12 @@ tbody tr:nth-child(even){
 .chartAxis{
   stroke: #22304b;
   stroke-width: 1;
+}
+
+.chartLabel{
+  fill: #8fa0bd;
+  font-size: 10px;
+  font-family: var(--font-mono);
 }
 
 #profileGamesNote{
