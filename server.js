@@ -167,36 +167,50 @@ const limitLb = createLimiter(1); // only 1 leaderboard request at a time
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-const RA_REQUEST_INTERVAL_MS = 500;
+const RA_REQUEST_INTERVAL_MS = 100;
+const RA_MAX_CONCURRENT = 1;
 const raQueue = [];
-let raQueueRunning = false;
+let raQueueActive = 0;
+let raQueueTimer = null;
 let lastRaRequestAt = 0;
 
-function enqueueRaRequest(url) {
+function enqueueRaRequest(url, retries = 0) {
   return new Promise((resolve, reject) => {
-    raQueue.push({ url, resolve, reject });
+    raQueue.push({ url, resolve, reject, retries });
     processRaQueue();
   });
 }
 
 function processRaQueue() {
-  if (raQueueRunning || raQueue.length === 0) return;
+  if (raQueueActive >= RA_MAX_CONCURRENT || raQueue.length === 0) return;
   const now = Date.now();
   const waitMs = Math.max(0, RA_REQUEST_INTERVAL_MS - (now - lastRaRequestAt));
-  raQueueRunning = true;
-  setTimeout(async () => {
-    const job = raQueue.shift();
-    lastRaRequestAt = Date.now();
-    try {
-      const res = await fetch(job.url, { headers: { Accept: "application/json" } });
-      job.resolve(res);
-    } catch (err) {
-      job.reject(err);
-    } finally {
-      raQueueRunning = false;
-      processRaQueue();
+  if (waitMs > 0) {
+    if (!raQueueTimer) {
+      raQueueTimer = setTimeout(() => {
+        raQueueTimer = null;
+        processRaQueue();
+      }, waitMs);
     }
-  }, waitMs);
+    return;
+  }
+  const job = raQueue.shift();
+  raQueueActive += 1;
+  lastRaRequestAt = Date.now();
+  (async () => {
+    const res = await fetch(job.url, { headers: { Accept: "application/json" } });
+    if (res.status === 429 && (job.retries || 0) < 3) {
+      raQueue.unshift({ ...job, retries: (job.retries || 0) + 1 });
+    } else {
+      job.resolve(res);
+    }
+  })().catch((err) => {
+    job.reject(err);
+  }).finally(() => {
+    raQueueActive -= 1;
+    processRaQueue();
+  });
+  processRaQueue();
 }
 
 // --- helpers ---
@@ -304,23 +318,25 @@ async function computePointsBetween(username, fromDate, toDate, includeSoftcore,
     throw new Error("Failed to fetch points after retries.");
   }
 
-async function raFetchJson(url, { retries = 2 } = {}) {
-  let attempt = 0;
-  while (true) {
-    const res = await enqueueRaRequest(url);
+  async function raFetchJson(url, { retries = 2 } = {}) {
+    let attempt = 0;
+    while (true) {
+      const res = await enqueueRaRequest(url);
 
-    if (res.status === 429 && attempt < retries) {
-      attempt++;
-      continue;
-    }
+      if (res.status === 429 && attempt < retries) {
+        attempt++;
+        continue;
+      }
 
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      throw new Error(`RA API error ${res.status}: ${text || res.statusText}`);
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        const err = new Error(`RA API error ${res.status}: ${text || res.statusText}`);
+        err.status = res.status;
+        throw err;
+      }
+      return res.json();
     }
-    return res.json();
   }
-}
 
 async function raGetAchievementsEarnedBetween(username, fromDate, toDate, apiKey) {
   if (!apiKey) throw new Error("Missing RA API key.");
@@ -1224,7 +1240,7 @@ app.post("/api/presence/remove", (req, res) => {
 // The website's "monthly points" is commonly interpreted as Hardcore-only.
 // This endpoint defaults to Hardcore-only to match that expectation.
 // Use ?mode=all to include both HC + SC.
-app.get("/api/monthly/:username", async (req, res) => {
+  app.get("/api/monthly/:username", async (req, res) => {
   try {
     const username = String(req.params.username || "").trim();
     if (!username) return res.status(400).json({ error: "Missing username" });
@@ -1274,10 +1290,11 @@ app.get("/api/monthly/:username", async (req, res) => {
       unlockCount: considered.length,
       unlockCountAll: unlocks.length
     });
-  } catch (err) {
-    res.status(500).json({ error: err?.message || "Failed to fetch monthly data" });
-  }
-});
+    } catch (err) {
+      const status = err?.status || 500;
+      res.status(status).json({ error: err?.message || "Failed to fetch monthly data" });
+    }
+  });
 
 // Daily points gained (today)
 app.get("/api/daily/:username", async (req, res) => {
@@ -1315,10 +1332,11 @@ app.get("/api/daily/:username", async (req, res) => {
     await upsertDailyPoints(username, dayKey, mode, points);
 
     res.json(payload);
-  } catch (err) {
-    res.status(500).json({ error: err?.message || "Failed to fetch daily data" });
-  }
-});
+    } catch (err) {
+      const status = err?.status || 500;
+      res.status(status).json({ error: err?.message || "Failed to fetch daily data" });
+    }
+  });
 
 // Daily points history from DB (default last 7 days)
 app.get("/api/daily-history", async (req, res) => {
@@ -1435,10 +1453,11 @@ app.get("/api/recent-achievements/:username", async (req, res) => {
     }));
 
     res.json({ username, minutes, count: normalized.length, results: normalized });
-  } catch (err) {
-    res.status(500).json({ error: err?.message || "Failed to fetch recent achievements" });
-  }
-});
+    } catch (err) {
+      const status = err?.status || 500;
+      res.status(status).json({ error: err?.message || "Failed to fetch recent achievements" });
+    }
+  });
 
 // Recent leaderboard "times/scores" for a user (derived from recently played games + user game leaderboards)
 app.get("/api/recent-times/:username", async (req, res) => {
@@ -1529,10 +1548,11 @@ app.get("/api/recent-times/:username", async (req, res) => {
 
     cacheSet(cacheKey, payload, DEFAULT_CACHE_TTL_MS);
     res.json(payload);
-  } catch (err) {
-    res.status(500).json({ error: err?.message || "Failed to fetch recent times" });
-  }
-});
+    } catch (err) {
+      const status = err?.status || 500;
+      res.status(status).json({ error: err?.message || "Failed to fetch recent times" });
+    }
+  });
 
 // Recent games for a user (from recently played games)
 app.get("/api/recent-games/:username", async (req, res) => {
@@ -1563,10 +1583,11 @@ app.get("/api/recent-games/:username", async (req, res) => {
     const payload = { username, count: normalized.length, results: normalized };
     cacheSet(cacheKey, payload, DEFAULT_CACHE_TTL_MS);
     res.json(payload);
-  } catch (err) {
-    res.status(500).json({ error: err?.message || "Failed to fetch recent games" });
-  }
-});
+    } catch (err) {
+      const status = err?.status || 500;
+      res.status(status).json({ error: err?.message || "Failed to fetch recent games" });
+    }
+  });
 
 // User summary/profile
 app.get("/api/user-summary/:username", async (req, res) => {
@@ -1615,7 +1636,8 @@ app.get("/api/user-summary/:username", async (req, res) => {
     cacheSet(cacheKey, payload, DEFAULT_CACHE_TTL_MS);
     res.json(payload);
   } catch (err) {
-    res.status(500).json({ error: err?.message || "Failed to fetch user summary" });
+    const status = err?.status || 500;
+    res.status(status).json({ error: err?.message || "Failed to fetch user summary" });
   }
 });
 
@@ -1659,10 +1681,11 @@ app.get("/api/game-achievements/:username/:gameId", async (req, res) => {
 
     cacheSet(cacheKey, payload, DEFAULT_CACHE_TTL_MS);
     res.json(payload);
-  } catch (err) {
-    res.status(500).json({ error: err?.message || "Failed to fetch game achievements" });
-  }
-});
+    } catch (err) {
+      const status = err?.status || 500;
+      res.status(status).json({ error: err?.message || "Failed to fetch game achievements" });
+    }
+  });
 
 // Leaderboard times/scores for a user + game
 app.get("/api/game-times/:username/:gameId", async (req, res) => {
@@ -1694,10 +1717,11 @@ app.get("/api/game-times/:username/:gameId", async (req, res) => {
     const payload = { username, gameId, count: normalized.length, results: normalized };
     cacheSet(cacheKey, payload, DEFAULT_CACHE_TTL_MS);
     res.json(payload);
-  } catch (err) {
-    res.status(500).json({ error: err?.message || "Failed to fetch game times" });
-  }
-});
+    } catch (err) {
+      const status = err?.status || 500;
+      res.status(status).json({ error: err?.message || "Failed to fetch game times" });
+    }
+  });
 
 // Game leaderboards (for score attack selection)
 app.get("/api/game-leaderboards/:gameId", async (req, res) => {
@@ -1723,10 +1747,11 @@ app.get("/api/game-leaderboards/:gameId", async (req, res) => {
     const payload = { gameId, count: normalized.length, results: normalized };
     cacheSet(cacheKey, payload, DEFAULT_CACHE_TTL_MS);
     res.json(payload);
-  } catch (err) {
-    res.status(500).json({ error: err?.message || "Failed to fetch game leaderboards" });
-  }
-});
+    } catch (err) {
+      const status = err?.status || 500;
+      res.status(status).json({ error: err?.message || "Failed to fetch game leaderboards" });
+    }
+  });
 
 
 // "Now playing" (best-effort): use most recent LastPlayed from Recently Played Games.
@@ -1779,10 +1804,11 @@ app.get("/api/now-playing/:username", async (req, res) => {
 
     cacheSet(cacheKey, payload, 30 * 1000); // refreshable "presence" cache
     res.json(payload);
-  } catch (err) {
-    res.status(500).json({ error: err?.message || "Failed to fetch now playing" });
-  }
-});
+    } catch (err) {
+      const status = err?.status || 500;
+      res.status(status).json({ error: err?.message || "Failed to fetch now playing" });
+    }
+  });
 
 // --- static site ---
 const webPath = path.join(__dirname, "web");

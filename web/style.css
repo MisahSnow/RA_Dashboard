@@ -733,6 +733,10 @@ button:hover {
   pointer-events: none;
 }
 
+.debugHidden {
+  display: none !important;
+}
+
 .apiQueueLog {
   position: fixed;
   left: 16px;
@@ -748,7 +752,7 @@ button:hover {
   background: rgba(8, 14, 24, 0.75);
   color: var(--ink);
   z-index: 40;
-  pointer-events: none;
+  pointer-events: auto;
 }
 
 .apiQueueLogTitle {
@@ -770,6 +774,15 @@ button:hover {
   white-space: nowrap;
   text-overflow: ellipsis;
   overflow: hidden;
+}
+
+.apiQueueLogEntry.error {
+  color: #f59e0b;
+}
+
+.apiQueueLogEntry.status423 {
+  color: #ef4444;
+  font-weight: 600;
 }
 
 .modalCard .buttons{
