@@ -2846,7 +2846,18 @@ async function refreshLeaderboard() {
     rows.sort((a, b) => (b.points - a.points) || a.username.localeCompare(b.username));
     renderLeaderboard(rows, me);
 
-    // 2) Fetch presence in the background. Retry a few times (best-effort) but never block the leaderboard.
+    // 2) Load daily history from the DB for a quick chart render.
+    (async () => {
+      try {
+        const history = await fetchDailyHistory(users, 7);
+        setDailyHistory(history);
+        renderLeaderboardChart(rows);
+      } catch {
+        // ignore history errors
+      }
+    })().catch(() => {});
+
+    // 3) Fetch presence in the background. Retry a few times (best-effort) but never block the leaderboard.
     const win = 120; // 2 minutes
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
@@ -2932,7 +2943,7 @@ async function refreshLeaderboard() {
     });
     presencePromise.finally(() => setLoading(leaderboardLoadingEl, false));
 
-    // 3) Fetch daily points and history in the background.
+    // 4) Fetch daily points and history in the background.
     (async () => {
       const dailyPairs = await Promise.all(users.map(async (u) => {
         try {
