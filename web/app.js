@@ -81,7 +81,9 @@ const selfGameBackBtn = document.getElementById("selfGameBackBtn");
 
 const challengesLoadingEl = document.getElementById("challengesLoading");
 const challengeOpponentInput = document.getElementById("challengeOpponent");
+const challengeTypeSelect = document.getElementById("challengeType");
 const challengeDurationInput = document.getElementById("challengeDuration");
+const challengeScoreSelectBtn = document.getElementById("challengeScoreSelectBtn");
 const challengeSendBtn = document.getElementById("challengeSendBtn");
 const challengeErrorEl = document.getElementById("challengeError");
 const challengeIncomingEl = document.getElementById("challengeIncoming");
@@ -91,6 +93,20 @@ const challengeHistoryBtn = document.getElementById("challengeHistoryBtn");
 const challengeHistoryModal = document.getElementById("challengeHistoryModal");
 const challengeHistoryCloseBtn = document.getElementById("challengeHistoryCloseBtn");
 const challengeHistoryList = document.getElementById("challengeHistoryList");
+const challengePendingBtn = document.getElementById("challengePendingBtn");
+const challengePendingModal = document.getElementById("challengePendingModal");
+const challengePendingCloseBtn = document.getElementById("challengePendingCloseBtn");
+const challengeScoreModal = document.getElementById("challengeScoreModal");
+const challengeScoreCloseBtn = document.getElementById("challengeScoreCloseBtn");
+const scoreAttackGamesList = document.getElementById("scoreAttackGamesList");
+const scoreAttackBoardsList = document.getElementById("scoreAttackBoardsList");
+const scoreAttackShowMoreBtn = document.getElementById("scoreAttackShowMoreBtn");
+const scoreAttackSelectionEl = document.getElementById("scoreAttackSelection");
+const challengeScoreSummaryEl = document.getElementById("challengeScoreSummary");
+const scoreAttackGamesTitle = document.getElementById("scoreAttackGamesTitle");
+const scoreAttackTabButtons = document.querySelectorAll(".scoreAttackTabBtn");
+const scoreAttackGamesSearch = document.getElementById("scoreAttackGamesSearch");
+const scoreAttackBoardsSearch = document.getElementById("scoreAttackBoardsSearch");
 
 const compareTabButtons = document.querySelectorAll(".compareTabBtn");
 const compareTabPanels = document.querySelectorAll(".compareTabPanel");
@@ -159,6 +175,16 @@ let lastLeaderboardRows = [];
 let lastRecentAchievementsKey = "";
 let lastRecentTimesKey = "";
 let authResolved = false;
+let scoreAttackSharedGames = [];
+let scoreAttackSelectedGame = null;
+let scoreAttackSelectedBoard = null;
+let scoreAttackLoadingAll = false;
+let scoreAttackBoards = [];
+let scoreAttackRecentMine = [];
+let scoreAttackRecentTheirs = [];
+let scoreAttackView = "shared";
+let scoreAttackGameQuery = "";
+let scoreAttackBoardQuery = "";
 
 function clampUsername(s) {
   return (s || "").trim().replace(/\s+/g, "");
@@ -426,6 +452,9 @@ async function fetchJson(url, { silent = false } = {}) {
 
 async function fetchServerJson(url, { method = "GET", body = null, silent = false } = {}) {
   const headers = {};
+  const apiKey = (apiKeyInput?.value || "").trim();
+  const useApiKey = !!useApiKeyToggle?.checked;
+  if (useApiKey && apiKey) headers["x-ra-api-key"] = apiKey;
   if (body !== null) headers["Content-Type"] = "application/json";
   const res = await fetch(url, {
     method,
@@ -467,16 +496,28 @@ async function fetchDailyHistory(users, days = 7) {
   return data?.results || {};
 }
 
+async function fetchGameLeaderboards(gameId) {
+  return fetchJson(`/api/game-leaderboards/${encodeURIComponent(gameId)}`);
+}
+
 async function fetchChallenges({ includeTotals = true } = {}) {
   const params = new URLSearchParams();
   params.set("totals", includeTotals ? "1" : "0");
   return fetchServerJson(`/api/challenges?${params.toString()}`, { silent: true });
 }
 
-async function createChallenge(opponent, hours) {
+async function createChallenge(opponent, hours, type, game, leaderboard) {
   return fetchServerJson("/api/challenges", {
     method: "POST",
-    body: { opponent, hours }
+    body: {
+      opponent,
+      hours,
+      type,
+      gameId: game?.gameId,
+      gameTitle: game?.title,
+      leaderboardId: leaderboard?.id,
+      leaderboardTitle: leaderboard?.title
+    }
   });
 }
 
@@ -854,6 +895,177 @@ function stopChallengePolling() {
   }
 }
 
+function updateScoreAttackSelectionText() {
+  if (!scoreAttackSelectionEl) return;
+  if (!scoreAttackSelectedGame || !scoreAttackSelectedBoard) {
+    scoreAttackSelectionEl.textContent = "Select a game and leaderboard for Score Attack.";
+    if (challengeScoreSummaryEl) challengeScoreSummaryEl.textContent = "";
+    return;
+  }
+  const text = `${scoreAttackSelectedGame.title} | ${scoreAttackSelectedBoard.title}`;
+  scoreAttackSelectionEl.textContent = text;
+  if (challengeScoreSummaryEl) challengeScoreSummaryEl.textContent = `Selected: ${text}`;
+}
+
+function renderScoreAttackGames(games) {
+  if (!scoreAttackGamesList) return;
+  scoreAttackGamesList.innerHTML = "";
+  const query = scoreAttackGameQuery.trim().toLowerCase();
+  const filtered = query
+    ? games.filter(g => (g.title || "").toLowerCase().includes(query))
+    : games;
+  if (!filtered.length) {
+    const label = scoreAttackView === "shared"
+      ? "No shared games found."
+      : scoreAttackView === "mine"
+        ? "No recent games found for you."
+        : "No recent games found for this friend.";
+    scoreAttackGamesList.innerHTML = `<div class="meta">${label}</div>`;
+    return;
+  }
+  const frag = document.createDocumentFragment();
+  for (const g of filtered) {
+    const tile = document.createElement("div");
+    tile.className = "tile clickable";
+    tile.setAttribute("role", "button");
+    tile.tabIndex = 0;
+    tile.dataset.gameId = String(g.gameId ?? "");
+    tile.dataset.title = g.title || "";
+    tile.dataset.imageIcon = g.imageIcon || "";
+
+    const img = document.createElement("img");
+    img.src = iconUrl(g.imageIcon);
+    img.alt = safeText(g.title || "game");
+    img.loading = "lazy";
+
+    const title = document.createElement("div");
+    title.className = "tileTitle";
+    title.textContent = g.title || `Game ${safeText(g.gameId)}`;
+
+    tile.appendChild(img);
+    tile.appendChild(title);
+    frag.appendChild(tile);
+
+    const open = () => loadScoreAttackLeaderboards(g);
+    tile.addEventListener("click", open);
+    tile.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
+    });
+  }
+  scoreAttackGamesList.appendChild(frag);
+}
+
+function renderScoreAttackLeaderboards(gameTitle, boards) {
+  if (!scoreAttackBoardsList) return;
+  scoreAttackBoards = boards;
+  scoreAttackBoardsList.innerHTML = "";
+  const query = scoreAttackBoardQuery.trim().toLowerCase();
+  const filtered = query
+    ? boards.filter(b => (b.title || "").toLowerCase().includes(query))
+    : boards;
+  if (!filtered.length) {
+    scoreAttackBoardsList.innerHTML = `<div class="meta">No leaderboards found for this game.</div>`;
+    return;
+  }
+  const frag = document.createDocumentFragment();
+  for (const lb of filtered) {
+    const card = document.createElement("div");
+    const selected = scoreAttackSelectedBoard?.id === lb.id;
+    card.className = `challengeItem${selected ? " selected" : ""}`;
+    card.setAttribute("data-board", String(lb.id || ""));
+    card.innerHTML = `
+      <div class="challengeRow">
+        <div>${safeText(lb.title || "Leaderboard")}</div>
+      </div>
+      ${lb.description ? `<div class="challengeMeta">${safeText(lb.description)}</div>` : ""}
+    `;
+    frag.appendChild(card);
+  }
+  scoreAttackBoardsList.appendChild(frag);
+}
+
+function getScoreAttackViewList() {
+  if (scoreAttackView === "mine") return scoreAttackRecentMine;
+  if (scoreAttackView === "theirs") return scoreAttackRecentTheirs;
+  return scoreAttackSharedGames;
+}
+
+function updateScoreAttackView(view) {
+  scoreAttackView = view;
+  if (scoreAttackGamesTitle) {
+    scoreAttackGamesTitle.textContent =
+      view === "shared" ? "Shared Games" : view === "mine" ? "Your Recent Games" : "Friend Recent Games";
+  }
+  scoreAttackTabButtons.forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.view === view);
+  });
+  renderScoreAttackGames(getScoreAttackViewList());
+}
+
+async function loadScoreAttackSharedGames({ count = 60 } = {}) {
+  const me = currentUser;
+  const friend = clampUsername(challengeOpponentInput?.value || "");
+  if (!me || !friend) return;
+  scoreAttackGamesList.innerHTML = `<div class="meta">Loading shared games...</div>`;
+  try {
+    const [mine, theirs] = await Promise.all([
+      fetchRecentGames(me, count),
+      fetchRecentGames(friend, count)
+    ]);
+    const myMap = new Map((mine.results || []).map(g => [g.gameId, g]));
+    const shared = [];
+    for (const g of (theirs.results || [])) {
+      if (!myMap.has(g.gameId)) continue;
+      const mineGame = myMap.get(g.gameId);
+      shared.push({
+        gameId: g.gameId,
+        title: g.title || mineGame?.title,
+        imageIcon: g.imageIcon || mineGame?.imageIcon
+      });
+    }
+    const seen = new Set();
+    scoreAttackSharedGames = shared.filter(g => {
+      const key = String(g.gameId ?? "");
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    scoreAttackRecentMine = (mine.results || []).map(g => ({
+      gameId: g.gameId,
+      title: g.title,
+      imageIcon: g.imageIcon
+    }));
+    scoreAttackRecentTheirs = (theirs.results || []).map(g => ({
+      gameId: g.gameId,
+      title: g.title,
+      imageIcon: g.imageIcon
+    }));
+    renderScoreAttackGames(getScoreAttackViewList());
+    if (scoreAttackShowMoreBtn) {
+      const allLoaded = count >= 200;
+      scoreAttackShowMoreBtn.disabled = allLoaded;
+      scoreAttackShowMoreBtn.textContent = allLoaded ? "All recent games loaded" : "Show more";
+    }
+  } catch (err) {
+    scoreAttackGamesList.innerHTML = `<div class="meta">Failed to load shared games.</div>`;
+  }
+}
+
+async function loadScoreAttackLeaderboards(game) {
+  if (!game || !game.gameId) return;
+  scoreAttackSelectedGame = game;
+  scoreAttackSelectedBoard = null;
+  updateScoreAttackSelectionText();
+  scoreAttackBoardsList.innerHTML = `<div class="meta">Loading leaderboards...</div>`;
+  try {
+    const data = await fetchGameLeaderboards(game.gameId);
+    const boards = Array.isArray(data?.results) ? data.results : [];
+    renderScoreAttackLeaderboards(game.title, boards);
+  } catch {
+    scoreAttackBoardsList.innerHTML = `<div class="meta">Failed to load leaderboards.</div>`;
+  }
+}
+
 function formatTimeLeft(endAt) {
   if (!endAt) return "";
   const end = Date.parse(endAt);
@@ -923,19 +1135,24 @@ function renderChallengeList(items, container, type, me) {
     const parts = [`Duration: ${duration}h`];
     if (type === "active" && item.end_at) {
       parts.push(`Ends in ${formatTimeLeft(item.end_at)}`);
+      if (item.challenge_type === "score" && item.game_title && item.leaderboard_title) {
+        parts.push(`${safeText(item.game_title)} | ${safeText(item.leaderboard_title)}`);
+      }
     } else if (item.created_at) {
       parts.push(`Created ${new Date(item.created_at).toLocaleString()}`);
     }
-    meta.textContent = parts.join(" · ");
+    meta.textContent = parts.join(" | ");
 
-    if (type === "active") {
-      const creatorPoints = item.creator_points;
-      const opponentPoints = item.opponent_points;
-      let winner = null;
-      if (creatorPoints !== null && opponentPoints !== null) {
-        if (creatorPoints > opponentPoints) winner = "creator";
-        else if (opponentPoints > creatorPoints) winner = "opponent";
-      }
+      if (type === "active") {
+        const creatorPoints = item.creator_points;
+        const opponentPoints = item.opponent_points;
+        const creatorPointsText = creatorPoints === null || creatorPoints === undefined ? "--" : `+${creatorPoints}`;
+        const opponentPointsText = opponentPoints === null || opponentPoints === undefined ? "--" : `+${opponentPoints}`;
+        let winner = null;
+        if (creatorPoints !== null && opponentPoints !== null) {
+          if (creatorPoints > opponentPoints) winner = "creator";
+          else if (opponentPoints > creatorPoints) winner = "opponent";
+        }
       const lead = winner
         ? Math.abs((creatorPoints ?? 0) - (opponentPoints ?? 0))
         : 0;
@@ -947,23 +1164,27 @@ function renderChallengeList(items, container, type, me) {
 
       const leftAvatarUrl = getChallengeAvatar(item.creator_username);
       const rightAvatarUrl = getChallengeAvatar(item.opponent_username);
+      const creatorBest = item.creator_start_score ?? "--";
+      const opponentBest = item.opponent_start_score ?? "--";
       left.innerHTML = `
-        <div class="challengeSideTop">
-          ${leftAvatarUrl ? `<img class="challengeAvatar" src="${iconUrl(leftAvatarUrl)}" alt="" loading="lazy" />` : `<span class="challengeAvatar placeholder"></span>`}
-          <div class="challengeName">${safeText(item.creator_username)}</div>
-        </div>
-        <div class="challengePoints">+${creatorPoints ?? "--"}</div>
-        ${winner === "creator" ? `<div class="challengeLead">+${lead} lead</div>` : ""}
-      `;
+          <div class="challengeSideTop">
+            ${leftAvatarUrl ? `<img class="challengeAvatar" src="${iconUrl(leftAvatarUrl)}" alt="" loading="lazy" />` : `<span class="challengeAvatar placeholder"></span>`}
+            <div class="challengeName">${safeText(item.creator_username)}</div>
+          </div>
+          <div class="challengePoints">${creatorPointsText}</div>
+          ${item.challenge_type === "score" ? `<div class="challengeBest">Best: ${safeText(creatorBest)}</div>` : ""}
+          ${winner === "creator" ? `<div class="challengeLead">+${lead} lead</div>` : ""}
+        `;
 
       right.innerHTML = `
-        <div class="challengeSideTop">
-          ${rightAvatarUrl ? `<img class="challengeAvatar" src="${iconUrl(rightAvatarUrl)}" alt="" loading="lazy" />` : `<span class="challengeAvatar placeholder"></span>`}
-          <div class="challengeName">${safeText(item.opponent_username)}</div>
-        </div>
-        <div class="challengePoints">+${opponentPoints ?? "--"}</div>
-        ${winner === "opponent" ? `<div class="challengeLead">+${lead} lead</div>` : ""}
-      `;
+          <div class="challengeSideTop">
+            ${rightAvatarUrl ? `<img class="challengeAvatar" src="${iconUrl(rightAvatarUrl)}" alt="" loading="lazy" />` : `<span class="challengeAvatar placeholder"></span>`}
+            <div class="challengeName">${safeText(item.opponent_username)}</div>
+          </div>
+          <div class="challengePoints">${opponentPointsText}</div>
+          ${item.challenge_type === "score" ? `<div class="challengeBest">Best: ${safeText(opponentBest)}</div>` : ""}
+          ${winner === "opponent" ? `<div class="challengeLead">+${lead} lead</div>` : ""}
+        `;
 
       const vs = document.createElement("div");
       vs.className = "challengeVs";
@@ -1012,6 +1233,11 @@ function renderChallengeHistory(items) {
     const winner = item.winner === "tie" ? "Tie" : safeText(item.winner || "Pending");
     const lead = item.lead !== null && item.lead !== undefined ? `+${item.lead} lead` : "--";
     const meta = new Date(item.end_at || item.start_at || item.created_at).toLocaleString();
+    const extra = item.challenge_type === "score" && item.game_title && item.leaderboard_title
+      ? `${safeText(item.game_title)} | ${safeText(item.leaderboard_title)}`
+      : "";
+    const creatorPoints = item.creator_points ?? "--";
+    const opponentPoints = item.opponent_points ?? "--";
 
     card.innerHTML = `
       <div class="challengeRow">
@@ -1022,6 +1248,8 @@ function renderChallengeHistory(items) {
         <div class="challengeMeta">Winner: ${winner}</div>
         <div class="challengeMeta">Lead: ${lead}</div>
       </div>
+      <div class="challengeMeta">${creator}: +${creatorPoints} | ${opponent}: +${opponentPoints}</div>
+      ${extra ? `<div class="challengeMeta">${extra}</div>` : ""}
     `;
     frag.appendChild(card);
   }
@@ -1047,6 +1275,10 @@ function renderChallengeFriendOptions(list) {
 
   if (current && sorted.includes(current)) {
     challengeOpponentInput.value = current;
+  }
+  if (challengeScoreSelectBtn) {
+    const hasFriend = Boolean(challengeOpponentInput.value);
+    challengeScoreSelectBtn.disabled = !hasFriend;
   }
 }
 
@@ -2698,6 +2930,7 @@ if (challengeSendBtn) {
   challengeSendBtn.addEventListener("click", async () => {
     const opponent = clampUsername(challengeOpponentInput?.value || "");
     const hours = Number(challengeDurationInput?.value || 24);
+    const type = String(challengeTypeSelect?.value || "points");
     if (challengeErrorEl) challengeErrorEl.textContent = "";
     if (!friends.length) {
       if (challengeErrorEl) challengeErrorEl.textContent = "Add a friend before creating a challenge.";
@@ -2707,9 +2940,15 @@ if (challengeSendBtn) {
       if (challengeErrorEl) challengeErrorEl.textContent = "Select a friend.";
       return;
     }
+    if (type === "score") {
+      if (!scoreAttackSelectedGame || !scoreAttackSelectedBoard) {
+        if (challengeErrorEl) challengeErrorEl.textContent = "Select a game and leaderboard for Score Attack.";
+        return;
+      }
+    }
     try {
       setLoading(challengesLoadingEl, true);
-      await createChallenge(opponent, hours);
+      await createChallenge(opponent, hours, type, scoreAttackSelectedGame, scoreAttackSelectedBoard);
       if (challengeOpponentInput) challengeOpponentInput.value = "";
       await refreshChallenges();
     } catch (e) {
@@ -2748,6 +2987,138 @@ if (challengeHistoryBtn) {
 
 if (challengeHistoryCloseBtn) {
   challengeHistoryCloseBtn.addEventListener("click", closeChallengeHistory);
+}
+
+if (challengeScoreSelectBtn) {
+  challengeScoreSelectBtn.addEventListener("click", () => {
+    const friend = clampUsername(challengeOpponentInput?.value || "");
+    if (!friend) {
+      if (challengeErrorEl) challengeErrorEl.textContent = "Select a friend first.";
+      return;
+    }
+    if (!challengeScoreModal) return;
+    challengeScoreModal.hidden = false;
+    updateScoreAttackSelectionText();
+    if (scoreAttackShowMoreBtn) {
+      scoreAttackShowMoreBtn.disabled = scoreAttackLoadingAll;
+      scoreAttackShowMoreBtn.textContent = scoreAttackLoadingAll ? "All recent games loaded" : "Show more";
+    }
+    loadScoreAttackSharedGames({ count: scoreAttackLoadingAll ? 200 : 60 });
+    updateScoreAttackView(scoreAttackView);
+    if (scoreAttackGamesSearch) scoreAttackGamesSearch.value = scoreAttackGameQuery;
+    if (scoreAttackBoardsSearch) scoreAttackBoardsSearch.value = scoreAttackBoardQuery;
+  });
+}
+
+if (challengeScoreCloseBtn) {
+  challengeScoreCloseBtn.addEventListener("click", () => {
+    if (challengeScoreModal) challengeScoreModal.hidden = true;
+  });
+}
+
+
+if (scoreAttackShowMoreBtn) {
+  scoreAttackShowMoreBtn.addEventListener("click", async () => {
+    if (scoreAttackLoadingAll) return;
+    scoreAttackLoadingAll = true;
+    await loadScoreAttackSharedGames({ count: 200 });
+    scoreAttackShowMoreBtn.textContent = "All recent games loaded";
+    scoreAttackShowMoreBtn.disabled = true;
+  });
+}
+
+scoreAttackTabButtons.forEach(btn => {
+  btn.addEventListener("click", () => {
+    const view = btn.dataset.view || "shared";
+    updateScoreAttackView(view);
+  });
+});
+
+if (scoreAttackGamesSearch) {
+  scoreAttackGamesSearch.addEventListener("input", () => {
+    scoreAttackGameQuery = scoreAttackGamesSearch.value || "";
+    renderScoreAttackGames(getScoreAttackViewList());
+  });
+}
+
+if (scoreAttackBoardsSearch) {
+  scoreAttackBoardsSearch.addEventListener("input", () => {
+    scoreAttackBoardQuery = scoreAttackBoardsSearch.value || "";
+    renderScoreAttackLeaderboards(scoreAttackSelectedGame?.title || "", scoreAttackBoards);
+  });
+}
+
+if (scoreAttackBoardsList) {
+  scoreAttackBoardsList.addEventListener("click", (e) => {
+    const card = e.target.closest("[data-board]");
+    if (!card) return;
+    const id = Number(card.getAttribute("data-board"));
+    if (!Number.isFinite(id)) return;
+    const board = scoreAttackBoards.find(b => Number(b.id) === id);
+    scoreAttackSelectedBoard = board || { id, title: "" };
+    scoreAttackBoardsList.querySelectorAll(".challengeItem").forEach(el => {
+      el.classList.toggle("selected", Number(el.getAttribute("data-board")) === id);
+    });
+    updateScoreAttackSelectionText();
+    if (challengeScoreModal) challengeScoreModal.hidden = true;
+  });
+}
+
+if (challengeTypeSelect) {
+  challengeTypeSelect.addEventListener("change", () => {
+    const isScore = challengeTypeSelect.value === "score";
+    if (challengeScoreSelectBtn) challengeScoreSelectBtn.hidden = !isScore;
+    if (!isScore) {
+      scoreAttackSelectedGame = null;
+      scoreAttackSelectedBoard = null;
+      updateScoreAttackSelectionText();
+      if (challengeScoreSummaryEl) challengeScoreSummaryEl.textContent = "";
+    }
+  });
+  challengeScoreSelectBtn.hidden = challengeTypeSelect.value !== "score";
+}
+
+if (challengeOpponentInput) {
+  challengeOpponentInput.addEventListener("change", () => {
+    scoreAttackSelectedGame = null;
+    scoreAttackSelectedBoard = null;
+    scoreAttackSharedGames = [];
+    scoreAttackRecentMine = [];
+    scoreAttackRecentTheirs = [];
+    scoreAttackBoards = [];
+    scoreAttackLoadingAll = false;
+    scoreAttackView = "shared";
+    if (scoreAttackGamesList) scoreAttackGamesList.innerHTML = "";
+    if (scoreAttackBoardsList) scoreAttackBoardsList.innerHTML = "";
+    if (scoreAttackShowMoreBtn) {
+      scoreAttackShowMoreBtn.disabled = false;
+      scoreAttackShowMoreBtn.textContent = "Show more";
+    }
+    if (challengeScoreSelectBtn) {
+      challengeScoreSelectBtn.disabled = !challengeOpponentInput.value;
+    }
+    updateScoreAttackSelectionText();
+    updateScoreAttackView(scoreAttackView);
+  });
+}
+
+function openChallengePending() {
+  if (!challengePendingModal) return;
+  challengePendingModal.hidden = false;
+  refreshChallenges({ includeTotals: false });
+}
+
+function closeChallengePending() {
+  if (!challengePendingModal) return;
+  challengePendingModal.hidden = true;
+}
+
+if (challengePendingBtn) {
+  challengePendingBtn.addEventListener("click", openChallengePending);
+}
+
+if (challengePendingCloseBtn) {
+  challengePendingCloseBtn.addEventListener("click", closeChallengePending);
 }
 
 if (challengeIncomingEl) {

@@ -244,33 +244,37 @@
         <div class="challengeLayout">
           <div class="challengeSidebar">
             <div class="challengeForm">
-              <div class="field">
-                <label for="challengeOpponent">Friend</label>
-                <select id="challengeOpponent"></select>
-              </div>
-              <div class="field">
-                <label for="challengeDuration">Duration (hours)</label>
-                <input id="challengeDuration" type="number" min="1" max="168" value="24" />
-              </div>
-              <div class="buttons">
-                <button id="challengeSendBtn">Send Challenge</button>
-              </div>
-              <div id="challengeError" class="note errorText" role="alert"></div>
+            <div class="field">
+              <label for="challengeOpponent">Friend</label>
+              <select id="challengeOpponent"></select>
+            </div>
+            <div class="field">
+              <label for="challengeType">Challenge type</label>
+              <select id="challengeType">
+                <option value="points">Points Race</option>
+                <option value="score">Score Attack</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="challengeDuration">Duration (hours)</label>
+              <input id="challengeDuration" type="number" min="1" max="168" value="24" />
+            </div>
+            <div class="buttons">
+              <button id="challengeScoreSelectBtn" class="smallBtn" hidden>Select Game &amp; Score</button>
+            </div>
+            <div id="challengeScoreSummary" class="note"></div>
+            <div class="buttons">
+              <button id="challengeSendBtn">Send Challenge</button>
+            </div>
+            <div id="challengeError" class="note errorText" role="alert"></div>
             </div>
             <div class="challengeHistoryWrap">
+              <button id="challengePendingBtn" class="smallBtn">Pending Challenges</button>
               <button id="challengeHistoryBtn" class="smallBtn">Challenge History</button>
             </div>
           </div>
 
           <div class="challengeLists">
-            <div class="challengeBlock">
-              <h3 class="sectionTitle">Pending Challenges (To You)</h3>
-              <div id="challengeIncoming" class="challengeList"></div>
-            </div>
-            <div class="challengeBlock">
-              <h3 class="sectionTitle">Pending Challenges (Sent)</h3>
-              <div id="challengeOutgoing" class="challengeList"></div>
-            </div>
             <div class="challengeBlock">
               <h3 class="sectionTitle">Active Challenges</h3>
               <div id="challengeActive" class="challengeList"></div>
@@ -286,6 +290,59 @@
           <button id="challengeHistoryCloseBtn" class="smallBtn">Close</button>
         </div>
         <div id="challengeHistoryList" class="challengeList"></div>
+      </div>
+    </div>
+    <div id="challengePendingModal" class="modal" hidden>
+      <div class="modalCard">
+        <div class="sectionHead">
+          <h2 class="sectionTitle">Pending Challenges</h2>
+          <button id="challengePendingCloseBtn" class="smallBtn">Close</button>
+        </div>
+        <div class="challengeBlock">
+          <h3 class="sectionTitle">Pending Challenges (To You)</h3>
+          <div id="challengeIncoming" class="challengeList"></div>
+        </div>
+        <div class="challengeBlock">
+          <h3 class="sectionTitle">Pending Challenges (Sent)</h3>
+          <div id="challengeOutgoing" class="challengeList"></div>
+        </div>
+      </div>
+    </div>
+    <div id="challengeScoreModal" class="modal" hidden>
+      <div class="modalCard modalWide">
+        <div class="sectionHead">
+          <h2 class="sectionTitle">Score Attack Setup</h2>
+          <button id="challengeScoreCloseBtn" class="smallBtn">Close</button>
+        </div>
+        <div class="scoreAttackLayout">
+          <div class="scoreAttackGames">
+            <div class="sectionHead compact">
+              <h3 class="sectionTitle" id="scoreAttackGamesTitle">Shared Games</h3>
+              <div class="scoreAttackControls">
+                <div class="scoreAttackTabs">
+                  <button class="smallBtn scoreAttackTabBtn active" data-view="shared">Shared</button>
+                  <button class="smallBtn scoreAttackTabBtn" data-view="mine">You</button>
+                  <button class="smallBtn scoreAttackTabBtn" data-view="theirs">Friend</button>
+                </div>
+                <button id="scoreAttackShowMoreBtn" class="smallBtn">Show more</button>
+              </div>
+            </div>
+            <div class="field compactField">
+              <input id="scoreAttackGamesSearch" placeholder="Search games..." autocomplete="off" />
+            </div>
+            <div id="scoreAttackGamesList" class="tileGrid scoreAttackGamesList"></div>
+          </div>
+          <div class="scoreAttackBoards">
+            <div class="sectionHead compact">
+              <h3 class="sectionTitle">Leaderboards</h3>
+            </div>
+            <div class="field compactField">
+              <input id="scoreAttackBoardsSearch" placeholder="Search leaderboards..." autocomplete="off" />
+            </div>
+            <div id="scoreAttackBoardsList" class="challengeList scoreAttackBoardsList"></div>
+          </div>
+        </div>
+        <div id="scoreAttackSelection" class="note"></div>
       </div>
     </div>
     </div>

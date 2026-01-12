@@ -122,6 +122,18 @@ async function initDb() {
     ADD COLUMN IF NOT EXISTS opponent_points INTEGER,
     ADD COLUMN IF NOT EXISTS points_updated_at TIMESTAMPTZ
   `);
+  await pool.query(`
+    ALTER TABLE challenges
+    ADD COLUMN IF NOT EXISTS challenge_type TEXT DEFAULT 'points',
+    ADD COLUMN IF NOT EXISTS game_id INTEGER,
+    ADD COLUMN IF NOT EXISTS leaderboard_id INTEGER,
+    ADD COLUMN IF NOT EXISTS game_title TEXT,
+    ADD COLUMN IF NOT EXISTS leaderboard_title TEXT,
+    ADD COLUMN IF NOT EXISTS creator_start_score TEXT,
+    ADD COLUMN IF NOT EXISTS opponent_start_score TEXT,
+    ADD COLUMN IF NOT EXISTS leaderboard_format TEXT,
+    ADD COLUMN IF NOT EXISTS leaderboard_lower_is_better BOOLEAN
+  `);
 }
 
 // simple concurrency limiter
@@ -415,6 +427,60 @@ function requireAuth(req, res, next) {
   return next();
 }
 
+async function raGetGameLeaderboards(gameId, count = 200, apiKey) {
+  if (!apiKey) throw new Error("Missing RA API key.");
+
+  const url = new URL("https://retroachievements.org/API/API_GetGameLeaderboards.php");
+  url.searchParams.set("i", String(gameId));
+  url.searchParams.set("c", String(count));
+  url.searchParams.set("y", apiKey);
+
+  const data = await raFetchJson(url.toString());
+  const results = data?.Results || data?.results || data;
+  return Array.isArray(results) ? results : [];
+}
+
+async function getUserLeaderboardBest(username, gameId, leaderboardId, apiKey, leaderboardTitle = "") {
+  const results = await raGetUserGameLeaderboards(username, gameId, 200, apiKey);
+  let target = results.find((row) => {
+    const id = row.LeaderboardID ?? row.leaderboardId ?? row.ID ?? row.id;
+    return Number(id) === Number(leaderboardId);
+  });
+  if (!target && leaderboardTitle) {
+    const titleLower = String(leaderboardTitle).toLowerCase();
+    target = results.find((row) => {
+      const title = row.Title ?? row.title ?? "";
+      return String(title).toLowerCase() === titleLower;
+    });
+  }
+  if (!target) return null;
+  const formatted =
+    target.FormattedScore ?? target.formattedScore ??
+    target.Score ?? target.score ??
+    target.Value ?? target.value ??
+    null;
+  return {
+    scoreText: formatted !== null ? String(formatted) : null,
+    format: target.Format ?? target.format ?? null,
+    lowerIsBetter: target.LowerIsBetter ?? target.lowerIsBetter ?? null
+  };
+}
+
+async function getUserLeaderboardBestWithRetry(username, gameId, leaderboardId, apiKey, leaderboardTitle = "", retries = 6) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await getUserLeaderboardBest(username, gameId, leaderboardId, apiKey, leaderboardTitle);
+    } catch (err) {
+      const msg = String(err?.message || err || "");
+      const is429 = msg.includes("429") || msg.includes("Too Many Attempts");
+      if (!is429 || attempt >= retries) throw err;
+      const delayMs = Math.min(20000, 750 * Math.pow(2, attempt));
+      await sleep(delayMs);
+    }
+  }
+  throw new Error("Failed to fetch leaderboard best after retries.");
+}
+
 function requireSnapshotSecret(req, res, next) {
   if (!SNAPSHOT_SECRET) return next();
   const token = String(req.headers["x-snapshot-secret"] || req.query.secret || "").trim();
@@ -520,10 +586,14 @@ app.get("/api/challenges", requireAuth, async (req, res) => {
   const me = normalizeUsername(req.session.user.username);
   const totalsQ = typeof req.query.totals === "string" ? req.query.totals.toLowerCase() : "1";
   const includeTotals = !(totalsQ === "0" || totalsQ === "false");
+  const apiKey = String(req.headers["x-ra-api-key"] || RA_API_KEY || "").trim();
   const incoming = await pool.query(
     `
       SELECT id, creator_username, opponent_username, duration_hours, status,
-             created_at, accepted_at, start_at, end_at
+             created_at, accepted_at, start_at, end_at,
+             creator_points, opponent_points, points_updated_at,
+             challenge_type, game_id, leaderboard_id, game_title, leaderboard_title,
+             creator_start_score, opponent_start_score, leaderboard_format, leaderboard_lower_is_better
       FROM challenges
       WHERE opponent_username = $1 AND status = 'pending'
       ORDER BY created_at DESC
@@ -533,7 +603,10 @@ app.get("/api/challenges", requireAuth, async (req, res) => {
   const outgoing = await pool.query(
     `
       SELECT id, creator_username, opponent_username, duration_hours, status,
-             created_at, accepted_at, start_at, end_at
+             created_at, accepted_at, start_at, end_at,
+             creator_points, opponent_points, points_updated_at,
+             challenge_type, game_id, leaderboard_id, game_title, leaderboard_title,
+             creator_start_score, opponent_start_score, leaderboard_format, leaderboard_lower_is_better
       FROM challenges
       WHERE creator_username = $1 AND status = 'pending'
       ORDER BY created_at DESC
@@ -544,7 +617,9 @@ app.get("/api/challenges", requireAuth, async (req, res) => {
     `
       SELECT id, creator_username, opponent_username, duration_hours, status,
              created_at, accepted_at, start_at, end_at,
-             creator_points, opponent_points, points_updated_at
+             creator_points, opponent_points, points_updated_at,
+             challenge_type, game_id, leaderboard_id, game_title, leaderboard_title,
+             creator_start_score, opponent_start_score, leaderboard_format, leaderboard_lower_is_better
       FROM challenges
       WHERE status = 'active' AND (creator_username = $1 OR opponent_username = $1)
       ORDER BY start_at DESC
@@ -554,7 +629,7 @@ app.get("/api/challenges", requireAuth, async (req, res) => {
 
   let activeRows = active.rows;
   const warnings = [];
-  if (includeTotals && RA_API_KEY && activeRows.length) {
+  if (includeTotals && apiKey && activeRows.length) {
     const limitChallenges = createLimiter(2);
     const now = new Date();
     activeRows = await Promise.all(activeRows.map((row) => limitChallenges(async () => {
@@ -566,8 +641,38 @@ app.get("/api/challenges", requireAuth, async (req, res) => {
           opponent_points: row.opponent_points ?? null
         };
         if (!startAt) return baseRow;
-        const creatorPoints = await computePointsBetweenWithRetry(row.creator_username, startAt, now, false, RA_API_KEY, 10);
-        const opponentPoints = await computePointsBetweenWithRetry(row.opponent_username, startAt, now, false, RA_API_KEY, 10);
+        let creatorStart = row.creator_start_score ?? null;
+        let opponentStart = row.opponent_start_score ?? null;
+        let leaderboardFormat = row.leaderboard_format ?? null;
+        let leaderboardLower = row.leaderboard_lower_is_better ?? null;
+        if (row.challenge_type === "score" && row.game_id && row.leaderboard_id &&
+            (creatorStart === null || opponentStart === null)) {
+          try {
+            const [creatorBest, opponentBest] = await Promise.all([
+              getUserLeaderboardBestWithRetry(row.creator_username, row.game_id, row.leaderboard_id, apiKey, row.leaderboard_title, 6),
+              getUserLeaderboardBestWithRetry(row.opponent_username, row.game_id, row.leaderboard_id, apiKey, row.leaderboard_title, 6)
+            ]);
+            creatorStart = creatorBest?.scoreText ?? creatorStart;
+            opponentStart = opponentBest?.scoreText ?? opponentStart;
+            leaderboardFormat = creatorBest?.format ?? opponentBest?.format ?? leaderboardFormat;
+            leaderboardLower = creatorBest?.lowerIsBetter ?? opponentBest?.lowerIsBetter ?? leaderboardLower;
+            await pool.query(
+              `
+                UPDATE challenges
+                SET creator_start_score = $1,
+                    opponent_start_score = $2,
+                    leaderboard_format = $3,
+                    leaderboard_lower_is_better = $4
+                WHERE id = $5
+              `,
+              [creatorStart, opponentStart, leaderboardFormat, leaderboardLower, row.id]
+            );
+          } catch {
+            // ignore start score failures
+          }
+        }
+        const creatorPoints = await computePointsBetweenWithRetry(row.creator_username, startAt, now, false, apiKey, 10);
+        const opponentPoints = await computePointsBetweenWithRetry(row.opponent_username, startAt, now, false, apiKey, 10);
         await pool.query(
           `
             UPDATE challenges
@@ -586,7 +691,15 @@ app.get("/api/challenges", requireAuth, async (req, res) => {
           `,
           [row.id]
         );
-        return { ...row, creator_points: creatorPoints, opponent_points: opponentPoints };
+        return {
+          ...row,
+          creator_points: creatorPoints,
+          opponent_points: opponentPoints,
+          creator_start_score: creatorStart,
+          opponent_start_score: opponentStart,
+          leaderboard_format: leaderboardFormat,
+          leaderboard_lower_is_better: leaderboardLower
+        };
       } catch (err) {
         const msg = String(err?.message || "");
         if (msg.includes("429") || msg.includes("Too Many Attempts")) {
@@ -595,7 +708,11 @@ app.get("/api/challenges", requireAuth, async (req, res) => {
         return {
           ...row,
           creator_points: row.creator_points ?? null,
-          opponent_points: row.opponent_points ?? null
+          opponent_points: row.opponent_points ?? null,
+          creator_start_score: row.creator_start_score ?? null,
+          opponent_start_score: row.opponent_start_score ?? null,
+          leaderboard_format: row.leaderboard_format ?? null,
+          leaderboard_lower_is_better: row.leaderboard_lower_is_better ?? null
         };
       }
     })));
@@ -623,6 +740,20 @@ app.post("/api/challenges", requireAuth, async (req, res) => {
   if (opponent === me) return res.status(400).json({ error: "Cannot challenge yourself" });
 
   const durationHours = Math.max(1, Math.min(168, Number(req.body?.hours || 24)));
+  const challengeType = String(req.body?.type || "points").toLowerCase();
+  const gameId = Number(req.body?.gameId || 0);
+  const leaderboardId = Number(req.body?.leaderboardId || 0);
+  const gameTitle = String(req.body?.gameTitle || "");
+  const leaderboardTitle = String(req.body?.leaderboardTitle || "");
+
+  if (challengeType === "score") {
+    if (!Number.isFinite(gameId) || gameId <= 0) {
+      return res.status(400).json({ error: "Missing game selection" });
+    }
+    if (!Number.isFinite(leaderboardId) || leaderboardId <= 0) {
+      return res.status(400).json({ error: "Missing leaderboard selection" });
+    }
+  }
 
   if (RA_API_KEY) {
     try {
@@ -637,12 +768,22 @@ app.post("/api/challenges", requireAuth, async (req, res) => {
 
   const result = await pool.query(
     `
-      INSERT INTO challenges (creator_username, opponent_username, duration_hours)
-      VALUES ($1, $2, $3)
+      INSERT INTO challenges (
+        creator_username,
+        opponent_username,
+        duration_hours,
+        challenge_type,
+        game_id,
+        leaderboard_id,
+        game_title,
+        leaderboard_title
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       RETURNING id, creator_username, opponent_username, duration_hours, status,
-                created_at, accepted_at, start_at, end_at
+                created_at, accepted_at, start_at, end_at,
+                challenge_type, game_id, leaderboard_id, game_title, leaderboard_title
     `,
-    [me, opponent, durationHours]
+    [me, opponent, durationHours, challengeType, gameId || null, leaderboardId || null, gameTitle || null, leaderboardTitle || null]
   );
   res.json(result.rows[0]);
 });
@@ -652,6 +793,41 @@ app.post("/api/challenges/:id/accept", requireAuth, async (req, res) => {
   const me = normalizeUsername(req.session.user.username);
   const id = Number(req.params.id);
   if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid challenge id" });
+  const apiKey = String(req.headers["x-ra-api-key"] || RA_API_KEY || "").trim();
+
+  const existing = await pool.query(
+    `
+      SELECT id, creator_username, opponent_username, duration_hours, status,
+             challenge_type, game_id, leaderboard_id, leaderboard_title
+      FROM challenges
+      WHERE id = $1 AND opponent_username = $2 AND status = 'pending'
+    `,
+    [id, me]
+  );
+  if (!existing.rows.length) {
+    return res.status(404).json({ error: "Challenge not found or not pending" });
+  }
+
+  const row = existing.rows[0];
+  let creatorStart = null;
+  let opponentStart = null;
+  let leaderboardFormat = null;
+  let leaderboardLower = null;
+
+  if (row.challenge_type === "score" && row.game_id && row.leaderboard_id && apiKey) {
+    try {
+      const [creatorBest, opponentBest] = await Promise.all([
+        getUserLeaderboardBest(row.creator_username, row.game_id, row.leaderboard_id, apiKey, row.leaderboard_title),
+        getUserLeaderboardBest(row.opponent_username, row.game_id, row.leaderboard_id, apiKey, row.leaderboard_title)
+      ]);
+      creatorStart = creatorBest?.scoreText ?? null;
+      opponentStart = opponentBest?.scoreText ?? null;
+      leaderboardFormat = creatorBest?.format ?? opponentBest?.format ?? null;
+      leaderboardLower = creatorBest?.lowerIsBetter ?? opponentBest?.lowerIsBetter ?? null;
+    } catch {
+      // ignore start score failures
+    }
+  }
 
   const result = await pool.query(
     `
@@ -659,12 +835,18 @@ app.post("/api/challenges/:id/accept", requireAuth, async (req, res) => {
       SET status = 'active',
           accepted_at = NOW(),
           start_at = NOW(),
-          end_at = NOW() + (duration_hours || ' hours')::interval
-      WHERE id = $1 AND opponent_username = $2 AND status = 'pending'
+          end_at = NOW() + (duration_hours || ' hours')::interval,
+          creator_start_score = $1,
+          opponent_start_score = $2,
+          leaderboard_format = $3,
+          leaderboard_lower_is_better = $4
+      WHERE id = $5 AND opponent_username = $6 AND status = 'pending'
       RETURNING id, creator_username, opponent_username, duration_hours, status,
-                created_at, accepted_at, start_at, end_at
+                created_at, accepted_at, start_at, end_at,
+                challenge_type, game_id, leaderboard_id, game_title, leaderboard_title,
+                creator_start_score, opponent_start_score, leaderboard_format, leaderboard_lower_is_better
     `,
-    [id, me]
+    [creatorStart, opponentStart, leaderboardFormat, leaderboardLower, id, me]
   );
 
   if (result.rows.length === 0) {
@@ -726,7 +908,9 @@ app.get("/api/challenges-history", requireAuth, async (req, res) => {
     `
       SELECT id, creator_username, opponent_username, duration_hours, status,
              created_at, accepted_at, start_at, end_at,
-             creator_points, opponent_points, points_updated_at
+             creator_points, opponent_points, points_updated_at,
+             challenge_type, game_id, leaderboard_id, game_title, leaderboard_title,
+             creator_start_score, opponent_start_score, leaderboard_format, leaderboard_lower_is_better
       FROM challenges
       WHERE status = 'completed' AND (creator_username = $1 OR opponent_username = $1)
       ORDER BY end_at DESC
@@ -1313,6 +1497,35 @@ app.get("/api/game-times/:username/:gameId", async (req, res) => {
     res.json(payload);
   } catch (err) {
     res.status(500).json({ error: err?.message || "Failed to fetch game times" });
+  }
+});
+
+// Game leaderboards (for score attack selection)
+app.get("/api/game-leaderboards/:gameId", async (req, res) => {
+  try {
+    const gameId = String(req.params.gameId || "").trim();
+    if (!gameId) return res.status(400).json({ error: "Missing gameId" });
+    const apiKey = String(req.headers["x-ra-api-key"] || RA_API_KEY || "").trim();
+    if (!apiKey) return res.status(400).json({ error: "Missing RA API key" });
+
+    const cacheKey = `game-leaderboards:${gameId}:${apiKey}`;
+    const cached = cacheGet(cacheKey);
+    if (cached) return res.json({ ...cached, cached: true });
+
+    const items = await raGetGameLeaderboards(gameId, 200, apiKey);
+    const normalized = items.map(lb => ({
+      id: lb.ID ?? lb.id,
+      title: lb.Title ?? lb.title,
+      description: lb.Description ?? lb.description,
+      format: lb.Format ?? lb.format,
+      lowerIsBetter: lb.LowerIsBetter ?? lb.lowerIsBetter
+    }));
+
+    const payload = { gameId, count: normalized.length, results: normalized };
+    cacheSet(cacheKey, payload, DEFAULT_CACHE_TTL_MS);
+    res.json(payload);
+  } catch (err) {
+    res.status(500).json({ error: err?.message || "Failed to fetch game leaderboards" });
   }
 });
 

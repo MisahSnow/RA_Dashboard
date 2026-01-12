@@ -175,6 +175,10 @@ h1 {
   margin-bottom:12px;
 }
 
+.sectionHead.compact{
+  margin-bottom: 8px;
+}
+
 .sectionTitle{
   margin:0;
   font-size:16px;
@@ -392,7 +396,9 @@ button:hover {
 
 .challengeHistoryWrap {
   display: flex;
+  flex-direction: column;
   justify-content: flex-start;
+  gap: 8px;
   margin-top: -8px;
   margin-bottom: 18px;
   width: 100%;
@@ -402,6 +408,66 @@ button:hover {
 .challengeHistoryWrap .smallBtn {
   width: 100%;
   box-sizing: border-box;
+}
+
+.scoreAttackLayout {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.4fr) minmax(260px, 1fr);
+  gap: 16px;
+}
+
+.scoreAttackControls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.compactField {
+  margin-bottom: 8px;
+}
+
+.scoreAttackTabs {
+  display: flex;
+  gap: 6px;
+}
+
+.scoreAttackTabBtn.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(0, 245, 212, 0.3);
+}
+
+.scoreAttackGames .sectionHead.compact,
+.scoreAttackBoards .sectionHead.compact {
+  margin-bottom: 8px;
+}
+
+.scoreAttackBoardsList .challengeItem {
+  cursor: pointer;
+}
+
+.scoreAttackBoardsList .challengeItem:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(0, 245, 212, 0.3);
+}
+
+.scoreAttackBoardsList .challengeItem.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(0, 245, 212, 0.6);
+}
+
+.scoreAttackGamesList,
+.scoreAttackBoardsList {
+  max-height: 50vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+@media (max-width: 900px) {
+  .scoreAttackLayout {
+    grid-template-columns: 1fr;
+  }
 }
 
 .challengeLists {
@@ -563,6 +629,11 @@ button:hover {
   color: #fb7185;
 }
 
+.challengeBest {
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+
 .challengeVs {
   font-size: 12px;
   letter-spacing: 2px;
@@ -609,6 +680,12 @@ button:hover {
   border-radius: var(--radius);
   padding: var(--space-5);
   box-shadow: 0 18px 32px var(--shadow);
+  max-height: 84vh;
+  overflow: auto;
+}
+
+.modalWide {
+  width: min(1200px, 94vw);
 }
 
 .modalCard .buttons{
