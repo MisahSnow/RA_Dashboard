@@ -11,8 +11,11 @@ let clientQueueActive = 0;
 let clientQueueTimer = null;
 let lastClientRequestAt = 0;
 const FAST_MAX_CONCURRENT = CLIENT_MAX_CONCURRENT;
+const FAST_REQUEST_INTERVAL_MS = 100;
 const fastRequestQueue = [];
 let fastQueueActive = 0;
+let lastFastRequestAt = 0;
+let fastQueueTimer = null;
 
 function updateQueueCounter() {
   if (apiQueueCounterEl) {
@@ -78,8 +81,20 @@ function processClientQueue() {
 
 function processFastQueue() {
   if (fastQueueActive >= FAST_MAX_CONCURRENT || fastRequestQueue.length === 0) return;
+  const now = Date.now();
+  const waitMs = Math.max(0, FAST_REQUEST_INTERVAL_MS - (now - lastFastRequestAt));
+  if (waitMs > 0) {
+    if (!fastQueueTimer) {
+      fastQueueTimer = setTimeout(() => {
+        fastQueueTimer = null;
+        processFastQueue();
+      }, waitMs);
+    }
+    return;
+  }
   const job = fastRequestQueue.shift();
   fastQueueActive += 1;
+  lastFastRequestAt = Date.now();
   (async () => {
     const res = await fetch(job.url, job.options);
     logApiQueueEvent(job.url, job.options, res.status);
@@ -292,6 +307,8 @@ let profileSharedGames = [];
 let profileDisplayedGames = [];
 let profileAllGamesLoaded = false;
 let profileGamesFetchCount = 60;
+let profileBaseGames = [];
+let profileExpanded = false;
 let profileGamesEmptyMessage = "No shared games found in recent play history.";
 let profileAutoLoadingAll = false;
 let profileSkipAutoLoadOnce = false;
@@ -1400,11 +1417,12 @@ function setActivePage(name) {
   if (profilePage) profilePage.hidden = name !== "profile";
   if (name === "profile") {
     moveProfilePanel(profileHostProfile);
-    if (currentUser) {
-      openProfile(currentUser);
-    }
   } else {
-    moveProfilePanel(profileHostDashboard);
+    const isSelfOpen = currentProfileUser && currentUser &&
+      currentProfileUser.toLowerCase() === currentUser.toLowerCase();
+    if (!isSelfOpen) {
+      moveProfilePanel(profileHostDashboard);
+    }
   }
 }
 
@@ -2330,6 +2348,22 @@ function mergeGameLists(primary, secondary) {
   return merged;
 }
 
+function normalizeGameList(list) {
+  const seen = new Set();
+  const out = [];
+  for (const g of list || []) {
+    const key = String(g.gameId ?? g.GameID ?? g.id ?? "");
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      gameId: g.gameId ?? g.GameID ?? g.id,
+      title: g.title ?? g.Title ?? "",
+      imageIcon: g.imageIcon ?? g.ImageIcon ?? ""
+    });
+  }
+  return out;
+}
+
 async function loadMoreProfileGames() {
   const target = clampUsername(currentProfileUser);
   if (!target || !profileShowMoreBtn) return;
@@ -2355,9 +2389,9 @@ async function loadMoreProfileGames() {
       profileIsSelf ? null : fetchRecentGames(target, nextCount)
     ]);
 
-    const mineResults = mine?.results || [];
-    const theirsResults = profileIsSelf ? [] : (theirs?.results || []);
-    const combined = buildProfileGameList(mineResults, theirsResults, profileIsSelf);
+    const mineResults = normalizeGameList(mine?.results || []);
+    const theirsResults = profileIsSelf ? [] : normalizeGameList(theirs?.results || []);
+    const combined = mergeGameLists(profileSharedGames, profileIsSelf ? mineResults : mergeGameLists(mineResults, theirsResults));
     const newAdded = combined.length - profileSharedGames.length;
 
     profileSharedGames = combined;
@@ -2366,10 +2400,11 @@ async function loadMoreProfileGames() {
     renderSharedGames(combined, profileIsSelf ? "No recent games found." : "No shared games found in recent play history.");
 
     const noMore = newAdded <= 0 || nextCount >= PROFILE_GAMES_MAX;
-    profileShowMoreBtn.hidden = noMore;
+    profileShowMoreBtn.hidden = false;
     profileShowMoreBtn.disabled = false;
-    profileShowMoreBtn.textContent = "Show more";
+    profileShowMoreBtn.textContent = "Show less";
     profileAllGamesLoaded = noMore;
+    profileExpanded = true;
   } catch (e) {
     profileShowMoreBtn.disabled = false;
     profileShowMoreBtn.textContent = "Show more";
@@ -2379,12 +2414,16 @@ async function loadMoreProfileGames() {
   }
 }
 
-async function loadAllProfileGames() {
-  // Deprecated in favor of incremental loading.
-}
-
 function collapseProfileGames() {
-  // Deprecated in favor of incremental loading.
+  if (!profileShowMoreBtn) return;
+  profileSharedGames = profileBaseGames || [];
+  profileDisplayedGames = profileSharedGames;
+  profileGamesFetchCount = PROFILE_GAMES_INITIAL;
+  profileAllGamesLoaded = false;
+  profileExpanded = false;
+  renderSharedGames(profileSharedGames, profileIsSelf ? "No recent games found." : "No shared games found in recent play history.");
+  profileShowMoreBtn.hidden = profileSharedGames.length >= PROFILE_GAMES_MAX && !profileExpanded;
+  profileShowMoreBtn.textContent = "Show more";
 }
 
 function renderProfileSummary(summary) {
@@ -2558,6 +2597,15 @@ async function openProfile(username) {
   if (!me) return setStatus("Set your username first.");
   const isSelf = me.toLowerCase() === target.toLowerCase();
 
+  if (isSelf && profilePage && profilePage.hidden) {
+    setActivePage("profile");
+  }
+
+  if (isSelf) {
+    moveProfilePanel(profileHostProfile);
+  } else {
+    moveProfilePanel(profileHostDashboard);
+  }
   profilePanel.hidden = false;
   comparePanel.hidden = true;
   if (selfGamePanel) selfGamePanel.hidden = true;
@@ -2622,12 +2670,15 @@ async function openProfile(username) {
 
     const unique = buildProfileGameList(mine.results || [], theirs.results || [], isSelf);
 
+    profileBaseGames = unique;
     profileSharedGames = unique;
     profileDisplayedGames = unique;
     profileAllGamesLoaded = unique.length >= PROFILE_GAMES_MAX;
+    profileExpanded = false;
     renderSharedGames(unique, isSelf ? "No recent games found." : "No shared games found in recent play history.");
     if (profileShowMoreBtn) {
       profileShowMoreBtn.hidden = profileAllGamesLoaded;
+      profileShowMoreBtn.textContent = "Show more";
     }
     renderProfileInsights({
       sharedCount: unique.length,
@@ -3451,7 +3502,11 @@ compareTabButtons.forEach(btn => {
 
 if (profileShowMoreBtn) {
   profileShowMoreBtn.addEventListener("click", () => {
-    loadMoreProfileGames();
+    if (profileExpanded) {
+      collapseProfileGames();
+    } else {
+      loadMoreProfileGames();
+    }
   });
 }
 
@@ -3619,17 +3674,22 @@ pageButtons.forEach(btn => {
   btn.addEventListener("click", () => {
     const page = btn.dataset.page;
     setActivePage(page);
-  if (page === "challenges") {
-    refreshChallenges({ includeTotals: true });
-    stopChallengePolling();
-    challengesPollTimer = setInterval(() => refreshChallenges({ includeTotals: false }), 10000);
-    challengesTotalsTimer = setInterval(() => refreshChallenges({ includeTotals: true }), 60000);
-  } else if (page === "profile") {
-    stopChallengePolling();
-  } else {
-    stopChallengePolling();
-  }
-});
+    if (page === "challenges") {
+      refreshChallenges({ includeTotals: true });
+      stopChallengePolling();
+      challengesPollTimer = setInterval(() => refreshChallenges({ includeTotals: false }), 10000);
+      challengesTotalsTimer = setInterval(() => refreshChallenges({ includeTotals: true }), 60000);
+    } else if (page === "profile") {
+      stopChallengePolling();
+      if (!currentUser) {
+        setStatus("Set your username first.");
+        return;
+      }
+      openProfile(currentUser, { silentScroll: true });
+    } else {
+      stopChallengePolling();
+    }
+  });
 });
 if (settingsSaveBtn) {
   settingsSaveBtn.addEventListener("click", () => {
