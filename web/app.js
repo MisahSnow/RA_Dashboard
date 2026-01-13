@@ -166,6 +166,8 @@ const challengesPage = document.getElementById("challengesPage");
 const profilePage = document.getElementById("profilePage");
 const profileHostDashboard = document.getElementById("profileHostDashboard");
 const profileHostProfile = document.getElementById("profileHostProfile");
+const selfGameHostDashboard = document.getElementById("selfGameHostDashboard");
+const selfGameHostProfile = document.getElementById("selfGameHostProfile");
 
 if (apiQueueCounterEl) {
   apiQueueCounterEl.textContent = "API Calls in Queue: 0";
@@ -1406,6 +1408,13 @@ function moveProfilePanel(targetHost) {
   }
 }
 
+function moveSelfGamePanel(targetHost) {
+  if (!selfGamePanel || !targetHost) return;
+  if (selfGamePanel.parentElement !== targetHost) {
+    targetHost.appendChild(selfGamePanel);
+  }
+}
+
 function setActivePage(name) {
   pageButtons.forEach(btn => {
     const isActive = btn.dataset.page === name;
@@ -1417,12 +1426,14 @@ function setActivePage(name) {
   if (profilePage) profilePage.hidden = name !== "profile";
   if (name === "profile") {
     moveProfilePanel(profileHostProfile);
+    moveSelfGamePanel(selfGameHostProfile);
   } else {
     const isSelfOpen = currentProfileUser && currentUser &&
       currentProfileUser.toLowerCase() === currentUser.toLowerCase();
     if (!isSelfOpen) {
       moveProfilePanel(profileHostDashboard);
     }
+    moveSelfGamePanel(selfGameHostDashboard);
   }
 }
 
@@ -2603,8 +2614,10 @@ async function openProfile(username) {
 
   if (isSelf) {
     moveProfilePanel(profileHostProfile);
+    moveSelfGamePanel(selfGameHostProfile);
   } else {
     moveProfilePanel(profileHostDashboard);
+    moveSelfGamePanel(selfGameHostDashboard);
   }
   profilePanel.hidden = false;
   comparePanel.hidden = true;
@@ -2909,6 +2922,11 @@ async function openSelfGame(game) {
 
   profilePanel.hidden = true;
   comparePanel.hidden = true;
+  if (profileIsSelf) {
+    moveSelfGamePanel(selfGameHostProfile);
+  } else {
+    moveSelfGamePanel(selfGameHostDashboard);
+  }
   if (selfGamePanel) selfGamePanel.hidden = false;
   if (selfGameTitleEl) selfGameTitleEl.textContent = game.title || `Game ${safeText(game.gameId)}`;
   if (selfGameMetaEl) selfGameMetaEl.textContent = `User: ${me}`;
