@@ -2402,7 +2402,9 @@ async function loadMoreProfileGames() {
 
     const mineResults = normalizeGameList(mine?.results || []);
     const theirsResults = profileIsSelf ? [] : normalizeGameList(theirs?.results || []);
-    const combined = mergeGameLists(profileSharedGames, profileIsSelf ? mineResults : mergeGameLists(mineResults, theirsResults));
+    const combined = profileIsSelf
+      ? mergeGameLists(profileSharedGames, mineResults)
+      : mergeGameLists(profileSharedGames, theirsResults);
     const newAdded = combined.length - profileSharedGames.length;
 
     profileSharedGames = combined;
