@@ -178,7 +178,7 @@ const limitLb = createLimiter(1); // only 1 leaderboard request at a time
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-const RA_REQUEST_INTERVAL_MS = 100;
+const RA_REQUEST_INTERVAL_MS = 150;
 const RA_MAX_CONCURRENT = 1;
 const raQueue = [];
 let raQueueActive = 0;
@@ -542,6 +542,18 @@ async function raGetUserSummary(username, apiKey) {
 
   const url = new URL("https://retroachievements.org/API/API_GetUserSummary.php");
   url.searchParams.set("u", username);
+  url.searchParams.set("y", apiKey);
+
+  return raFetchJson(url.toString());
+}
+
+async function raGetUserCompletionProgress(username, count = 100, offset = 0, apiKey) {
+  if (!apiKey) throw new Error("Missing RA API key.");
+
+  const url = new URL("https://retroachievements.org/API/API_GetUserCompletionProgress.php");
+  url.searchParams.set("u", username);
+  url.searchParams.set("c", String(count));
+  url.searchParams.set("o", String(offset));
   url.searchParams.set("y", apiKey);
 
   return raFetchJson(url.toString());
@@ -1813,6 +1825,56 @@ app.get("/api/user-summary/:username", async (req, res) => {
   }
 });
 
+// User completion progress (for beaten/mastered badges)
+app.get("/api/user-completion-progress/:username", async (req, res) => {
+  try {
+    const username = String(req.params.username || "").trim();
+    if (!username) return res.status(400).json({ error: "Missing username" });
+    const apiKey = String(req.headers["x-ra-api-key"] || RA_API_KEY || "").trim();
+    if (!apiKey) return res.status(400).json({ error: "Missing RA API key" });
+
+    const countQ = typeof req.query.count === "string" ? Number(req.query.count) : 100;
+    const offsetQ = typeof req.query.offset === "string" ? Number(req.query.offset) : 0;
+    const count = Math.max(1, Math.min(500, Number.isFinite(countQ) ? countQ : 100));
+    const offset = Math.max(0, Number.isFinite(offsetQ) ? offsetQ : 0);
+
+    const cacheKey = `user-completion:${username}:${count}:${offset}:${apiKey}`;
+    const cached = cacheGet(cacheKey);
+    if (cached) return res.json({ ...cached, cached: true });
+
+    const data = await raGetUserCompletionProgress(username, count, offset, apiKey);
+    const rawResults = data?.Results ?? data?.results ?? data ?? [];
+    const results = Array.isArray(rawResults) ? rawResults : [];
+
+    const normalized = results.map(r => ({
+      gameId: r.GameID ?? r.gameId,
+      title: r.Title ?? r.title,
+      imageIcon: r.ImageIcon ?? r.imageIcon,
+      consoleId: r.ConsoleID ?? r.consoleId,
+      consoleName: r.ConsoleName ?? r.consoleName,
+      maxPossible: r.MaxPossible ?? r.maxPossible,
+      numAwarded: r.NumAwarded ?? r.numAwarded,
+      numAwardedHardcore: r.NumAwardedHardcore ?? r.numAwardedHardcore,
+      mostRecentAwardedDate: r.MostRecentAwardedDate ?? r.mostRecentAwardedDate,
+      highestAwardKind: r.HighestAwardKind ?? r.highestAwardKind,
+      highestAwardDate: r.HighestAwardDate ?? r.highestAwardDate
+    }));
+
+    const payload = {
+      username,
+      count: normalized.length,
+      total: data?.Total ?? data?.total ?? normalized.length,
+      results: normalized
+    };
+
+    cacheSet(cacheKey, payload, DEFAULT_CACHE_TTL_MS);
+    res.json(payload);
+  } catch (err) {
+    const status = err?.status || 500;
+    res.status(status).json({ error: err?.message || "Failed to fetch completion progress" });
+  }
+});
+
 // Achievements for a user + game (for comparison)
 app.get("/api/game-achievements/:username/:gameId", async (req, res) => {
   try {
@@ -1848,7 +1910,13 @@ app.get("/api/game-achievements/:username/:gameId", async (req, res) => {
       gameTitle: data?.Title ?? data?.title,
       consoleName: data?.ConsoleName ?? data?.consoleName,
       imageIcon: data?.ImageIcon ?? data?.imageIcon,
-      achievements
+      achievements,
+      highestAwardKind: data?.HighestAwardKind ?? data?.highestAwardKind ?? data?.HighestAward ?? data?.highestAward ?? null,
+      completionStatus:
+        data?.CompletionStatus ?? data?.completionStatus ??
+        data?.Completion ?? data?.completion ??
+        data?.Beaten ?? data?.beaten ??
+        null
     };
 
     cacheSet(cacheKey, payload, DEFAULT_CACHE_TTL_MS);

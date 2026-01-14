@@ -179,7 +179,7 @@
       <div class="profileActions">
         <button id="profileShowMoreBtn" class="smallBtn">Show more</button>
       </div>
-      <p class="note profileLegend"><span class="legend me"></span> <span id="profileLegendMe">You</span> <span class="legend them"></span> <span id="profileLegendThem">Friend</span></p>
+      <p class="note profileLegend"><span class="legend star silver">&#9733;</span> <span>Beaten</span> <span class="legend star gold">&#9733;</span> <span>All achievements</span> <span class="legend me"></span> <span id="profileLegendMe">You</span> <span class="legend them"></span> <span id="profileLegendThem">Friend</span></p>
     </section>
 
     <section class="card comparePanel" id="comparePanel" hidden>
@@ -374,8 +374,15 @@
       </div>
     </div>
     <div id="apiQueueLog" class="apiQueueLog debugHidden" aria-live="polite" hidden>
-      <div class="apiQueueLogTitle">API Queue Log</div>
-      <div id="apiQueueLogEntries" class="apiQueueLogEntries"></div>
+      <div class="apiQueueLogHeader">
+        <div class="apiQueueLogTitle">Logs</div>
+        <div class="apiQueueTabs">
+          <button class="apiQueueTab active" type="button" data-log="queue">Queue</button>
+          <button class="apiQueueTab" type="button" data-log="system">System</button>
+        </div>
+      </div>
+      <div id="apiQueueLogEntries" class="apiQueueLogEntries" data-log-panel="queue"></div>
+      <div id="systemLogEntries" class="apiQueueLogEntries" data-log-panel="system" hidden></div>
     </div>
     <div id="apiQueueCounter" class="apiQueueCounter debugHidden" aria-live="polite" hidden></div>
     </div>
