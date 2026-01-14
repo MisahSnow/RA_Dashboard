@@ -2342,7 +2342,25 @@ tr.innerHTML = `
 }
 
 function formatDate(d) {
-  const t = Date.parse(d);
+  if (!d) return "";
+  if (d instanceof Date) return d.toLocaleString();
+  const raw = String(d);
+  const hasTz = /Z|[+-]\d{2}:?\d{2}$/.test(raw);
+  if (!hasTz) {
+    const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/);
+    if (m) {
+      const y = Number(m[1]);
+      const mo = Number(m[2]) - 1;
+      const day = Number(m[3]);
+      const h = Number(m[4]);
+      const mi = Number(m[5]);
+      const s = Number(m[6]);
+      const utc = Date.UTC(y, mo, day, h, mi, s);
+      return new Date(utc).toLocaleString();
+    }
+  }
+  const isoLike = raw.replace(" ", "T");
+  const t = Date.parse(hasTz ? raw : isoLike);
   if (!t) return d || "";
   return new Date(t).toLocaleString();
 }
