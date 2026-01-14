@@ -10,6 +10,8 @@ const clientRequestQueue = [];
 let clientQueueActive = 0;
 let clientQueueTimer = null;
 let lastClientRequestAt = 0;
+let activePageName = "dashboard";
+const pausedPages = new Set();
 const FAST_MAX_CONCURRENT = CLIENT_MAX_CONCURRENT;
 const FAST_REQUEST_INTERVAL_MS = 100;
 const fastRequestQueue = [];
@@ -26,7 +28,7 @@ function updateQueueCounter() {
 
 function enqueueClientFetch(url, options) {
   return new Promise((resolve, reject) => {
-    clientRequestQueue.push({ url, options, resolve, reject });
+    clientRequestQueue.push({ url, options, resolve, reject, page: activePageName });
     updateQueueCounter();
     logApiQueueEvent(url, options);
     processClientQueue();
@@ -35,11 +37,22 @@ function enqueueClientFetch(url, options) {
 
 function enqueueFastFetch(url, options) {
   return new Promise((resolve, reject) => {
-    fastRequestQueue.push({ url, options, resolve, reject });
+    fastRequestQueue.push({ url, options, resolve, reject, page: activePageName });
     updateQueueCounter();
     logApiQueueEvent(url, options);
     processFastQueue();
   });
+}
+
+function dequeueNext(queue) {
+  for (let i = 0; i < queue.length; i++) {
+    const job = queue[i];
+    if (!job?.page || !pausedPages.has(job.page)) {
+      queue.splice(i, 1);
+      return job;
+    }
+  }
+  return null;
 }
 
 function processClientQueue() {
@@ -56,7 +69,8 @@ function processClientQueue() {
     }
     return;
   }
-  const job = clientRequestQueue.shift();
+  const job = dequeueNext(clientRequestQueue);
+  if (!job) return;
   clientQueueActive += 1;
   lastClientRequestAt = Date.now();
   (async () => {
@@ -92,7 +106,8 @@ function processFastQueue() {
     }
     return;
   }
-  const job = fastRequestQueue.shift();
+  const job = dequeueNext(fastRequestQueue);
+  if (!job) return;
   fastQueueActive += 1;
   lastFastRequestAt = Date.now();
   (async () => {
@@ -340,6 +355,8 @@ const tabButtons = document.querySelectorAll(".tabBtn");
 const tabPanels = document.querySelectorAll(".tabPanel");
 
 let currentProfileUser = "";
+let profileLoadToken = 0;
+let activeProfileLoadToken = 0;
 let profileSharedGames = [];
 let profileDisplayedGames = [];
 let profileAllGamesLoaded = false;
@@ -1503,6 +1520,13 @@ function moveSelfGamePanel(targetHost) {
 }
 
 function setActivePage(name) {
+  if (name && name !== activePageName) {
+    pausedPages.add(activePageName);
+    activePageName = name;
+    pausedPages.delete(name);
+    processClientQueue();
+    processFastQueue();
+  }
   pageButtons.forEach(btn => {
     const isActive = btn.dataset.page === name;
     btn.classList.toggle("active", isActive);
@@ -2508,27 +2532,32 @@ async function loadProfileGameAchievements(gameId, metaEl) {
   const target = clampUsername(currentProfileUser);
   const { me } = getUsersIncludingMe();
   if (!target || !me || !metaEl) return;
+  const loadToken = activeProfileLoadToken;
 
   const key = String(gameId ?? "");
   if (!key) return;
 
   const cached = profileGameAchievementCounts.get(key);
   if (cached) {
-    setTileAchievementMeta(metaEl, cached);
+    if (loadToken === activeProfileLoadToken) {
+      setTileAchievementMeta(metaEl, cached);
+    }
     return;
   }
 
   const localCached = readProfileCountsCache(me, target, key);
   if (localCached) {
     profileGameAchievementCounts.set(key, localCached);
-    setTileAchievementMeta(metaEl, localCached);
+    if (loadToken === activeProfileLoadToken) {
+      setTileAchievementMeta(metaEl, localCached);
+    }
     return;
   }
 
   const pending = profileGameAchievementPending.get(key);
   if (pending) {
     pending.then((counts) => {
-      if (clampUsername(currentProfileUser) === target) {
+      if (loadToken === activeProfileLoadToken && clampUsername(currentProfileUser) === target) {
         setTileAchievementMeta(metaEl, counts);
       }
     });
@@ -2562,11 +2591,11 @@ async function loadProfileGameAchievements(gameId, metaEl) {
 
   try {
     const counts = await promise;
-    if (clampUsername(currentProfileUser) === targetAtRequest) {
+    if (loadToken === activeProfileLoadToken && clampUsername(currentProfileUser) === targetAtRequest) {
       setTileAchievementMeta(metaEl, counts);
     }
   } catch {
-    if (clampUsername(currentProfileUser) === targetAtRequest) {
+    if (loadToken === activeProfileLoadToken && clampUsername(currentProfileUser) === targetAtRequest) {
       metaEl.textContent = "Achievements: --/--";
     }
   }
@@ -2653,6 +2682,7 @@ async function loadMoreProfileGames() {
     setStatus("Set your username first.");
     return;
   }
+  const loadToken = activeProfileLoadToken;
 
   const nextCount = Math.min(PROFILE_GAMES_MAX, profileGamesFetchCount + PROFILE_GAMES_STEP);
   if (nextCount <= profileGamesFetchCount) {
@@ -2668,6 +2698,7 @@ async function loadMoreProfileGames() {
     const mineCache = readRecentGamesCache(me, nextCount);
     const theirsCache = profileIsSelf ? null : readRecentGamesCache(target, nextCount);
     if (mineCache?.data && (profileIsSelf || theirsCache?.data)) {
+      if (loadToken !== activeProfileLoadToken) return;
       const mineResultsCached = normalizeGameList(mineCache.data.results || []);
       const theirsResultsCached = profileIsSelf ? [] : normalizeGameList(theirsCache.data.results || []);
       const combinedCached = profileIsSelf
@@ -2687,6 +2718,7 @@ async function loadMoreProfileGames() {
       needMine ? fetchRecentGames(me, nextCount) : Promise.resolve(mineCache.data),
       profileIsSelf ? null : (needTheirs ? fetchRecentGames(target, nextCount) : Promise.resolve(theirsCache.data))
     ]);
+    if (loadToken !== activeProfileLoadToken) return;
 
     const mineCombined = combineRecentGames(mineCache?.data?.results, mine?.results || []);
     const theirsCombined = profileIsSelf ? [] : combineRecentGames(theirsCache?.data?.results, theirs?.results || []);
@@ -2727,6 +2759,7 @@ async function loadProfileCompletionProgress(username, games = []) {
   const target = clampUsername(username);
   if (!target) return;
   if (profileCompletionLoading && profileCompletionTarget === target) return;
+  const loadToken = activeProfileLoadToken;
 
   profileCompletionLoading = true;
   profileCompletionTarget = target;
@@ -2748,7 +2781,7 @@ async function loadProfileCompletionProgress(username, games = []) {
     while (pages < maxPages) {
       pages += 1;
       const data = await fetchUserCompletionProgress(target, perPage, offset);
-      if (clampUsername(currentProfileUser) !== target) return;
+      if (loadToken !== activeProfileLoadToken || clampUsername(currentProfileUser) !== target) return;
 
       const results = data?.results || [];
       for (const row of results) {
@@ -2782,7 +2815,9 @@ async function loadProfileCompletionProgress(username, games = []) {
   }
 
   profileCompletionByGameId = map;
-  refreshCompletionBadges();
+  if (loadToken === activeProfileLoadToken) {
+    refreshCompletionBadges();
+  }
   profileCompletionLoading = false;
 }
 
@@ -2953,6 +2988,8 @@ function buildProfileGameList(mineResults, theirsResults, isSelf) {
 async function openProfile(username) {
   const target = clampUsername(username);
   if (!target) return;
+  const loadToken = ++profileLoadToken;
+  activeProfileLoadToken = loadToken;
 
   const { me } = getUsersIncludingMe();
   if (!me) return setStatus("Set your username first.");
@@ -3022,6 +3059,7 @@ async function openProfile(username) {
     const mineCache = readRecentGamesCache(me, count);
     const theirsCache = readRecentGamesCache(target, count);
     if (mineCache?.data && theirsCache?.data) {
+      if (loadToken !== activeProfileLoadToken) return;
       const uniqueCached = buildProfileGameList(mineCache.data.results || [], theirsCache.data.results || [], isSelf);
       profileBaseGames = uniqueCached;
       profileSharedGames = uniqueCached;
@@ -3044,6 +3082,7 @@ async function openProfile(username) {
       fetchUserSummary(me).catch(() => null),
       fetchUserSummary(target).catch(() => null)
     ]);
+    if (loadToken !== activeProfileLoadToken) return;
 
     const themSummary = isSelf ? meSummary : themSummaryRaw;
 
@@ -4048,6 +4087,7 @@ if (profileCloseBtn) {
     if (selfGameAchievementsEl) selfGameAchievementsEl.innerHTML = "";
     setActiveCompareTab("achievements");
     currentProfileUser = "";
+    activeProfileLoadToken = 0;
   });
 }
 
