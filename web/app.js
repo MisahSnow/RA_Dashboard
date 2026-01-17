@@ -219,6 +219,7 @@ const findSuggestedLoadingEl = document.getElementById("findSuggestedLoading");
 const backlogListEl = document.getElementById("backlogList");
 const backlogStatusEl = document.getElementById("backlogStatus");
 const backlogLoadingEl = document.getElementById("backlogLoading");
+const backlogRemoveBtn = document.getElementById("backlogRemoveBtn");
 
 if (apiQueueCounterEl) {
   apiQueueCounterEl.textContent = "API Calls in Queue: 0";
@@ -493,6 +494,7 @@ const BACKLOG_PROGRESS_TTL_MS = 5 * 60 * 1000;
 const backlogProgressLimiter = createLimiter(2);
 const backlogProgressUpdateLimiter = createLimiter(2);
 let backlogRenderToken = 0;
+let backlogRemoveMode = false;
 
 function clampUsername(s) {
   return (s || "").trim().replace(/\s+/g, "");
@@ -1607,6 +1609,7 @@ function setActivePage(name) {
   if (challengesPage) challengesPage.hidden = name !== "challenges";
   if (profilePage) profilePage.hidden = name !== "profile";
   if (backlogPage) backlogPage.hidden = name !== "backlog";
+  if (name !== "backlog") setBacklogRemoveMode(false);
   if (name === "find-games") {
     ensureFindGamesReady();
     if (findGamesTab === "search") {
@@ -1837,6 +1840,36 @@ function refreshFindGameBacklogButtons() {
 
 function setBacklogViewUser(username) {
   backlogViewUser = clampUsername(username || "");
+  if (!isViewingOwnBacklog()) setBacklogRemoveMode(false);
+}
+
+const BACKLOG_TRASH_ICON = `
+<svg class="iconTrash" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+  <path d="M9 3h6l1 2h5v2H3V5h5l1-2zm1 6h2v9h-2V9zm4 0h2v9h-2V9zM7 9h2v9H7V9z"/>
+</svg>`;
+
+function isViewingOwnBacklog() {
+  if (!currentUser || !backlogViewUser) return false;
+  return normalizeUserKey(currentUser) === normalizeUserKey(backlogViewUser);
+}
+
+function updateBacklogRemoveUi() {
+  const isSelf = isViewingOwnBacklog();
+  if (backlogRemoveBtn) {
+    backlogRemoveBtn.hidden = !isSelf;
+    backlogRemoveBtn.innerHTML = backlogRemoveMode ? "X" : BACKLOG_TRASH_ICON;
+    backlogRemoveBtn.setAttribute("aria-pressed", backlogRemoveMode ? "true" : "false");
+    backlogRemoveBtn.setAttribute("aria-label", backlogRemoveMode ? "Exit remove mode" : "Enter remove mode");
+  }
+  if (backlogListEl) {
+    backlogListEl.classList.toggle("backlogRemoveMode", backlogRemoveMode && isSelf);
+  }
+  if (!isSelf) backlogRemoveMode = false;
+}
+
+function setBacklogRemoveMode(enabled) {
+  backlogRemoveMode = !!enabled && isViewingOwnBacklog();
+  updateBacklogRemoveUi();
 }
 
 async function ensureBacklogLoaded() {
@@ -1908,6 +1941,7 @@ function renderBacklogTiles(items, username) {
   for (const item of items) {
     const tile = document.createElement("div");
     tile.className = "tile";
+    if (item.gameId) tile.setAttribute("data-game-id", String(item.gameId));
 
     const img = document.createElement("img");
     img.src = iconUrl(item.imageIcon);
@@ -1964,6 +1998,7 @@ async function renderBacklog() {
     return;
   }
   const targetUser = backlogViewUser || currentUser;
+  updateBacklogRemoveUi();
   const items = await fetchBacklog(targetUser);
   if (normalizeUserKey(targetUser) === normalizeUserKey(currentUser)) {
     backlogItems = items;
@@ -5246,6 +5281,23 @@ if (profileBacklogBtn) {
   profileBacklogBtn.addEventListener("click", () => {
     setBacklogViewUser(currentProfileUser || currentUser);
     setActivePage("backlog");
+  });
+}
+
+if (backlogRemoveBtn) {
+  backlogRemoveBtn.addEventListener("click", () => {
+    setBacklogRemoveMode(!backlogRemoveMode);
+  });
+}
+
+if (backlogListEl) {
+  backlogListEl.addEventListener("click", (e) => {
+    if (!backlogRemoveMode || !isViewingOwnBacklog()) return;
+    const tile = e.target.closest(".tile[data-game-id]");
+    if (!tile) return;
+    const gameId = tile.getAttribute("data-game-id");
+    if (!gameId) return;
+    removeFromBacklog(gameId);
   });
 }
 

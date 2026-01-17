@@ -307,6 +307,14 @@ h1 {
   letter-spacing: 1px;
 }
 
+.iconTrash {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+  display: inline-block;
+  vertical-align: middle;
+}
+
 .pageBtn::after {
   content: "";
   position: absolute;
@@ -1507,6 +1515,47 @@ tbody tr:nth-child(even){
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.backlogRemoveMode .tile {
+  border-color: #5b2330;
+  background: #14070c;
+  cursor: pointer;
+}
+
+.backlogRemoveMode .tile img {
+  transition: filter 0.2s ease;
+}
+
+.backlogRemoveMode .tile:hover {
+  border-color: #8a2d3d;
+  background: #1a0a10;
+}
+
+.backlogRemoveMode .tile:hover img {
+  filter: grayscale(1) brightness(0.6);
+}
+
+.backlogRemoveMode .tile::after {
+  content: "Remove from backlog";
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fca5a5;
+  background: rgba(28, 7, 12, 0.65);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+}
+
+.backlogRemoveMode .tile:hover::after {
+  opacity: 1;
 }
 
 .tileMeta .me{
