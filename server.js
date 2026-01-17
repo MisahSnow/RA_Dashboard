@@ -72,7 +72,11 @@ function cacheSet(key, value, ttlMs) {
 }
 const DEFAULT_CACHE_TTL_MS = 180 * 1000; // 3 minutes
 const PRESENCE_TTL_MS = 15 * 1000;
+const GAME_INDEX_TTL_MS = 12 * 60 * 60 * 1000;
+const CONSOLE_LIST_TTL_MS = 24 * 60 * 60 * 1000;
 const presence = new Map(); // Map<username, Map<sessionId, lastSeen>>
+let consoleListCache = { builtAt: 0, list: null, inFlight: null };
+const gameListCache = new Map(); // Map<consoleId, { builtAt, list, inFlight }>
 
 async function initDb() {
   if (!pool) return;
@@ -557,6 +561,100 @@ async function raGetUserCompletionProgress(username, count = 100, offset = 0, ap
   url.searchParams.set("y", apiKey);
 
   return raFetchJson(url.toString());
+}
+
+function normalizeGameLetter(letter) {
+  const raw = String(letter || "").trim().toUpperCase();
+  if (!raw || raw === "NUMBERS" || raw === "0-9" || raw === "0") return "0-9";
+  const first = raw[0];
+  if (first >= "A" && first <= "Z") return first;
+  return "0-9";
+}
+
+function letterKeyFromTitle(title) {
+  const trimmed = String(title || "").trim();
+  if (!trimmed) return "0-9";
+  for (const ch of trimmed) {
+    if (/[0-9]/.test(ch)) return "0-9";
+    const up = ch.toUpperCase();
+    if (up >= "A" && up <= "Z") return up;
+  }
+  return "0-9";
+}
+
+async function raGetConsoleIds(apiKey) {
+  if (!apiKey) throw new Error("Missing RA API key.");
+  const url = new URL("https://retroachievements.org/API/API_GetConsoleIDs.php");
+  url.searchParams.set("y", apiKey);
+  const data = await raFetchJson(url.toString(), { fast: true });
+  return Array.isArray(data) ? data : [];
+}
+
+async function raGetGameList(consoleId, apiKey) {
+  if (!apiKey) throw new Error("Missing RA API key.");
+  const url = new URL("https://retroachievements.org/API/API_GetGameList.php");
+  url.searchParams.set("i", String(consoleId));
+  url.searchParams.set("y", apiKey);
+  const data = await raFetchJson(url.toString(), { fast: true });
+  return Array.isArray(data) ? data : [];
+}
+
+async function raGetGameInfo(gameId, apiKey) {
+  if (!apiKey) throw new Error("Missing RA API key.");
+  const url = new URL("https://retroachievements.org/API/API_GetGameExtended.php");
+  url.searchParams.set("i", String(gameId));
+  url.searchParams.set("y", apiKey);
+  return raFetchJson(url.toString(), { fast: true });
+}
+
+async function getConsoleList(apiKey) {
+  const now = Date.now();
+  if (consoleListCache.list && (now - consoleListCache.builtAt) < CONSOLE_LIST_TTL_MS) {
+    return consoleListCache.list;
+  }
+  if (consoleListCache.inFlight) return consoleListCache.inFlight;
+  consoleListCache.inFlight = (async () => {
+    const list = await raGetConsoleIds(apiKey);
+    const normalized = list
+      .map(c => ({
+        id: c?.ID ?? c?.id ?? c?.ConsoleID ?? c?.consoleId,
+        name: c?.Name ?? c?.name ?? c?.ConsoleName ?? c?.consoleName
+      }))
+      .filter(c => c.id && c.name);
+    consoleListCache = { builtAt: Date.now(), list: normalized, inFlight: null };
+    return normalized;
+  })().finally(() => {
+    consoleListCache.inFlight = null;
+  });
+  return consoleListCache.inFlight;
+}
+
+async function getGameListForConsole(consoleId, apiKey) {
+  const key = String(consoleId);
+  const cached = gameListCache.get(key);
+  const now = Date.now();
+  if (cached?.list && (now - cached.builtAt) < GAME_INDEX_TTL_MS) {
+    return cached.list;
+  }
+  if (cached?.inFlight) return cached.inFlight;
+  const inFlight = (async () => {
+    const list = await raGetGameList(consoleId, apiKey);
+    const normalized = list
+      .map(g => ({
+        gameId: g?.ID ?? g?.id ?? g?.GameID ?? g?.gameId,
+        title: g?.Title ?? g?.title ?? g?.GameTitle ?? g?.gameTitle ?? "",
+        consoleId: g?.ConsoleID ?? g?.consoleId ?? g?.ConsoleId ?? g?.consoleId,
+        consoleName: g?.ConsoleName ?? g?.consoleName ?? g?.Console ?? g?.console ?? ""
+      }))
+      .filter(g => g.gameId && g.title);
+    gameListCache.set(key, { builtAt: Date.now(), list: normalized, inFlight: null });
+    return normalized;
+  })().finally(() => {
+    const existing = gameListCache.get(key) || {};
+    gameListCache.set(key, { ...existing, inFlight: null });
+  });
+  gameListCache.set(key, { builtAt: now, list: cached?.list || null, inFlight });
+  return inFlight;
 }
 
 // --- API routes ---
@@ -1872,6 +1970,98 @@ app.get("/api/user-completion-progress/:username", async (req, res) => {
   } catch (err) {
     const status = err?.status || 500;
     res.status(status).json({ error: err?.message || "Failed to fetch completion progress" });
+  }
+});
+
+// Console list (cached)
+app.get("/api/consoles", async (req, res) => {
+  try {
+    const apiKey = String(req.headers["x-ra-api-key"] || RA_API_KEY || "").trim();
+    if (!apiKey) return res.status(400).json({ error: "Missing RA API key" });
+
+    const list = await getConsoleList(apiKey);
+    res.json({ count: list.length, results: list });
+  } catch (err) {
+    const status = err?.status || 500;
+    res.status(status).json({ error: err?.message || "Failed to fetch console list" });
+  }
+});
+
+// All games list (cached) grouped by starting letter.
+app.get("/api/game-list", async (req, res) => {
+  try {
+    const apiKey = String(req.headers["x-ra-api-key"] || RA_API_KEY || "").trim();
+    if (!apiKey) return res.status(400).json({ error: "Missing RA API key" });
+
+    const consoleId = Number(req.query.consoleId || 0);
+    if (!Number.isFinite(consoleId) || consoleId <= 0) {
+      return res.status(400).json({ error: "Missing consoleId" });
+    }
+    const list = await getGameListForConsole(consoleId, apiKey);
+    const rawLetter = String(req.query.letter || "0-9").trim();
+    const isAll = rawLetter === "" || rawLetter.toLowerCase() === "all";
+    const letter = isAll ? "all" : normalizeGameLetter(rawLetter);
+    const results = isAll ? list : list.filter(g => letterKeyFromTitle(g.title) === letter);
+
+    res.json({
+      letter,
+      consoleId,
+      totalGames: list.length,
+      count: results.length,
+      results
+    });
+  } catch (err) {
+    const status = err?.status || 500;
+    res.status(status).json({ error: err?.message || "Failed to fetch game list" });
+  }
+});
+
+// Game achievements (no user progress)
+app.get("/api/game-achievements-basic/:gameId", async (req, res) => {
+  try {
+    const gameId = String(req.params.gameId || "").trim();
+    if (!gameId) return res.status(400).json({ error: "Missing gameId" });
+    const apiKey = String(req.headers["x-ra-api-key"] || RA_API_KEY || "").trim();
+    if (!apiKey) return res.status(400).json({ error: "Missing RA API key" });
+
+    const cacheKey = `game-achievements-basic:${gameId}:${apiKey}`;
+    const cached = cacheGet(cacheKey);
+    if (cached) return res.json({ ...cached, cached: true });
+
+    const data = await raGetGameInfo(gameId, apiKey);
+    const rawAchievements = data?.Achievements ?? data?.achievements ?? {};
+    const achievements = Object.values(rawAchievements).map(a => ({
+      id: a.ID ?? a.id,
+      title: a.Title ?? a.title,
+      description: a.Description ?? a.description,
+      points: a.Points ?? a.points,
+      badgeUrl: a.BadgeName ? `/Badge/${a.BadgeName}.png` : (a.BadgeURL ?? a.badgeUrl)
+    }));
+
+    const payload = {
+      gameId,
+      gameTitle: data?.Title ?? data?.title,
+      consoleName: data?.ConsoleName ?? data?.consoleName,
+      imageIcon: data?.ImageIcon ?? data?.imageIcon,
+      imageTitle: data?.ImageTitle ?? data?.imageTitle,
+      imageIngame: data?.ImageIngame ?? data?.imageIngame,
+      imageBoxArt: data?.ImageBoxArt ?? data?.imageBoxArt,
+      forumTopicId: data?.ForumTopicID ?? data?.forumTopicId,
+      parentGameId: data?.ParentGameID ?? data?.parentGameId,
+      numAchievements: data?.NumAchievements ?? data?.numAchievements,
+      numDistinctPlayers: data?.NumDistinctPlayers ?? data?.numDistinctPlayers,
+      publisher: data?.Publisher ?? data?.publisher,
+      developer: data?.Developer ?? data?.developer,
+      genre: data?.Genre ?? data?.genre,
+      released: data?.Released ?? data?.released,
+      achievements
+    };
+
+    cacheSet(cacheKey, payload, DEFAULT_CACHE_TTL_MS);
+    res.json(payload);
+  } catch (err) {
+    const status = err?.status || 500;
+    res.status(status).json({ error: err?.message || "Failed to fetch game achievements" });
   }
 });
 

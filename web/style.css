@@ -65,6 +65,31 @@ body::after{
   opacity: 0.45;
 }
 
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #2b3650 #0b1224;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: #0b1224;
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(0, 245, 212, 0.55), rgba(34, 211, 238, 0.35));
+  border-radius: 999px;
+  border: 1px solid #2b3650;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, rgba(0, 245, 212, 0.8), rgba(34, 211, 238, 0.6));
+}
+
 .wrap { max-width: 1200px; width: 100%; margin: 0 auto; flex: 1; }
 
 .layout{
@@ -290,6 +315,265 @@ h1 {
 
 .pageBtn.active::after {
   opacity: 1;
+}
+
+.letterBar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0 16px;
+}
+
+.findGamesControls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.findGamesControls label {
+  margin: 0;
+}
+
+.findGamesControls select {
+  min-width: 220px;
+}
+
+.findGamesControls input {
+  min-width: 240px;
+}
+
+.letterBtn {
+  padding: 6px 10px;
+  font-size: 11px;
+  letter-spacing: 0.6px;
+}
+
+.letterBtn.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(0, 245, 212, 0.4), 0 0 18px rgba(0, 245, 212, 0.2);
+}
+
+.findGamesLayout {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(0, 2fr);
+  gap: 16px;
+}
+
+.findGamesList {
+  border: 1px solid #2c2448;
+  border-radius: var(--radius-sm);
+  background: #0f162b;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.findGamesAchievements {
+  border: 1px solid #2c2448;
+  border-radius: var(--radius-sm);
+  background: #0f162b;
+  padding: 12px;
+  min-height: 200px;
+}
+
+.findGameRow {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #1c263e;
+  cursor: pointer;
+}
+
+.findGameRow:last-child {
+  border-bottom: none;
+}
+
+.findGameRow:hover {
+  background: #141b33;
+}
+
+.findGameRow.active {
+  background: rgba(0, 245, 212, 0.08);
+  border-left: 3px solid var(--accent);
+  padding-left: 9px;
+}
+
+.findGameTitle {
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.findGameMeta {
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+
+.findAchievementsHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.findAchievementsTitle {
+  margin: 0;
+  font-size: 16px;
+  font-family: var(--font-head);
+}
+
+.findAchievementsList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+  max-height: 64vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.findGameInfo {
+  display: grid;
+  grid-template-columns: 90px 1fr;
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  margin-top: 10px;
+  border: 1px solid #2b3650;
+  border-radius: var(--radius-sm);
+  background: #120b22;
+  box-shadow: 0 10px 20px var(--shadow);
+}
+
+.findGameInfoIcon {
+  width: 80px;
+  height: 80px;
+  border-radius: 8px;
+  border: 1px solid #2b3650;
+  object-fit: cover;
+  background: #090f1e;
+}
+
+.findGameInfoTitle {
+  font-size: 15px;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.findGameInfoMeta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 6px 12px;
+  margin-top: 6px;
+}
+
+.findGameInfoRow {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}
+
+.findGameInfoLabel {
+  font-size: 11px;
+  color: var(--ink-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.findGameInfoValue {
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.findGameMedia {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.findGameMediaItem {
+  padding: 8px;
+  border: 1px solid #2b3650;
+  border-radius: var(--radius-sm);
+  background: #120b22;
+  text-align: center;
+  box-shadow: 0 8px 16px var(--shadow);
+}
+
+.findGameMediaItem img {
+  width: 100%;
+  height: auto;
+  border-radius: 8px;
+  border: 1px solid #2b3650;
+  background: #090f1e;
+  object-fit: cover;
+}
+
+.findGameMediaLabel {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--ink-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.imageModalCard {
+  width: min(1200px, 96vw);
+}
+
+.imageModalImg {
+  width: 100%;
+  height: auto;
+  max-height: 80vh;
+  border-radius: var(--radius-sm);
+  border: 1px solid #2b3650;
+  background: #090f1e;
+  object-fit: contain;
+}
+
+.findGameMediaItem img {
+  cursor: pointer;
+}
+
+.findAchievementItem {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border: 1px solid #1c263e;
+  border-radius: var(--radius-sm);
+  background: #120b22;
+}
+
+.findAchievementBadge {
+  width: 56px;
+  height: 56px;
+  border-radius: 8px;
+  border: 1px solid #2b3650;
+  object-fit: cover;
+  background: #090f1e;
+}
+
+.findAchievementTitle {
+  font-size: 14px;
+  color: var(--ink);
+  margin: 0 0 4px;
+}
+
+.findAchievementDesc {
+  font-size: 12px;
+  color: var(--ink-muted);
+  margin: 0;
+}
+
+@media (max-width: 900px) {
+  .findGamesLayout {
+    grid-template-columns: 1fr;
+  }
 }
 
 .field {

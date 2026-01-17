@@ -32,6 +32,7 @@
     </div>
     <div class="pageTabs" role="tablist" aria-label="Pages">
       <button class="pageBtn active" data-page="dashboard" role="tab" aria-selected="true">Dashboard</button>
+      <button class="pageBtn" data-page="find-games" role="tab" aria-selected="false">Find Games</button>
       <button class="pageBtn" data-page="challenges" role="tab" aria-selected="false">Challenges</button>
       <button class="pageBtn profileTab" data-page="profile" role="tab" aria-selected="false">My Profile</button>
     </div>
@@ -256,6 +257,27 @@
       </div>
     </section>
     </section>
+    <section id="findGamesPage" class="page" hidden>
+      <section class="card">
+        <div class="sectionHead">
+          <h2 class="sectionTitle">Find Games</h2>
+          <div class="sectionControls">
+            <div id="findGamesLoading" class="loadingWheel" hidden aria-label="Loading"></div>
+          </div>
+        </div>
+        <div class="findGamesControls">
+          <label for="findGamesConsole" class="tiny">Console</label>
+          <select id="findGamesConsole" class="mutedSelect"></select>
+          <label for="findGamesSearch" class="tiny">Search</label>
+          <input id="findGamesSearch" type="text" placeholder="Search games..." autocomplete="off" />
+        </div>
+        <div id="gameLetterBar" class="letterBar" role="tablist" aria-label="Game letters"></div>
+        <div class="findGamesLayout">
+          <div id="findGamesList" class="findGamesList"></div>
+          <div id="findGamesAchievements" class="findGamesAchievements"></div>
+        </div>
+      </section>
+    </section>
     <section id="profilePage" class="page" hidden>
       <div id="profileHostProfile"></div>
       <div id="selfGameHostProfile"></div>
@@ -371,6 +393,15 @@
           </div>
         </div>
         <div id="scoreAttackSelection" class="note"></div>
+      </div>
+    </div>
+    <div id="imageModal" class="modal" hidden>
+      <div class="modalCard imageModalCard">
+        <div class="sectionHead">
+          <h2 class="sectionTitle">Image Preview</h2>
+          <button id="imageModalCloseBtn" class="smallBtn">Close</button>
+        </div>
+        <img id="imageModalImg" class="imageModalImg" alt="Preview" />
       </div>
     </div>
     <div id="apiQueueLog" class="apiQueueLog debugHidden" aria-live="polite" hidden>

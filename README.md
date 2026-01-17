@@ -32,7 +32,10 @@ A lightweight dashboard for comparing RetroAchievements friends: monthly points,
 - /api/recent-games/:username (query: ?count=n)
 - /api/user-summary/:username
 - /api/game-achievements/:username/:gameId
+- /api/game-achievements-basic/:gameId
 - /api/game-times/:username/:gameId
+- /api/consoles
+- /api/game-list (query: ?consoleId=1&letter=0-9|A-Z)
 - /api/now-playing/:username (query: ?window=seconds)
 - /api/auth/me
 - /api/auth/login
