@@ -1746,10 +1746,10 @@ function getConsoleMaker(name) {
   const value = String(name || "");
   if (!value) return "Other";
   const rules = [
+    { label: "Sega", match: /sega|mega drive|genesis|saturn|dreamcast|game gear|master system|32x|sg-1000|nomad/i },
     { label: "Nintendo", match: /nintendo|famicom|nes|snes|super nintendo|game boy|gbc|gba|gamecube|wii|wii u|switch|virtual boy|pokemon mini|ds|3ds/i },
     { label: "Sony", match: /playstation|ps\s?one|ps1|ps2|ps3|ps4|ps5|psp|vita/i },
     { label: "Microsoft", match: /xbox/i },
-    { label: "Sega", match: /sega|mega drive|genesis|saturn|dreamcast|game gear|master system|32x|sg-1000|nomad/i },
     { label: "Atari", match: /atari|lynx|jaguar|2600|5200|7800/i },
     { label: "NEC", match: /pc-?engine|turbografx|tg-16|supergrafx|pc-?fx/i },
     { label: "SNK", match: /neo geo|ngp|ngpc/i },
