@@ -491,6 +491,8 @@ let backlogViewUser = "";
 const backlogProgressCache = new Map();
 const BACKLOG_PROGRESS_TTL_MS = 5 * 60 * 1000;
 const backlogProgressLimiter = createLimiter(2);
+const backlogProgressUpdateLimiter = createLimiter(2);
+let backlogRenderToken = 0;
 
 function clampUsername(s) {
   return (s || "").trim().replace(/\s+/g, "");
@@ -1810,6 +1812,18 @@ async function removeFromBacklog(gameId) {
   if (activePageName === "backlog") renderBacklog();
 }
 
+async function updateBacklogProgress(gameId, earned, total) {
+  const gid = String(gameId ?? "");
+  if (!gid) return;
+  await fetchServerJson(`/api/backlog/${encodeURIComponent(gid)}/progress`, {
+    method: "PUT",
+    body: {
+      awarded: Number(earned ?? 0),
+      total: Number(total ?? 0)
+    }
+  });
+}
+
 function refreshFindGameBacklogButtons() {
   if (findGamesListEl) {
     if (findGamesQuery && findGamesQuery.trim()) {
@@ -1856,13 +1870,37 @@ async function fetchBacklogProgress(username, gameId) {
   }
 }
 
+function splitBacklogByProgress(items, username) {
+  const userKey = normalizeUserKey(username || "");
+  const inProgress = [];
+  const notStarted = [];
+  items.forEach((item) => {
+    const cacheKey = `${userKey}:${String(item.gameId ?? "")}`;
+    const cached = backlogProgressCache.get(cacheKey);
+    const earned = Number(cached?.data?.earned ?? item.startedAwarded ?? 0);
+    if (earned > 0) {
+      inProgress.push(item);
+    } else {
+      notStarted.push(item);
+    }
+  });
+  return { inProgress, notStarted };
+}
+
 function renderBacklogTiles(items, username) {
   const userKey = normalizeUserKey(username || "");
   const progressMap = new Map();
   items.forEach((item) => {
     const cacheKey = `${userKey}:${String(item.gameId ?? "")}`;
     const cached = backlogProgressCache.get(cacheKey);
-    if (cached?.data) progressMap.set(String(item.gameId ?? ""), cached.data);
+    if (cached?.data) {
+      progressMap.set(String(item.gameId ?? ""), cached.data);
+    } else if (Number(item.startedAwarded ?? 0) > 0 || Number(item.startedTotal ?? 0) > 0) {
+      progressMap.set(String(item.gameId ?? ""), {
+        earned: Number(item.startedAwarded ?? 0),
+        total: Number(item.startedTotal ?? 0)
+      });
+    }
   });
   const grid = document.createElement("div");
   grid.className = "findGamesGrid";
@@ -1938,39 +1976,87 @@ async function renderBacklog() {
     backlogListEl.innerHTML = "";
     return;
   }
-  backlogStatusEl.textContent = "Checking progress...";
+  const renderToken = ++backlogRenderToken;
+  backlogStatusEl.textContent = `${items.length} games in your backlog.`;
   backlogListEl.innerHTML = "";
-  setLoading(backlogLoadingEl, true);
-  try {
-    const progressList = await Promise.all(items.map(item => backlogProgressLimiter(() => fetchBacklogProgress(targetUser, item.gameId))));
-    const inProgress = [];
-    const notStarted = [];
-    items.forEach((item, idx) => {
-      const progress = progressList[idx];
-      if (progress && progress.earned > 0) {
-        inProgress.push(item);
-      } else {
-        notStarted.push(item);
-      }
-    });
-    backlogStatusEl.textContent = `${items.length} games in your backlog.`;
-    if (inProgress.length) {
-      const header = document.createElement("h3");
-      header.className = "sectionTitle";
-      header.textContent = "Games in Progress";
-      backlogListEl.appendChild(header);
-      backlogListEl.appendChild(renderBacklogTiles(inProgress, targetUser));
-    }
-    if (notStarted.length) {
-      const header = document.createElement("h3");
-      header.className = "sectionTitle";
-      header.textContent = "Not Started";
-      backlogListEl.appendChild(header);
-      backlogListEl.appendChild(renderBacklogTiles(notStarted, targetUser));
-    }
-  } finally {
-    setLoading(backlogLoadingEl, false);
+  const initialGroups = splitBacklogByProgress(items, targetUser);
+  if (initialGroups.inProgress.length) {
+    const header = document.createElement("h3");
+    header.className = "sectionTitle";
+    header.textContent = "Games in Progress";
+    backlogListEl.appendChild(header);
+    backlogListEl.appendChild(renderBacklogTiles(initialGroups.inProgress, targetUser));
   }
+  if (initialGroups.notStarted.length) {
+    const header = document.createElement("h3");
+    header.className = "sectionTitle";
+    header.textContent = "Not Started";
+    backlogListEl.appendChild(header);
+    backlogListEl.appendChild(renderBacklogTiles(initialGroups.notStarted, targetUser));
+  }
+  setLoading(backlogLoadingEl, false);
+  Promise.all(items.map(item => backlogProgressLimiter(() => fetchBacklogProgress(targetUser, item.gameId))))
+    .then(() => {
+      if (renderToken !== backlogRenderToken) return;
+      const isSelf = normalizeUserKey(targetUser) === normalizeUserKey(currentUser);
+      let hasChanges = false;
+      if (isSelf) {
+        const updates = [];
+        items.forEach((item) => {
+          const cacheKey = `${normalizeUserKey(targetUser)}:${String(item.gameId ?? "")}`;
+          const cached = backlogProgressCache.get(cacheKey)?.data;
+          if (!cached) return;
+          const earned = Number(cached.earned ?? 0);
+          const total = Number(cached.total ?? 0);
+          if (earned !== Number(item.startedAwarded ?? 0) || total !== Number(item.startedTotal ?? 0)) {
+            item.startedAwarded = earned;
+            item.startedTotal = total;
+            hasChanges = true;
+            updates.push({ gameId: item.gameId, earned, total });
+          }
+        });
+        backlogItems = items;
+        if (updates.length) {
+          Promise.all(
+            updates.map(update => backlogProgressUpdateLimiter(() => updateBacklogProgress(update.gameId, update.earned, update.total)))
+          ).catch(() => {});
+        }
+      } else {
+        items.forEach((item) => {
+          const cacheKey = `${normalizeUserKey(targetUser)}:${String(item.gameId ?? "")}`;
+          const cached = backlogProgressCache.get(cacheKey)?.data;
+          if (!cached) return;
+          const earned = Number(cached.earned ?? 0);
+          const total = Number(cached.total ?? 0);
+          if (earned !== Number(item.startedAwarded ?? 0) || total !== Number(item.startedTotal ?? 0)) {
+            item.startedAwarded = earned;
+            item.startedTotal = total;
+            hasChanges = true;
+          }
+        });
+      }
+      if (!hasChanges) return;
+      const { inProgress, notStarted } = splitBacklogByProgress(items, targetUser);
+      backlogListEl.innerHTML = "";
+      if (inProgress.length) {
+        const header = document.createElement("h3");
+        header.className = "sectionTitle";
+        header.textContent = "Games in Progress";
+        backlogListEl.appendChild(header);
+        backlogListEl.appendChild(renderBacklogTiles(inProgress, targetUser));
+      }
+      if (notStarted.length) {
+        const header = document.createElement("h3");
+        header.className = "sectionTitle";
+        header.textContent = "Not Started";
+        backlogListEl.appendChild(header);
+        backlogListEl.appendChild(renderBacklogTiles(notStarted, targetUser));
+      }
+    })
+    .finally(() => {
+      if (renderToken !== backlogRenderToken) return;
+      setLoading(backlogLoadingEl, false);
+    });
 }
 
 function setFindGamesTab(name) {

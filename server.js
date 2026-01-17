@@ -168,9 +168,18 @@ async function initDb() {
       image_icon TEXT,
       num_achievements INTEGER NOT NULL DEFAULT 0,
       points INTEGER NOT NULL DEFAULT 0,
+      started_awarded INTEGER NOT NULL DEFAULT 0,
+      started_total INTEGER NOT NULL DEFAULT 0,
+      started_checked_at TIMESTAMPTZ,
       added_at TIMESTAMPTZ DEFAULT NOW(),
       UNIQUE(user_id, game_id)
     );
+  `);
+  await pool.query(`
+    ALTER TABLE backlog_items
+    ADD COLUMN IF NOT EXISTS started_awarded INTEGER NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS started_total INTEGER NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS started_checked_at TIMESTAMPTZ
   `);
 }
 
@@ -2009,7 +2018,8 @@ app.get("/api/backlog/:username", async (req, res) => {
     const userId = userRes.rows[0].id;
     const itemsRes = await pool.query(
       `
-        SELECT game_id, title, console_name, image_icon, num_achievements, points, added_at
+        SELECT game_id, title, console_name, image_icon, num_achievements, points,
+               started_awarded, started_total, started_checked_at, added_at
         FROM backlog_items
         WHERE user_id = $1
         ORDER BY added_at DESC
@@ -2023,6 +2033,9 @@ app.get("/api/backlog/:username", async (req, res) => {
       imageIcon: r.image_icon,
       numAchievements: r.num_achievements,
       points: r.points,
+      startedAwarded: r.started_awarded,
+      startedTotal: r.started_total,
+      startedCheckedAt: r.started_checked_at,
       addedAt: r.added_at
     }));
     res.json({ username: userRes.rows[0].username, count: results.length, results });
@@ -2036,10 +2049,8 @@ app.get("/api/backlog/:username", async (req, res) => {
 app.post("/api/backlog", requireAuth, async (req, res) => {
   try {
     if (!pool) return res.status(500).json({ error: "Database unavailable" });
-    const username = req.session?.user;
-    const userRes = await pool.query(`SELECT id FROM users WHERE username = $1`, [username]);
-    if (!userRes.rows.length) return res.status(404).json({ error: "User not found" });
-    const userId = userRes.rows[0].id;
+    const userId = req.session?.user?.id;
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
 
     const {
       gameId,
@@ -2057,8 +2068,9 @@ app.post("/api/backlog", requireAuth, async (req, res) => {
     await pool.query(
       `
         INSERT INTO backlog_items
-          (user_id, game_id, title, console_name, image_icon, num_achievements, points, added_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+          (user_id, game_id, title, console_name, image_icon, num_achievements, points,
+           started_awarded, started_total, started_checked_at, added_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, 0, 0, NULL, NOW())
         ON CONFLICT (user_id, game_id)
         DO UPDATE SET
           title = EXCLUDED.title,
@@ -2081,10 +2093,8 @@ app.post("/api/backlog", requireAuth, async (req, res) => {
 app.delete("/api/backlog/:gameId", requireAuth, async (req, res) => {
   try {
     if (!pool) return res.status(500).json({ error: "Database unavailable" });
-    const username = req.session?.user;
-    const userRes = await pool.query(`SELECT id FROM users WHERE username = $1`, [username]);
-    if (!userRes.rows.length) return res.status(404).json({ error: "User not found" });
-    const userId = userRes.rows[0].id;
+    const userId = req.session?.user?.id;
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
     const gameId = Number(req.params.gameId);
     if (!Number.isFinite(gameId)) return res.status(400).json({ error: "Invalid gameId" });
 
@@ -2100,6 +2110,38 @@ app.delete("/api/backlog/:gameId", requireAuth, async (req, res) => {
   } catch (err) {
     const status = err?.status || 500;
     res.status(status).json({ error: err?.message || "Failed to remove backlog item" });
+  }
+});
+
+// Update backlog progress snapshot (auth required)
+app.put("/api/backlog/:gameId/progress", requireAuth, async (req, res) => {
+  try {
+    if (!pool) return res.status(500).json({ error: "Database unavailable" });
+    const userId = req.session?.user?.id;
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
+    const gameId = Number(req.params.gameId);
+    if (!Number.isFinite(gameId)) return res.status(400).json({ error: "Invalid gameId" });
+    const awarded = Number(req.body?.awarded ?? 0);
+    const total = Number(req.body?.total ?? 0);
+    if (!Number.isFinite(awarded) || awarded < 0 || !Number.isFinite(total) || total < 0) {
+      return res.status(400).json({ error: "Invalid progress values" });
+    }
+
+    await pool.query(
+      `
+        UPDATE backlog_items
+        SET started_awarded = $3,
+            started_total = $4,
+            started_checked_at = NOW()
+        WHERE user_id = $1 AND game_id = $2
+      `,
+      [userId, gameId, awarded, total]
+    );
+
+    res.json({ ok: true });
+  } catch (err) {
+    const status = err?.status || 500;
+    res.status(status).json({ error: err?.message || "Failed to update backlog progress" });
   }
 });
 
