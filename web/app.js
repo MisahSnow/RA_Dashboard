@@ -1591,8 +1591,12 @@ function setActivePage(name) {
     processClientQueue();
     processFastQueue();
   }
+  const isBacklogSelf = name === "backlog" &&
+    backlogViewUser && currentUser &&
+    normalizeUserKey(backlogViewUser) === normalizeUserKey(currentUser);
   pageButtons.forEach(btn => {
-    const isActive = btn.dataset.page === name;
+    const isTarget = btn.dataset.page === name;
+    const isActive = isTarget && (name !== "backlog" || isBacklogSelf);
     btn.classList.toggle("active", isActive);
     btn.setAttribute("aria-selected", isActive ? "true" : "false");
   });
@@ -1861,7 +1865,7 @@ function renderBacklogTiles(items, username) {
     if (cached?.data) progressMap.set(String(item.gameId ?? ""), cached.data);
   });
   const grid = document.createElement("div");
-  grid.className = "tileGrid findGamesGrid";
+  grid.className = "findGamesGrid";
   const frag = document.createDocumentFragment();
   for (const item of items) {
     const tile = document.createElement("div");
@@ -5307,6 +5311,9 @@ if (settingsCancelBtn) {
 pageButtons.forEach(btn => {
   btn.addEventListener("click", () => {
     const page = btn.dataset.page;
+    if (page === "backlog") {
+      setBacklogViewUser(currentUser);
+    }
     setActivePage(page);
     if (page === "challenges") {
       refreshChallenges({ includeTotals: true });
