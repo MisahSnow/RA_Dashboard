@@ -139,6 +139,7 @@ const LS_DEBUG_UI = "ra.debugUi";
 const LS_LEADERBOARD_RANGE = "ra.leaderboardRange";
 const LS_PROFILE_COUNTS_PREFIX = "ra.profileCounts";
 const LS_FIND_GAMES_CONSOLE = "ra.findGamesConsole";
+const LS_BACKLOG_PREFIX = "ra.backlog";
 const PROFILE_COUNTS_CACHE_TTL_MS = 2 * 60 * 1000;
 const RECENT_CACHE_TTL_MS = 2 * 60 * 1000;
 const LS_RECENT_GAMES_PREFIX = "ra.recentGames";
@@ -188,6 +189,7 @@ const dashboardPage = document.getElementById("dashboardPage");
 const challengesPage = document.getElementById("challengesPage");
 const profilePage = document.getElementById("profilePage");
 const findGamesPage = document.getElementById("findGamesPage");
+const backlogPage = document.getElementById("backlogPage");
 const profileHostDashboard = document.getElementById("profileHostDashboard");
 const profileHostProfile = document.getElementById("profileHostProfile");
 const selfGameHostDashboard = document.getElementById("selfGameHostDashboard");
@@ -214,6 +216,9 @@ const findSuggestedListEl = document.getElementById("findSuggestedList");
 const findSuggestedAchievementsEl = document.getElementById("findSuggestedAchievements");
 const findSuggestedStatusEl = document.getElementById("findSuggestedStatus");
 const findSuggestedLoadingEl = document.getElementById("findSuggestedLoading");
+const backlogListEl = document.getElementById("backlogList");
+const backlogStatusEl = document.getElementById("backlogStatus");
+const backlogLoadingEl = document.getElementById("backlogLoading");
 
 if (apiQueueCounterEl) {
   apiQueueCounterEl.textContent = "API Calls in Queue: 0";
@@ -325,6 +330,7 @@ const profileInsightsEl = document.getElementById("profileInsights");
 const profileSharedGamesEl = document.getElementById("profileSharedGames");
 const profileCloseBtn = document.getElementById("profileCloseBtn");
 const profileShowMoreBtn = document.getElementById("profileShowMoreBtn");
+const profileBacklogBtn = document.getElementById("profileBacklogBtn");
 const profileGamesNoteEl = document.getElementById("profileGamesNote");
 const profileGameSearchEl = document.getElementById("profileGameSearch");
 const profileLegendMeEl = document.getElementById("profileLegendMe");
@@ -480,6 +486,11 @@ let findSuggestedLoadedFor = "";
 let findSuggestedGames = [];
 let findSuggestedSelectedGameId = "";
 let findGamesConsolesCache = [];
+let backlogItems = [];
+let backlogViewUser = "";
+const backlogProgressCache = new Map();
+const BACKLOG_PROGRESS_TTL_MS = 5 * 60 * 1000;
+const backlogProgressLimiter = createLimiter(2);
 
 function clampUsername(s) {
   return (s || "").trim().replace(/\s+/g, "");
@@ -1589,6 +1600,7 @@ function setActivePage(name) {
   if (findGamesPage) findGamesPage.hidden = name !== "find-games";
   if (challengesPage) challengesPage.hidden = name !== "challenges";
   if (profilePage) profilePage.hidden = name !== "profile";
+  if (backlogPage) backlogPage.hidden = name !== "backlog";
   if (name === "find-games") {
     ensureFindGamesReady();
     if (findGamesTab === "search") {
@@ -1596,6 +1608,10 @@ function setActivePage(name) {
     } else {
       loadSuggestedGames();
     }
+  }
+  if (name === "backlog") {
+    if (!backlogViewUser) setBacklogViewUser(currentUser);
+    renderBacklog();
   }
   if (name === "profile") {
     moveProfilePanel(profileHostProfile);
@@ -1667,6 +1683,26 @@ function ensureFindGamesReady() {
   }
   if (findGamesListEl) {
     findGamesListEl.addEventListener("click", (e) => {
+      const backlogBtn = e.target.closest("[data-backlog]");
+      if (backlogBtn) {
+        e.stopPropagation();
+        const tile = backlogBtn.closest("[data-game-id]");
+        if (!tile) return;
+        const gameId = tile.getAttribute("data-game-id");
+        if (isInBacklog(gameId)) {
+          removeFromBacklog(gameId);
+        } else {
+          addToBacklog({
+            gameId,
+            title: tile.getAttribute("data-title") || "",
+            consoleName: tile.getAttribute("data-console") || "",
+            imageIcon: tile.getAttribute("data-image") || "",
+            numAchievements: Number(tile.getAttribute("data-achievements") || 0),
+            points: Number(tile.getAttribute("data-points") || 0)
+          });
+        }
+        return;
+      }
       const row = e.target.closest("[data-game-id]");
       if (!row) return;
       const game = {
@@ -1675,11 +1711,31 @@ function ensureFindGamesReady() {
         consoleName: row.getAttribute("data-console") || ""
       };
       showFindGamesAchievementsView("search");
-      loadFindGameAchievements(game, { targetEl: findGamesAchievementsEl, listEl: findGamesListEl, selectedClass: "active" });
+      loadFindGameAchievements(game, { targetEl: findGamesAchievementsEl, listEl: findGamesListEl, selectedClass: "selected" });
     });
   }
   if (findSuggestedListEl) {
     findSuggestedListEl.addEventListener("click", (e) => {
+      const backlogBtn = e.target.closest("[data-backlog]");
+      if (backlogBtn) {
+        e.stopPropagation();
+        const tile = backlogBtn.closest("[data-game-id]");
+        if (!tile) return;
+        const gameId = tile.getAttribute("data-game-id");
+        if (isInBacklog(gameId)) {
+          removeFromBacklog(gameId);
+        } else {
+          addToBacklog({
+            gameId,
+            title: tile.getAttribute("data-title") || "",
+            consoleName: tile.getAttribute("data-console") || "",
+            imageIcon: tile.getAttribute("data-image") || "",
+            numAchievements: Number(tile.getAttribute("data-achievements") || 0),
+            points: Number(tile.getAttribute("data-points") || 0)
+          });
+        }
+        return;
+      }
       const tile = e.target.closest("[data-game-id]");
       if (!tile) return;
       const game = {
@@ -1701,6 +1757,218 @@ function closeImageModal() {
   imageModalImg.src = "";
 }
 
+function isInBacklog(gameId) {
+  const gid = String(gameId ?? "");
+  if (!gid) return false;
+  const items = backlogItems.length ? backlogItems : [];
+  return items.some(item => String(item.gameId) === gid);
+}
+
+async function fetchBacklog(username) {
+  const user = clampUsername(username || "");
+  if (!user) return [];
+  const data = await fetchJson(`/api/backlog/${encodeURIComponent(user)}`);
+  return Array.isArray(data?.results) ? data.results : [];
+}
+
+async function addToBacklog(game) {
+  if (!currentUser) {
+    setStatus("Set your username before adding to backlog.");
+    return;
+  }
+  const gid = String(game.gameId ?? "");
+  if (!gid) return;
+  await fetchServerJson("/api/backlog", {
+    method: "POST",
+    body: {
+      gameId: game.gameId,
+      title: game.title || "",
+      consoleName: game.consoleName || "",
+      imageIcon: game.imageIcon || "",
+      numAchievements: Number(game.numAchievements ?? 0),
+      points: Number(game.points ?? 0)
+    }
+  });
+  backlogItems = await fetchBacklog(currentUser);
+  if (backlogStatusEl) backlogStatusEl.textContent = "Added to backlog.";
+  refreshFindGameBacklogButtons();
+  if (activePageName === "backlog") renderBacklog();
+}
+
+async function removeFromBacklog(gameId) {
+  if (!currentUser) return;
+  const gid = String(gameId ?? "");
+  if (!gid) return;
+  await fetchServerJson(`/api/backlog/${encodeURIComponent(gid)}`, { method: "DELETE" });
+  backlogItems = await fetchBacklog(currentUser);
+  if (backlogStatusEl) backlogStatusEl.textContent = "Removed from backlog.";
+  refreshFindGameBacklogButtons();
+  if (activePageName === "backlog") renderBacklog();
+}
+
+function refreshFindGameBacklogButtons() {
+  if (findGamesListEl) {
+    if (findGamesQuery && findGamesQuery.trim()) {
+      refreshFindGamesSearch();
+    } else {
+      renderFindGamesList(getFindGamesCachedList() || []);
+    }
+  }
+  if (findSuggestedListEl) renderSuggestedGames(findSuggestedGames || []);
+}
+
+function setBacklogViewUser(username) {
+  backlogViewUser = clampUsername(username || "");
+}
+
+async function ensureBacklogLoaded() {
+  if (!currentUser) return;
+  if (backlogItems.length) return;
+  try {
+    backlogItems = await fetchBacklog(currentUser);
+  } catch {
+    backlogItems = [];
+  }
+}
+
+async function fetchBacklogProgress(username, gameId) {
+  const userKey = normalizeUserKey(username || "");
+  const gid = String(gameId ?? "");
+  if (!gid || !userKey) return null;
+  const cacheKey = `${userKey}:${gid}`;
+  const cached = backlogProgressCache.get(cacheKey);
+  if (cached && (Date.now() - cached.ts) < BACKLOG_PROGRESS_TTL_MS) {
+    return cached.data;
+  }
+  try {
+    const data = await fetchGameAchievements(userKey, gid);
+    const achievements = Array.isArray(data?.achievements) ? data.achievements : [];
+    const earned = achievements.filter(a => a.earned || a.earnedHardcore).length;
+    const result = { earned, total: achievements.length };
+    backlogProgressCache.set(cacheKey, { ts: Date.now(), data: result });
+    return result;
+  } catch {
+    return null;
+  }
+}
+
+function renderBacklogTiles(items, username) {
+  const userKey = normalizeUserKey(username || "");
+  const progressMap = new Map();
+  items.forEach((item) => {
+    const cacheKey = `${userKey}:${String(item.gameId ?? "")}`;
+    const cached = backlogProgressCache.get(cacheKey);
+    if (cached?.data) progressMap.set(String(item.gameId ?? ""), cached.data);
+  });
+  const grid = document.createElement("div");
+  grid.className = "tileGrid findGamesGrid";
+  const frag = document.createDocumentFragment();
+  for (const item of items) {
+    const tile = document.createElement("div");
+    tile.className = "tile";
+
+    const img = document.createElement("img");
+    img.src = iconUrl(item.imageIcon);
+    img.alt = safeText(item.title || "game");
+    img.loading = "lazy";
+
+    const title = document.createElement("div");
+    title.className = "tileTitle";
+    title.textContent = item.title || `Game ${safeText(item.gameId)}`;
+
+    const consoleLine = document.createElement("div");
+    consoleLine.className = "tileMeta";
+    consoleLine.textContent = item.consoleName || "";
+
+    const achievementsLine = document.createElement("div");
+    achievementsLine.className = "tileMeta";
+    achievementsLine.textContent = `${Number(item.numAchievements ?? 0)} achievements`;
+
+    const pointsLine = document.createElement("div");
+    pointsLine.className = "tileMeta";
+    pointsLine.textContent = `${Number(item.points ?? 0)} points`;
+
+    const progress = progressMap.get(String(item.gameId ?? ""));
+    const progressLine = document.createElement("div");
+    progressLine.className = "tileMeta progressLine";
+    if (progress) {
+      const total = Number(progress.total || 0);
+      const earned = Number(progress.earned || 0);
+      const pct = total > 0 ? Math.min(100, Math.max(0, Math.round((earned / total) * 100))) : 0;
+      progressLine.style.setProperty("--progress", String(pct));
+      const text = document.createElement("span");
+      text.className = "progressLineText";
+      text.textContent = `${earned} / ${total} achievements`;
+      progressLine.appendChild(text);
+    }
+
+    tile.appendChild(img);
+    tile.appendChild(title);
+    if (consoleLine.textContent) tile.appendChild(consoleLine);
+    tile.appendChild(achievementsLine);
+    tile.appendChild(pointsLine);
+    if (progressLine.textContent) tile.appendChild(progressLine);
+    frag.appendChild(tile);
+  }
+  grid.appendChild(frag);
+  return grid;
+}
+
+async function renderBacklog() {
+  if (!backlogListEl || !backlogStatusEl) return;
+  if (!currentUser) {
+    backlogStatusEl.textContent = "Set your username to use the backlog.";
+    backlogListEl.innerHTML = "";
+    return;
+  }
+  const targetUser = backlogViewUser || currentUser;
+  const items = await fetchBacklog(targetUser);
+  if (normalizeUserKey(targetUser) === normalizeUserKey(currentUser)) {
+    backlogItems = items;
+  }
+  if (!items.length) {
+    const label = backlogViewUser && currentUser && normalizeUserKey(backlogViewUser) !== normalizeUserKey(currentUser)
+      ? `${backlogViewUser} has no backlog items.`
+      : "No games in your backlog yet.";
+    backlogStatusEl.textContent = label;
+    backlogListEl.innerHTML = "";
+    return;
+  }
+  backlogStatusEl.textContent = "Checking progress...";
+  backlogListEl.innerHTML = "";
+  setLoading(backlogLoadingEl, true);
+  try {
+    const progressList = await Promise.all(items.map(item => backlogProgressLimiter(() => fetchBacklogProgress(targetUser, item.gameId))));
+    const inProgress = [];
+    const notStarted = [];
+    items.forEach((item, idx) => {
+      const progress = progressList[idx];
+      if (progress && progress.earned > 0) {
+        inProgress.push(item);
+      } else {
+        notStarted.push(item);
+      }
+    });
+    backlogStatusEl.textContent = `${items.length} games in your backlog.`;
+    if (inProgress.length) {
+      const header = document.createElement("h3");
+      header.className = "sectionTitle";
+      header.textContent = "Games in Progress";
+      backlogListEl.appendChild(header);
+      backlogListEl.appendChild(renderBacklogTiles(inProgress, targetUser));
+    }
+    if (notStarted.length) {
+      const header = document.createElement("h3");
+      header.className = "sectionTitle";
+      header.textContent = "Not Started";
+      backlogListEl.appendChild(header);
+      backlogListEl.appendChild(renderBacklogTiles(notStarted, targetUser));
+    }
+  } finally {
+    setLoading(backlogLoadingEl, false);
+  }
+}
+
 function setFindGamesTab(name) {
   if (!name) return;
   findGamesTab = name;
@@ -1713,9 +1981,11 @@ function setFindGamesTab(name) {
   });
   if (name === "search") {
     showFindGamesListView("search");
+    ensureBacklogLoaded();
     loadFindGamesLetter(findGamesLetter);
   } else if (name === "suggested") {
     showFindGamesListView("suggested");
+    ensureBacklogLoaded();
     loadSuggestedGames();
   }
 }
@@ -1982,6 +2252,7 @@ function renderSuggestedGames(games) {
     return;
   }
   const frag = document.createDocumentFragment();
+  const inBacklog = new Set(backlogItems.map(item => String(item.gameId)));
   for (const g of games) {
     const tile = document.createElement("div");
     tile.className = "tile clickable";
@@ -1994,6 +2265,8 @@ function renderSuggestedGames(games) {
     tile.dataset.title = g.title || "";
     tile.dataset.console = g.consoleName || "";
     tile.dataset.image = g.imageIcon || "";
+    tile.dataset.achievements = String(g.numAchievements ?? 0);
+    tile.dataset.points = String(g.points ?? 0);
 
     const img = document.createElement("img");
     img.src = iconUrl(g.imageIcon);
@@ -2023,6 +2296,16 @@ function renderSuggestedGames(games) {
     if (consoleLine.textContent) tile.appendChild(consoleLine);
     if (achievementsLine.textContent) tile.appendChild(achievementsLine);
     if (pointsLine.textContent) tile.appendChild(pointsLine);
+    const actions = document.createElement("div");
+    actions.className = "tileActions";
+    const addBtn = document.createElement("button");
+    addBtn.className = "smallBtn";
+    addBtn.type = "button";
+    const isSaved = inBacklog.has(String(g.gameId ?? ""));
+    addBtn.textContent = isSaved ? "Remove from Backlog" : "Add to Backlog";
+    addBtn.setAttribute("data-backlog", "true");
+    actions.appendChild(addBtn);
+    tile.appendChild(actions);
     frag.appendChild(tile);
   }
   findSuggestedListEl.appendChild(frag);
@@ -2166,6 +2449,7 @@ function renderFindGamesList(games) {
     return;
   }
   const frag = document.createDocumentFragment();
+  const inBacklog = new Set(backlogItems.map(item => String(item.gameId)));
   for (const game of filtered) {
     const tile = document.createElement("div");
     tile.className = "tile clickable";
@@ -2174,6 +2458,9 @@ function renderFindGamesList(games) {
     tile.dataset.gameId = String(game.gameId ?? "");
     tile.dataset.title = game.title || "";
     tile.dataset.console = game.consoleName || "";
+    tile.dataset.image = game.imageIcon || "";
+    tile.dataset.achievements = String(game.numAchievements ?? 0);
+    tile.dataset.points = String(game.points ?? 0);
     if (String(game.gameId ?? "") === String(findGamesSelectedGameId)) {
       tile.classList.add("selected");
     }
@@ -2199,6 +2486,16 @@ function renderFindGamesList(games) {
     tile.appendChild(img);
     tile.appendChild(title);
     tile.appendChild(meta);
+    const actions = document.createElement("div");
+    actions.className = "tileActions";
+    const addBtn = document.createElement("button");
+    addBtn.className = "smallBtn";
+    addBtn.type = "button";
+    const isSaved = inBacklog.has(String(game.gameId ?? ""));
+    addBtn.textContent = isSaved ? "Remove from Backlog" : "Add to Backlog";
+    addBtn.setAttribute("data-backlog", "true");
+    actions.appendChild(addBtn);
+    tile.appendChild(actions);
     frag.appendChild(tile);
   }
   findGamesListEl.appendChild(frag);
@@ -4825,6 +5122,13 @@ if (profileShowMoreBtn) {
     } else {
       loadMoreProfileGames();
     }
+  });
+}
+
+if (profileBacklogBtn) {
+  profileBacklogBtn.addEventListener("click", () => {
+    setBacklogViewUser(currentProfileUser || currentUser);
+    setActivePage("backlog");
   });
 }
 

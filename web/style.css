@@ -1464,6 +1464,47 @@ tbody tr:nth-child(even){
   white-space: pre-line;
 }
 
+.progressLine{
+  position: relative;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgba(11, 18, 36, 0.6);
+  overflow: hidden;
+  color: var(--ink);
+}
+
+.progressLine::before{
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: calc(var(--progress, 0) * 1%);
+  background: linear-gradient(90deg, rgba(0, 245, 212, 0.35), rgba(34, 211, 238, 0.2));
+  z-index: 0;
+}
+
+.progressLineText{
+  position: relative;
+  z-index: 1;
+}
+
+.tileActions {
+  margin-top: auto;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+}
+
+.tileActions .smallBtn {
+  width: 100%;
+  justify-content: center;
+}
+
+.backlogList {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
 .tileMeta .me{
   color: var(--accent);
   font-weight: 600;

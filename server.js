@@ -157,6 +157,21 @@ async function initDb() {
     ADD COLUMN IF NOT EXISTS creator_current_score_value BIGINT,
     ADD COLUMN IF NOT EXISTS opponent_current_score_value BIGINT
   `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS backlog_items (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      game_id INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      console_name TEXT,
+      image_icon TEXT,
+      num_achievements INTEGER NOT NULL DEFAULT 0,
+      points INTEGER NOT NULL DEFAULT 0,
+      added_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(user_id, game_id)
+    );
+  `);
 }
 
 // simple concurrency limiter
@@ -1977,6 +1992,114 @@ app.get("/api/user-completion-progress/:username", async (req, res) => {
   } catch (err) {
     const status = err?.status || 500;
     res.status(status).json({ error: err?.message || "Failed to fetch completion progress" });
+  }
+});
+
+// Backlog for a user (public read)
+app.get("/api/backlog/:username", async (req, res) => {
+  try {
+    if (!pool) return res.json({ username: "", count: 0, results: [] });
+    const username = String(req.params.username || "").trim();
+    if (!username) return res.status(400).json({ error: "Missing username" });
+    const normalized = normalizeUsername(username);
+    const userRes = await pool.query(`SELECT id, username FROM users WHERE LOWER(username) = LOWER($1)`, [normalized]);
+    if (!userRes.rows.length) {
+      return res.json({ username, count: 0, results: [] });
+    }
+    const userId = userRes.rows[0].id;
+    const itemsRes = await pool.query(
+      `
+        SELECT game_id, title, console_name, image_icon, num_achievements, points, added_at
+        FROM backlog_items
+        WHERE user_id = $1
+        ORDER BY added_at DESC
+      `,
+      [userId]
+    );
+    const results = itemsRes.rows.map(r => ({
+      gameId: r.game_id,
+      title: r.title,
+      consoleName: r.console_name,
+      imageIcon: r.image_icon,
+      numAchievements: r.num_achievements,
+      points: r.points,
+      addedAt: r.added_at
+    }));
+    res.json({ username: userRes.rows[0].username, count: results.length, results });
+  } catch (err) {
+    const status = err?.status || 500;
+    res.status(status).json({ error: err?.message || "Failed to fetch backlog" });
+  }
+});
+
+// Add backlog item (auth required)
+app.post("/api/backlog", requireAuth, async (req, res) => {
+  try {
+    if (!pool) return res.status(500).json({ error: "Database unavailable" });
+    const username = req.session?.user;
+    const userRes = await pool.query(`SELECT id FROM users WHERE username = $1`, [username]);
+    if (!userRes.rows.length) return res.status(404).json({ error: "User not found" });
+    const userId = userRes.rows[0].id;
+
+    const {
+      gameId,
+      title,
+      consoleName = "",
+      imageIcon = "",
+      numAchievements = 0,
+      points = 0
+    } = req.body || {};
+
+    if (!gameId || !title) {
+      return res.status(400).json({ error: "Missing gameId or title" });
+    }
+
+    await pool.query(
+      `
+        INSERT INTO backlog_items
+          (user_id, game_id, title, console_name, image_icon, num_achievements, points, added_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+        ON CONFLICT (user_id, game_id)
+        DO UPDATE SET
+          title = EXCLUDED.title,
+          console_name = EXCLUDED.console_name,
+          image_icon = EXCLUDED.image_icon,
+          num_achievements = EXCLUDED.num_achievements,
+          points = EXCLUDED.points
+      `,
+      [userId, Number(gameId), title, consoleName, imageIcon, Number(numAchievements) || 0, Number(points) || 0]
+    );
+
+    res.json({ ok: true });
+  } catch (err) {
+    const status = err?.status || 500;
+    res.status(status).json({ error: err?.message || "Failed to add backlog item" });
+  }
+});
+
+// Remove backlog item (auth required)
+app.delete("/api/backlog/:gameId", requireAuth, async (req, res) => {
+  try {
+    if (!pool) return res.status(500).json({ error: "Database unavailable" });
+    const username = req.session?.user;
+    const userRes = await pool.query(`SELECT id FROM users WHERE username = $1`, [username]);
+    if (!userRes.rows.length) return res.status(404).json({ error: "User not found" });
+    const userId = userRes.rows[0].id;
+    const gameId = Number(req.params.gameId);
+    if (!Number.isFinite(gameId)) return res.status(400).json({ error: "Invalid gameId" });
+
+    await pool.query(
+      `
+        DELETE FROM backlog_items
+        WHERE user_id = $1 AND game_id = $2
+      `,
+      [userId, gameId]
+    );
+
+    res.json({ ok: true });
+  } catch (err) {
+    const status = err?.status || 500;
+    res.status(status).json({ error: err?.message || "Failed to remove backlog item" });
   }
 });
 

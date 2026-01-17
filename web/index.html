@@ -34,6 +34,7 @@
       <button class="pageBtn active" data-page="dashboard" role="tab" aria-selected="true">Dashboard</button>
       <button class="pageBtn" data-page="find-games" role="tab" aria-selected="false">Find Games</button>
       <button class="pageBtn" data-page="challenges" role="tab" aria-selected="false">Challenges</button>
+      <button class="pageBtn" data-page="backlog" role="tab" aria-selected="false">My Backlog</button>
       <button class="pageBtn profileTab" data-page="profile" role="tab" aria-selected="false">My Profile</button>
     </div>
     <div class="status" id="status"></div>
@@ -179,6 +180,7 @@
       <p class="note" id="profileGamesNote">Shows recently played games you both have in common.</p>
       <div class="profileActions">
         <button id="profileShowMoreBtn" class="smallBtn">Show more</button>
+        <button id="profileBacklogBtn" class="smallBtn">Show Backlog</button>
       </div>
       <p class="note profileLegend"><span class="legend star silver">&#9733;</span> <span>Beaten</span> <span class="legend star gold">&#9733;</span> <span>All achievements</span> <span class="legend me"></span> <span id="profileLegendMe">You</span> <span class="legend them"></span> <span id="profileLegendThem">Friend</span></p>
     </section>
@@ -310,6 +312,18 @@
     <section id="profilePage" class="page" hidden>
       <div id="profileHostProfile"></div>
       <div id="selfGameHostProfile"></div>
+    </section>
+    <section id="backlogPage" class="page" hidden>
+      <section class="card">
+        <div class="sectionHead">
+          <h2 class="sectionTitle">My Backlog</h2>
+          <div class="sectionControls">
+            <div id="backlogLoading" class="loadingWheel" hidden aria-label="Loading"></div>
+          </div>
+        </div>
+        <p id="backlogStatus" class="note"></p>
+        <div id="backlogList" class="backlogList"></div>
+      </section>
     </section>
 
     <section id="challengesPage" class="page" hidden>
