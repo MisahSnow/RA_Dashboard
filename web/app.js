@@ -3776,6 +3776,30 @@ function updateTileBadge(tile, gameId) {
   badge.innerHTML = "&#9733;";
 }
 
+function isProfileGameCompleted(game) {
+  const gameId = String(game?.gameId ?? "");
+  if (!gameId) return false;
+  const counts = profileGameAchievementCounts.get(gameId);
+  const target = profileIsSelf ? counts?.me : counts?.them;
+  const hasAll = Boolean(target?.total && target?.earned !== null && target?.earned >= target?.total);
+  const beatenKind = profileCompletionByGameId.get(gameId);
+  const hasBeaten = getBeatenFlag(beatenKind);
+  return hasAll || hasBeaten;
+}
+
+function sortProfileGamesForDisplay(list) {
+  const arr = (list || []).slice();
+  arr.sort((a, b) => {
+    const aDone = isProfileGameCompleted(a);
+    const bDone = isProfileGameCompleted(b);
+    if (aDone !== bDone) return aDone ? -1 : 1;
+    const ta = parseLastPlayed(a?.lastPlayed);
+    const tb = parseLastPlayed(b?.lastPlayed);
+    return tb - ta;
+  });
+  return arr;
+}
+
 function refreshCompletionBadges() {
   if (!profileSharedGamesEl) return;
   const tiles = profileSharedGamesEl.querySelectorAll(".tile[data-game-id]");
@@ -3859,7 +3883,7 @@ async function loadProfileGameAchievements(gameId, metaEl) {
 }
 
 function renderSharedGames(games, emptyMessage = "No shared games found in recent play history.") {
-  profileDisplayedGames = games;
+  profileDisplayedGames = sortProfileGamesForDisplay(games);
   profileGamesEmptyMessage = emptyMessage;
   applyProfileGameFilter();
 }
@@ -4073,6 +4097,7 @@ async function loadProfileCompletionProgress(username, games = []) {
 
   profileCompletionByGameId = map;
   if (loadToken === activeProfileLoadToken) {
+    renderSharedGames(profileSharedGames, profileGamesEmptyMessage);
     refreshCompletionBadges();
   }
   profileCompletionLoading = false;
