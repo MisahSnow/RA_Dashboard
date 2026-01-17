@@ -265,16 +265,45 @@
             <div id="findGamesLoading" class="loadingWheel" hidden aria-label="Loading"></div>
           </div>
         </div>
-        <div class="findGamesControls">
-          <label for="findGamesConsole" class="tiny">Console</label>
-          <select id="findGamesConsole" class="mutedSelect"></select>
-          <label for="findGamesSearch" class="tiny">Search</label>
-          <input id="findGamesSearch" type="text" placeholder="Search games..." autocomplete="off" />
+        <div class="findGamesTabs tabButtons" role="tablist" aria-label="Find games tabs">
+          <button class="tabBtn active" data-find-tab="search" role="tab" aria-selected="true">Search Games</button>
+          <button class="tabBtn" data-find-tab="suggested" role="tab" aria-selected="false">Games You Might Be Interested In</button>
         </div>
-        <div id="gameLetterBar" class="letterBar" role="tablist" aria-label="Game letters"></div>
-        <div class="findGamesLayout">
-          <div id="findGamesList" class="findGamesList"></div>
-          <div id="findGamesAchievements" class="findGamesAchievements"></div>
+        <div id="findTabSearch" class="findGamesTabPanel active" role="tabpanel">
+          <div id="findSearchListPanel">
+            <div class="findGamesControls">
+              <label for="findGamesConsole" class="tiny">Console</label>
+              <select id="findGamesConsole" class="mutedSelect"></select>
+              <label for="findGamesSearch" class="tiny">Search</label>
+              <input id="findGamesSearch" type="text" placeholder="Search games..." autocomplete="off" />
+            </div>
+            <div id="gameLetterBar" class="letterBar" role="tablist" aria-label="Game letters"></div>
+            <div id="findGamesList" class="findGamesList findGamesGrid"></div>
+          </div>
+          <div id="findSearchAchievementsPanel" class="findGamesAchievementsPanel" hidden>
+            <div class="sectionHead">
+              <h3 class="sectionTitle">Achievements</h3>
+              <button id="findSearchBackBtn" class="smallBtn">Back</button>
+            </div>
+            <div id="findGamesAchievements" class="findGamesAchievements"></div>
+          </div>
+        </div>
+        <div id="findTabSuggested" class="findGamesTabPanel" role="tabpanel" hidden>
+          <div id="findSuggestedListPanel">
+            <div class="sectionHead compact">
+              <h3 class="sectionTitle">Series-based picks</h3>
+              <div id="findSuggestedLoading" class="loadingWheel" hidden aria-label="Loading"></div>
+            </div>
+            <p id="findSuggestedStatus" class="note"></p>
+            <div id="findSuggestedList" class="tileGrid findGamesGrid"></div>
+          </div>
+          <div id="findSuggestedAchievementsPanel" class="findGamesAchievementsPanel" hidden>
+            <div class="sectionHead">
+              <h3 class="sectionTitle">Achievements</h3>
+              <button id="findSuggestedBackBtn" class="smallBtn">Back</button>
+            </div>
+            <div id="findSuggestedAchievements" class="findGamesAchievements"></div>
+          </div>
         </div>
       </section>
     </section>

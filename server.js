@@ -574,11 +574,10 @@ function normalizeGameLetter(letter) {
 function letterKeyFromTitle(title) {
   const trimmed = String(title || "").trim();
   if (!trimmed) return "0-9";
-  for (const ch of trimmed) {
-    if (/[0-9]/.test(ch)) return "0-9";
-    const up = ch.toUpperCase();
-    if (up >= "A" && up <= "Z") return up;
-  }
+  const firstChar = trimmed[0];
+  if (/[0-9]/.test(firstChar)) return "0-9";
+  const upFirst = firstChar.toUpperCase();
+  if (upFirst >= "A" && upFirst <= "Z") return upFirst;
   return "0-9";
 }
 
@@ -594,6 +593,7 @@ async function raGetGameList(consoleId, apiKey) {
   if (!apiKey) throw new Error("Missing RA API key.");
   const url = new URL("https://retroachievements.org/API/API_GetGameList.php");
   url.searchParams.set("i", String(consoleId));
+  url.searchParams.set("f", "1");
   url.searchParams.set("y", apiKey);
   const data = await raFetchJson(url.toString(), { fast: true });
   return Array.isArray(data) ? data : [];
@@ -634,7 +634,10 @@ async function getGameListForConsole(consoleId, apiKey) {
   const cached = gameListCache.get(key);
   const now = Date.now();
   if (cached?.list && (now - cached.builtAt) < GAME_INDEX_TTL_MS) {
-    return cached.list;
+    const hasIcons = cached.list.some(g => g && g.imageIcon);
+    if (hasIcons) {
+      return cached.list;
+    }
   }
   if (cached?.inFlight) return cached.inFlight;
   const inFlight = (async () => {
@@ -643,6 +646,9 @@ async function getGameListForConsole(consoleId, apiKey) {
       .map(g => ({
         gameId: g?.ID ?? g?.id ?? g?.GameID ?? g?.gameId,
         title: g?.Title ?? g?.title ?? g?.GameTitle ?? g?.gameTitle ?? "",
+        imageIcon: g?.ImageIcon ?? g?.imageIcon,
+        numAchievements: g?.NumAchievements ?? g?.numAchievements ?? 0,
+        points: g?.Points ?? g?.points ?? 0,
         consoleId: g?.ConsoleID ?? g?.consoleId ?? g?.ConsoleId ?? g?.consoleId,
         consoleName: g?.ConsoleName ?? g?.consoleName ?? g?.Console ?? g?.console ?? ""
       }))
@@ -1857,6 +1863,7 @@ app.get("/api/recent-games/:username", async (req, res) => {
       username,
       gameId: g.GameID ?? g.gameId,
       title: g.Title ?? g.title,
+      consoleId: g.ConsoleID ?? g.consoleId,
       consoleName: g.ConsoleName ?? g.consoleName,
       imageIcon: g.ImageIcon ?? g.imageIcon,
       lastPlayed: g.LastPlayed ?? g.lastPlayed
