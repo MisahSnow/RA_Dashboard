@@ -278,8 +278,12 @@ h1 {
   flex-wrap: wrap;
 }
 
-.pageBtn.profileTab{
+.pageBtn.backlogTab{
   margin-left: auto;
+}
+
+.pageBtn.profileTab{
+  margin-left: 0;
 }
 
 .pageBtn {

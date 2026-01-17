@@ -34,7 +34,7 @@
       <button class="pageBtn active" data-page="dashboard" role="tab" aria-selected="true">Dashboard</button>
       <button class="pageBtn" data-page="find-games" role="tab" aria-selected="false">Find Games</button>
       <button class="pageBtn" data-page="challenges" role="tab" aria-selected="false">Challenges</button>
-      <button class="pageBtn" data-page="backlog" role="tab" aria-selected="false">My Backlog</button>
+      <button class="pageBtn backlogTab" data-page="backlog" role="tab" aria-selected="false">My Backlog</button>
       <button class="pageBtn profileTab" data-page="profile" role="tab" aria-selected="false">My Profile</button>
     </div>
     <div class="status" id="status"></div>
@@ -172,6 +172,7 @@
           <input id="profileGameSearch" type="text" placeholder="Search games..." autocomplete="off" />
         </div>
         <div id="profileLoading" class="loadingWheel" hidden aria-label="Loading"></div>
+        <button id="profileBacklogBtn" class="smallBtn">Show Backlog</button>
         <button id="profileCloseBtn" class="smallBtn">Close</button>
       </div>
       <div id="profileSummary" class="profileSummary"></div>
@@ -180,7 +181,6 @@
       <p class="note" id="profileGamesNote">Shows recently played games you both have in common.</p>
       <div class="profileActions">
         <button id="profileShowMoreBtn" class="smallBtn">Show more</button>
-        <button id="profileBacklogBtn" class="smallBtn">Show Backlog</button>
       </div>
       <p class="note profileLegend"><span class="legend star silver">&#9733;</span> <span>Beaten</span> <span class="legend star gold">&#9733;</span> <span>All achievements</span> <span class="legend me"></span> <span id="profileLegendMe">You</span> <span class="legend them"></span> <span id="profileLegendThem">Friend</span></p>
     </section>

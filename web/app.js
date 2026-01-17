@@ -4322,6 +4322,8 @@ async function openProfile(username) {
     profileShowMoreBtn.hidden = false;
     profileShowMoreBtn.textContent = "Show more";
   }
+  if (profileCloseBtn) profileCloseBtn.hidden = isSelf;
+  if (profileBacklogBtn) profileBacklogBtn.hidden = isSelf;
   if (profileGamesNoteEl) {
     profileGamesNoteEl.textContent = isSelf
       ? "Your recent games."
