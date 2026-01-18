@@ -93,6 +93,14 @@ body::after{
 
 .wrap { max-width: 1440px; width: 100%; margin: 0 auto; flex: 1; }
 
+@media (max-width: 1920px) and (min-width: 1100px) {
+  .wrap {
+    transform: scale(0.85);
+    transform-origin: top center;
+    width: calc(100% / 0.85);
+  }
+}
+
 .layout{
   display:flex;
   gap:16px;
