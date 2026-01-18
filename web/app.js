@@ -2157,10 +2157,15 @@ function setActivePage(name) {
     processClientQueue();
     processFastQueue();
   }
+  const isProfileSelf = name === "profile" &&
+    currentProfileUser && currentUser &&
+    normalizeUserKey(currentProfileUser) === normalizeUserKey(currentUser);
   pageButtons.forEach(btn => {
     const isTarget = btn.dataset.page === name;
-    btn.classList.toggle("active", isTarget);
-    btn.setAttribute("aria-selected", isTarget ? "true" : "false");
+    const isProfileBtn = btn.dataset.page === "profile";
+    const isActive = isTarget && (!isProfileBtn || isProfileSelf);
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-selected", isActive ? "true" : "false");
   });
   if (dashboardPage) dashboardPage.hidden = name !== "dashboard";
   if (findGamesPage) findGamesPage.hidden = name !== "find-games";
@@ -5010,18 +5015,17 @@ async function openProfile(username) {
   if (!me) return setStatus("Set your username first.");
   const isSelf = me.toLowerCase() === target.toLowerCase();
 
-  setActivePage("profile");
-
   moveProfilePanel(profileHostProfile);
   moveSelfGamePanel(selfGameHostProfile);
   profilePanel.hidden = false;
   comparePanel.hidden = true;
   if (selfGamePanel) selfGamePanel.hidden = true;
-  profileTitleNameEl.textContent = target;
   profileSummaryEl.innerHTML = `<div class="meta">Loading profile summary...</div>`;
   if (profileInsightsEl) profileInsightsEl.innerHTML = `<div class="meta">Loading profile insights...</div>`;
   profileSharedGamesEl.innerHTML = `<div class="meta">Loading recent games...</div>`;
   currentProfileUser = target;
+  setActivePage("profile");
+  profileTitleNameEl.textContent = target;
   profileSharedGames = [];
   profileDisplayedGames = [];
   profileAllGamesLoaded = false;
