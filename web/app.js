@@ -2165,6 +2165,7 @@ function setActivePage(name) {
   if (profilePage) profilePage.hidden = name !== "profile";
   if (backlogPage) backlogPage.hidden = name !== "backlog";
   if (gamePage) gamePage.hidden = name !== "game";
+  if (profilePanel) profilePanel.hidden = name !== "profile";
   if (name !== "backlog") setBacklogRemoveMode(false);
   if (name === "find-games") {
     ensureFindGamesReady();
