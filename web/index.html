@@ -168,10 +168,7 @@
     <div id="profileHostDashboard">
     <section class="card profilePanel" id="profilePanel" hidden>
       <div class="sectionHead">
-        <h2 class="sectionTitle">Profile: <span id="profileTitleName"></span></h2>
-        <div class="profileFilters">
-          <input id="profileGameSearch" type="text" placeholder="Search games..." autocomplete="off" />
-        </div>
+        <span id="profileTitleName" class="visuallyHidden" aria-hidden="true"></span>
         <div id="profileLoading" class="loadingWheel" hidden aria-label="Loading"></div>
         <button id="profileBacklogBtn" class="smallBtn">Show Backlog</button>
         <button id="profileCloseBtn" class="smallBtn">Close</button>
@@ -180,10 +177,9 @@
       <div id="profileInsights" class="profileInsights"></div>
       <div id="profileSharedGames" class="tileGrid"></div>
       <p class="note" id="profileGamesNote">Shows recently played games you both have in common.</p>
-      <div class="profileActions">
+      <div class="profileActions" hidden>
         <button id="profileShowMoreBtn" class="smallBtn">Show more</button>
       </div>
-      <p class="note profileLegend"><span class="legend star silver">&#9733;</span> <span>Beaten</span> <span class="legend star gold">&#9733;</span> <span>All achievements</span> <span class="legend me"></span> <span id="profileLegendMe">You</span> <span class="legend them"></span> <span id="profileLegendThem">Friend</span></p>
     </section>
 
     <section class="card comparePanel" id="comparePanel" hidden>
@@ -311,8 +307,54 @@
       </section>
     </section>
     <section id="profilePage" class="page" hidden>
-      <div id="profileHostProfile"></div>
+      <div class="profilePageLayout">
+        <div class="profilePageGrid">
+        <div class="profileColumn profileColumn--left">
+          <div id="profileHostProfile"></div>
+        </div>
+        <div class="profileColumn profileColumn--center">
+          <section class="card profileActivityCard">
+            <div class="sectionHead">
+              <h2 class="sectionTitle">Activity</h2>
+              <div id="profileActivityLoading" class="loadingWheel" hidden aria-label="Loading"></div>
+            </div>
+            <div id="profileActivityList" class="feed"></div>
+          </section>
+        </div>
+        <div class="profileColumn profileColumn--right">
+          <section class="card profileSocialCard">
+            <div class="sectionHead">
+              <h2 class="sectionTitle">Social Feed</h2>
+            </div>
+            <div id="profileSocialList" class="socialPostList"></div>
+          </section>
+        </div>
+      </div>
+      <section class="card profileRecentCard">
+        <div class="sectionHead">
+          <div id="profileRecentLoading" class="loadingWheel" hidden aria-label="Loading"></div>
+        </div>
+        <div class="profileRecentControls">
+          <div class="tabButtons profileRecentTabs" role="tablist" aria-label="Recent games tabs">
+            <button class="tabBtn active" data-profile-recent-tab="recent" role="tab" aria-selected="true">Recent Games</button>
+            <button class="tabBtn" data-profile-recent-tab="common" role="tab" aria-selected="false">Games In Common</button>
+            <button class="tabBtn" data-profile-recent-tab="completed" role="tab" aria-selected="false">Games Completed</button>
+            <button class="tabBtn" data-profile-recent-tab="mastered" role="tab" aria-selected="false">Games Mastered</button>
+          </div>
+          <div class="profileFilters">
+            <input id="profileGameSearch" type="text" placeholder="Search games..." autocomplete="off" />
+          </div>
+        </div>
+        <div class="profileRecentBody">
+          <div id="profileRecentGames" class="profileRecentRow"></div>
+        </div>
+      </section>
+      </div>
       <div id="selfGameHostProfile"></div>
+    </section>
+    <section id="gamePage" class="page" hidden>
+      <div id="selfGameHostPage"></div>
+      <div id="compareHostPage"></div>
     </section>
     <section id="backlogPage" class="page" hidden>
       <section class="card">

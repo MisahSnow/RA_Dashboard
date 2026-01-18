@@ -190,10 +190,19 @@ const challengesPage = document.getElementById("challengesPage");
 const profilePage = document.getElementById("profilePage");
 const findGamesPage = document.getElementById("findGamesPage");
 const backlogPage = document.getElementById("backlogPage");
+const gamePage = document.getElementById("gamePage");
 const profileHostDashboard = document.getElementById("profileHostDashboard");
 const profileHostProfile = document.getElementById("profileHostProfile");
 const selfGameHostDashboard = document.getElementById("selfGameHostDashboard");
 const selfGameHostProfile = document.getElementById("selfGameHostProfile");
+const selfGameHostPage = document.getElementById("selfGameHostPage");
+const compareHostPage = document.getElementById("compareHostPage");
+const profileRecentGamesEl = document.getElementById("profileRecentGames");
+const profileRecentLoadingEl = document.getElementById("profileRecentLoading");
+const profileRecentTabButtons = document.querySelectorAll("[data-profile-recent-tab]");
+const profileActivityListEl = document.getElementById("profileActivityList");
+const profileActivityLoadingEl = document.getElementById("profileActivityLoading");
+const profileSocialListEl = document.getElementById("profileSocialList");
 const findGamesListEl = document.getElementById("findGamesList");
 const findGamesAchievementsEl = document.getElementById("findGamesAchievements");
 const findGamesLoadingEl = document.getElementById("findGamesLoading");
@@ -418,7 +427,7 @@ let profileAllGamesLoaded = false;
 let profileGamesFetchCount = 60;
 let profileBaseGames = [];
 let profileExpanded = false;
-let profileGamesEmptyMessage = "No shared games found in recent play history.";
+let profileGamesEmptyMessage = "No recent games found.";
 let profileAutoLoadingAll = false;
 let profileSkipAutoLoadOnce = false;
 let profileGameAchievementCounts = new Map();
@@ -426,9 +435,14 @@ let profileGameAchievementPending = new Map();
 let profileAllowCompare = true;
 let profileIsSelf = false;
 let selfGameReturnToProfile = false;
+let compareReturnToProfile = false;
 let profileCompletionByGameId = new Map();
 let profileCompletionLoading = false;
 let profileCompletionTarget = "";
+let profileActivityUser = "";
+let profileRecentGames = [];
+let profileCommonGames = [];
+let profileRecentTab = "recent";
 const profileAchievementLimiter = createLimiter(2);
 const summaryLimiter = createLimiter(2);
 const RECENT_DEFAULT_ROWS = 6;
@@ -782,16 +796,17 @@ function updateSocialComposerState() {
   setSocialStatus(status);
 }
 
-function renderSocialPosts(posts = socialPosts) {
-  if (!socialPostListEl) return;
-  socialPostListEl.innerHTML = "";
+function renderSocialPosts(posts = socialPosts, targetEl = socialPostListEl, { showComments = true, limit = null } = {}) {
+  if (!targetEl) return;
+  targetEl.innerHTML = "";
   const list = Array.isArray(posts) ? posts : [];
   if (!list.length) {
-    socialPostListEl.innerHTML = `<div class="meta">No screenshots yet. Be the first to post.</div>`;
+    targetEl.innerHTML = `<div class="meta">No screenshots yet. Be the first to post.</div>`;
     return;
   }
   const frag = document.createDocumentFragment();
-  list.forEach((post) => {
+  const slice = Number.isFinite(limit) ? list.slice(0, Math.max(0, limit)) : list;
+  slice.forEach((post) => {
     const card = document.createElement("article");
     card.className = "socialPost";
     const isAuto = !!post?.isAuto;
@@ -935,59 +950,61 @@ function renderSocialPosts(posts = socialPosts) {
       card.append(img);
     }
 
-    const commentsWrap = document.createElement("div");
-    commentsWrap.className = "socialComments";
-    const comments = Array.isArray(post?.comments) ? post.comments : [];
-    if (!comments.length) {
-      const empty = document.createElement("div");
-      empty.className = "meta";
-      empty.textContent = "No comments yet.";
-      commentsWrap.append(empty);
-    } else {
-      comments.forEach((comment) => {
-        const commentEl = document.createElement("div");
-        commentEl.className = "socialComment";
+    if (showComments) {
+      const commentsWrap = document.createElement("div");
+      commentsWrap.className = "socialComments";
+      const comments = Array.isArray(post?.comments) ? post.comments : [];
+      if (!comments.length) {
+        const empty = document.createElement("div");
+        empty.className = "meta";
+        empty.textContent = "No comments yet.";
+        commentsWrap.append(empty);
+      } else {
+        comments.forEach((comment) => {
+          const commentEl = document.createElement("div");
+          commentEl.className = "socialComment";
 
-        const commentHeader = document.createElement("div");
-        commentHeader.className = "socialCommentHeader";
-        const commentAuthor = document.createElement("div");
-        commentAuthor.className = "socialCommentAuthor";
-        commentAuthor.textContent = comment?.user || "Unknown";
-        const commentTime = document.createElement("div");
-        commentTime.className = "meta";
-        commentTime.textContent = formatDate(comment?.createdAt);
-        commentHeader.append(commentAuthor, commentTime);
+          const commentHeader = document.createElement("div");
+          commentHeader.className = "socialCommentHeader";
+          const commentAuthor = document.createElement("div");
+          commentAuthor.className = "socialCommentAuthor";
+          commentAuthor.textContent = comment?.user || "Unknown";
+          const commentTime = document.createElement("div");
+          commentTime.className = "meta";
+          commentTime.textContent = formatDate(comment?.createdAt);
+          commentHeader.append(commentAuthor, commentTime);
 
-        const commentBody = document.createElement("div");
-        commentBody.className = "socialCommentBody";
-        commentBody.textContent = comment?.text || "";
+          const commentBody = document.createElement("div");
+          commentBody.className = "socialCommentBody";
+          commentBody.textContent = comment?.text || "";
 
-        commentEl.append(commentHeader, commentBody);
-        commentsWrap.append(commentEl);
-      });
+          commentEl.append(commentHeader, commentBody);
+          commentsWrap.append(commentEl);
+        });
+      }
+
+      const form = document.createElement("form");
+      form.className = "socialCommentForm";
+      if (post?.id) form.dataset.postId = post.id;
+      const input = document.createElement("input");
+      input.className = "socialCommentInput";
+      input.type = "text";
+      input.placeholder = currentUser ? "Add a comment" : "Set username to comment";
+      input.autocomplete = "off";
+      input.disabled = !currentUser;
+      const btn = document.createElement("button");
+      btn.className = "smallBtn";
+      btn.type = "submit";
+      btn.textContent = "Post";
+      btn.disabled = !currentUser;
+      form.append(input, btn);
+      commentsWrap.append(form);
+
+      card.append(commentsWrap);
     }
-
-    const form = document.createElement("form");
-    form.className = "socialCommentForm";
-    if (post?.id) form.dataset.postId = post.id;
-    const input = document.createElement("input");
-    input.className = "socialCommentInput";
-    input.type = "text";
-    input.placeholder = currentUser ? "Add a comment" : "Set username to comment";
-    input.autocomplete = "off";
-    input.disabled = !currentUser;
-    const btn = document.createElement("button");
-    btn.className = "smallBtn";
-    btn.type = "submit";
-    btn.textContent = "Post";
-    btn.disabled = !currentUser;
-    form.append(input, btn);
-    commentsWrap.append(form);
-
-    card.append(commentsWrap);
     frag.append(card);
   });
-  socialPostListEl.append(frag);
+  targetEl.append(frag);
 }
 
 async function loadSocialPostsFromServer({ silent = false } = {}) {
@@ -997,17 +1014,28 @@ async function loadSocialPostsFromServer({ silent = false } = {}) {
     const data = await fetchSocialPosts(SOCIAL_MAX_POSTS);
     const results = Array.isArray(data?.results) ? data.results : [];
     socialPosts = results;
-    renderSocialPosts(socialPosts);
+    renderSocialPosts(socialPosts, socialPostListEl);
+    renderSocialPosts(socialPosts, profileSocialListEl, { showComments: false, limit: 3 });
     if (!silent) setSocialStatus("");
   } catch (err) {
     const message = String(err?.message || "");
     if (message.toLowerCase().includes("not authenticated")) {
       if (!silent) setSocialStatus("Set your username in Settings to see the social feed.");
-      socialPostListEl.innerHTML = `<div class="meta">Set your username to see friends posts.</div>`;
+      if (socialPostListEl) {
+        socialPostListEl.innerHTML = `<div class="meta">Set your username to see friends posts.</div>`;
+      }
+      if (profileSocialListEl) {
+        profileSocialListEl.innerHTML = `<div class="meta">Set your username to see friends posts.</div>`;
+      }
       return;
     }
     if (!silent) setSocialStatus("Failed to load social feed.");
-    socialPostListEl.innerHTML = `<div class="meta">Failed to load screenshots.</div>`;
+    if (socialPostListEl) {
+      socialPostListEl.innerHTML = `<div class="meta">Failed to load screenshots.</div>`;
+    }
+    if (profileSocialListEl) {
+      profileSocialListEl.innerHTML = `<div class="meta">Failed to load screenshots.</div>`;
+    }
   }
 }
 
@@ -2106,6 +2134,13 @@ function moveSelfGamePanel(targetHost) {
   }
 }
 
+function moveComparePanel(targetHost) {
+  if (!comparePanel || !targetHost) return;
+  if (comparePanel.parentElement !== targetHost) {
+    targetHost.appendChild(comparePanel);
+  }
+}
+
 function setActivePage(name) {
   if (name && name !== activePageName) {
     pausedPages.add(activePageName);
@@ -2129,6 +2164,7 @@ function setActivePage(name) {
   if (socialPage) socialPage.hidden = name !== "social";
   if (profilePage) profilePage.hidden = name !== "profile";
   if (backlogPage) backlogPage.hidden = name !== "backlog";
+  if (gamePage) gamePage.hidden = name !== "game";
   if (name !== "backlog") setBacklogRemoveMode(false);
   if (name === "find-games") {
     ensureFindGamesReady();
@@ -2151,15 +2187,22 @@ function setActivePage(name) {
   }
   if (name === "profile") {
     moveProfilePanel(profileHostProfile);
-    moveSelfGamePanel(selfGameHostProfile);
     refreshCompletionBadges();
+    loadSocialPostsFromServer({ silent: true });
+  } else if (name === "game") {
+    moveSelfGamePanel(selfGameHostPage);
+    moveComparePanel(compareHostPage);
+    if (selfGamePanel) selfGamePanel.hidden = false;
   } else {
     const isSelfOpen = currentProfileUser && currentUser &&
       currentProfileUser.toLowerCase() === currentUser.toLowerCase();
     if (!isSelfOpen) {
       moveProfilePanel(profileHostDashboard);
     }
-    moveSelfGamePanel(selfGameHostDashboard);
+    if (selfGamePanel) selfGamePanel.hidden = true;
+    moveSelfGamePanel(selfGameHostPage);
+    if (comparePanel) comparePanel.hidden = true;
+    moveComparePanel(compareHostPage);
   }
 }
 
@@ -4182,13 +4225,14 @@ function achievementUrl(id) {
 function renderProfileGamesList(games, emptyMessage) {
   profileSharedGamesEl.innerHTML = "";
 
-  if (!games.length) {
+  const orderedGames = Array.isArray(games) ? games : [];
+  if (!orderedGames.length) {
     profileSharedGamesEl.innerHTML = `<div class="meta">${safeText(emptyMessage)}</div>`;
     return;
   }
 
   const frag = document.createDocumentFragment();
-  for (const g of games) {
+  for (const g of orderedGames) {
     const tile = document.createElement("div");
     const allowOpen = profileIsSelf || profileAllowCompare;
     tile.className = allowOpen ? "tile clickable" : "tile";
@@ -4222,7 +4266,7 @@ function renderProfileGamesList(games, emptyMessage) {
     if (allowOpen) {
       const open = () => {
         if (profileIsSelf) {
-          selfGameReturnToProfile = false;
+          selfGameReturnToProfile = true;
           openSelfGame(g);
         } else {
           openGameCompare(g);
@@ -4241,18 +4285,21 @@ function renderProfileGamesList(games, emptyMessage) {
     }
   }
   profileSharedGamesEl.appendChild(frag);
-  profileDisplayedGames = games;
+  profileDisplayedGames = orderedGames;
 }
 
 function applyProfileGameFilter() {
   const query = (profileGameSearchEl?.value || "").trim().toLowerCase();
-  const base = profileDisplayedGames || [];
+  if (activePageName === "profile" && profileRecentGamesEl) {
+    renderProfileRecentTab(query);
+    return;
+  }
 
+  const base = profileDisplayedGames || [];
   if (!query) {
     renderProfileGamesList(base, profileGamesEmptyMessage);
     return;
   }
-
   const filtered = base.filter(g => (g.title || "").toLowerCase().includes(query));
   renderProfileGamesList(filtered, "No games match your search.");
 }
@@ -4311,6 +4358,16 @@ function getBeatenFlag(kindRaw) {
   return Boolean(kind && kind.includes("beaten"));
 }
 
+function getCompletedFlag(kindRaw) {
+  const kind = String(kindRaw || "").toLowerCase();
+  return Boolean(kind && (kind.includes("completed") || kind.includes("beaten")));
+}
+
+function getMasteredFlag(kindRaw) {
+  const kind = String(kindRaw || "").toLowerCase();
+  return Boolean(kind && kind.includes("mastered"));
+}
+
 function updateTileBadge(tile, gameId) {
   if (!tile || !gameId) return;
   const counts = profileGameAchievementCounts.get(String(gameId));
@@ -4350,16 +4407,7 @@ function isProfileGameCompleted(game) {
 }
 
 function sortProfileGamesForDisplay(list) {
-  const arr = (list || []).slice();
-  arr.sort((a, b) => {
-    const aDone = isProfileGameCompleted(a);
-    const bDone = isProfileGameCompleted(b);
-    if (aDone !== bDone) return aDone ? -1 : 1;
-    const ta = parseLastPlayed(a?.lastPlayed);
-    const tb = parseLastPlayed(b?.lastPlayed);
-    return tb - ta;
-  });
-  return arr;
+  return sortGamesByLastPlayed(list || []);
 }
 
 function refreshCompletionBadges() {
@@ -4444,8 +4492,8 @@ async function loadProfileGameAchievements(gameId, metaEl) {
   }
 }
 
-function renderSharedGames(games, emptyMessage = "No shared games found in recent play history.") {
-  profileDisplayedGames = sortProfileGamesForDisplay(games);
+function renderSharedGames(games, emptyMessage = "No recent games found.") {
+  profileDisplayedGames = Array.isArray(games) ? games : [];
   profileGamesEmptyMessage = emptyMessage;
   applyProfileGameFilter();
 }
@@ -4455,6 +4503,16 @@ function parseLastPlayed(value) {
   const raw = String(value);
   const ts = Date.parse(raw);
   if (Number.isFinite(ts)) return ts;
+  const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/);
+  if (m) {
+    const y = Number(m[1]);
+    const mo = Number(m[2]) - 1;
+    const day = Number(m[3]);
+    const h = Number(m[4]);
+    const mi = Number(m[5]);
+    const s = Number(m[6]);
+    return Date.UTC(y, mo, day, h, mi, s);
+  }
   const alt = Date.parse(raw.replace(" ", "T") + "Z");
   return Number.isFinite(alt) ? alt : 0;
 }
@@ -4517,6 +4575,16 @@ function combineRecentGames(cachedResults, freshResults) {
   return mergeGameLists(cached, fresh);
 }
 
+function normalizeRecentGames(list) {
+  return normalizeGameList(list || []);
+}
+
+function getCommonGames(mineList, theirsList) {
+  const mineIds = new Set((mineList || []).map(g => String(g.gameId ?? "")).filter(Boolean));
+  if (!mineIds.size) return [];
+  return (theirsList || []).filter(g => mineIds.has(String(g.gameId ?? "")));
+}
+
 async function loadMoreProfileGames() {
   const target = clampUsername(currentProfileUser);
   if (!target || !profileShowMoreBtn) return;
@@ -4551,7 +4619,7 @@ async function loadMoreProfileGames() {
       profileSharedGames = sortedCached;
       profileDisplayedGames = sortedCached;
       profileGamesFetchCount = nextCount;
-      renderSharedGames(sortedCached, profileIsSelf ? "No recent games found." : "No shared games found in recent play history.");
+      renderSharedGames(sortedCached, "No recent games found.");
       refreshCompletionBadges();
     }
 
@@ -4574,7 +4642,7 @@ async function loadMoreProfileGames() {
     profileSharedGames = sortedCombined;
     profileDisplayedGames = sortedCombined;
     profileGamesFetchCount = nextCount;
-    renderSharedGames(sortedCombined, profileIsSelf ? "No recent games found." : "No shared games found in recent play history.");
+    renderSharedGames(sortedCombined, "No recent games found.");
     if (!profileCompletionLoading) {
       if (!profileCompletionByGameId.size || profileCompletionTarget !== target) {
         loadProfileCompletionProgress(target, combined);
@@ -4661,6 +4729,7 @@ async function loadProfileCompletionProgress(username, games = []) {
   if (loadToken === activeProfileLoadToken) {
     renderSharedGames(profileSharedGames, profileGamesEmptyMessage);
     refreshCompletionBadges();
+    renderProfileRecentTab();
   }
   profileCompletionLoading = false;
 }
@@ -4672,7 +4741,7 @@ function collapseProfileGames() {
   profileGamesFetchCount = PROFILE_GAMES_INITIAL;
   profileAllGamesLoaded = false;
   profileExpanded = false;
-  renderSharedGames(profileSharedGames, profileIsSelf ? "No recent games found." : "No shared games found in recent play history.");
+  renderSharedGames(profileSharedGames, "No recent games found.");
   profileShowMoreBtn.hidden = profileSharedGames.length >= PROFILE_GAMES_MAX && !profileExpanded;
   profileShowMoreBtn.textContent = "Show more";
 }
@@ -4685,60 +4754,95 @@ function renderProfileSummary(summary) {
     return;
   }
 
-  function formatProfileValue(label, value) {
-    if (label === "Last Activity") {
-      if (value && typeof value === "object") {
-        const candidate =
-          value.Date ?? value.date ??
-          value.LastActivity ?? value.lastActivity ??
-          value.LastUpdated ?? value.lastUpdated ??
-          value.timestamp ?? value.time ??
-          value.LastPlayed ?? value.lastPlayed;
-        if (candidate) return formatDate(candidate);
-        for (const [k, v] of Object.entries(value)) {
-          if (typeof v === "string" && k.toLowerCase().includes("date")) {
-            return formatDate(v);
-          }
-        }
-        return "";
-      }
-      return formatDate(value);
-    }
-    if (value instanceof Date) return formatDate(value);
-    if (value && typeof value === "object") return "";
-    return String(value);
+  const username = currentProfileUser || summary.username || "Player";
+  const avatarUrl = summary.userPic ? iconUrl(summary.userPic) : "";
+  const rank = Number.isFinite(Number(summary.rank)) ? `#${Number(summary.rank).toLocaleString()}` : "--";
+  const totalPoints = Number.isFinite(Number(summary.totalPoints))
+    ? Number(summary.totalPoints).toLocaleString()
+    : "--";
+  const retroPoints = Number.isFinite(Number(summary.retroPoints))
+    ? Number(summary.retroPoints).toLocaleString()
+    : "--";
+  const completed = Number.isFinite(Number(summary.completedGames))
+    ? Number(summary.completedGames).toLocaleString()
+    : "--";
+
+  const memberSince = summary.memberSince ? formatDate(summary.memberSince) : "";
+  let lastActiveValue = summary.lastActivity;
+  if (lastActiveValue && typeof lastActiveValue === "object") {
+    lastActiveValue =
+      lastActiveValue.Date ?? lastActiveValue.date ??
+      lastActiveValue.LastActivity ?? lastActiveValue.lastActivity ??
+      lastActiveValue.LastUpdated ?? lastActiveValue.lastUpdated ??
+      lastActiveValue.timestamp ?? lastActiveValue.time ??
+      lastActiveValue.LastPlayed ?? lastActiveValue.lastPlayed ??
+      "";
+  }
+  const lastActive = lastActiveValue ? formatDate(lastActiveValue) : "";
+
+  const card = document.createElement("div");
+  card.className = "profileHeroCard";
+
+  const top = document.createElement("div");
+  top.className = "profileHeroTop";
+
+  const avatarWrap = document.createElement("div");
+  avatarWrap.className = "profileHeroAvatarWrap";
+  if (avatarUrl) {
+    const img = document.createElement("img");
+    img.className = "profileHeroAvatar";
+    img.alt = `${username} avatar`;
+    img.loading = "lazy";
+    img.src = avatarUrl;
+    avatarWrap.appendChild(img);
   }
 
-  const items = [
-    ["Rank", summary.rank],
-    ["Member Since", summary.memberSince],
-    ["Last Activity", summary.lastActivity],
-    ["Completed Games", summary.completedGames]
-  ].filter(([, v]) => v !== undefined && v !== null && v !== "");
+  const identity = document.createElement("div");
+  identity.className = "profileHeroIdentity";
+  const nameEl = document.createElement("div");
+  nameEl.className = "profileHeroName";
+  nameEl.textContent = username;
+  const rankEl = document.createElement("div");
+  rankEl.className = "profileHeroRank";
+  rankEl.innerHTML = `Rank <span>${rank}</span>`;
+  identity.append(nameEl, rankEl);
+  top.append(avatarWrap, identity);
 
-  if (!items.length) {
-    profileSummaryEl.innerHTML = `<div class="meta">Profile summary unavailable.</div>`;
-    return;
-  }
-
-  for (const [label, value] of items) {
-    const displayValue = formatProfileValue(label, value);
-    if (!displayValue && displayValue !== 0) continue;
-    const card = document.createElement("div");
-    card.className = "summaryCard";
-
+  const stats = document.createElement("div");
+  stats.className = "profileHeroStats";
+  const statItems = [
+    { label: "Total Points", value: totalPoints },
+    { label: "Retro Points", value: retroPoints },
+    { label: "Completed", value: completed }
+  ];
+  statItems.forEach((item) => {
+    const stat = document.createElement("div");
+    stat.className = "profileHeroStat";
     const l = document.createElement("div");
-    l.className = "summaryLabel";
-    l.textContent = label;
-
+    l.className = "profileHeroStatLabel";
+    l.textContent = item.label;
     const v = document.createElement("div");
-    v.className = "summaryValue";
-    v.textContent = displayValue;
+    v.className = "profileHeroStatValue";
+    v.textContent = item.value;
+    stat.append(l, v);
+    stats.appendChild(stat);
+  });
 
-    card.appendChild(l);
-    card.appendChild(v);
-    profileSummaryEl.appendChild(card);
+  const meta = document.createElement("div");
+  meta.className = "profileHeroMeta";
+  if (memberSince) {
+    const item = document.createElement("div");
+    item.textContent = `Member Since ${memberSince}`;
+    meta.appendChild(item);
   }
+  if (lastActive) {
+    const item = document.createElement("div");
+    item.textContent = `Last Active ${lastActive}`;
+    meta.appendChild(item);
+  }
+
+  card.append(top, stats, meta);
+  profileSummaryEl.appendChild(card);
 }
 
 function renderProfileInsights({ sharedCount, meSummary, themSummary, isSelf }) {
@@ -4811,22 +4915,25 @@ function buildProfileGameList(mineResults, theirsResults, isSelf) {
   if (isSelf) {
     return sortGamesByLastPlayed(mineNormalized);
   }
+  return sortGamesByLastPlayed(theirsNormalized);
+}
 
-  const myMap = new Map(mineNormalized.map(g => [g.gameId, g]));
-  const shared = [];
-  for (const g of theirsNormalized) {
-    if (!myMap.has(g.gameId)) continue;
-    const mineGame = myMap.get(g.gameId);
-    shared.push({
-      gameId: g.gameId,
-      title: g.title || mineGame?.title,
-      imageIcon: g.imageIcon || mineGame?.imageIcon,
-      lastPlayed: (parseLastPlayed(g.lastPlayed) >= parseLastPlayed(mineGame?.lastPlayed))
-        ? g.lastPlayed
-        : mineGame?.lastPlayed
-    });
+async function loadProfileActivity(username) {
+  if (!profileActivityListEl) return;
+  const target = clampUsername(username);
+  if (!target) return;
+  profileActivityUser = target;
+  setLoading(profileActivityLoadingEl, true);
+  try {
+    const minutes = Math.max(1, Math.floor(ACHIEVEMENTS_DEFAULT_HOURS * 60));
+    const data = await fetchRecentAchievements(target, minutes, 5);
+    const items = Array.isArray(data?.results) ? data.results : [];
+    renderProfileActivity(items);
+  } catch (err) {
+    profileActivityListEl.innerHTML = `<div class="meta">Failed to load activity.</div>`;
+  } finally {
+    setLoading(profileActivityLoadingEl, false);
   }
-  return sortGamesByLastPlayed(shared);
 }
 
 async function openProfile(username) {
@@ -4849,12 +4956,12 @@ async function openProfile(username) {
   profileTitleNameEl.textContent = target;
   profileSummaryEl.innerHTML = `<div class="meta">Loading profile summary...</div>`;
   if (profileInsightsEl) profileInsightsEl.innerHTML = `<div class="meta">Loading profile insights...</div>`;
-  profileSharedGamesEl.innerHTML = `<div class="meta">Loading shared games...</div>`;
+  profileSharedGamesEl.innerHTML = `<div class="meta">Loading recent games...</div>`;
   currentProfileUser = target;
   profileSharedGames = [];
   profileDisplayedGames = [];
   profileAllGamesLoaded = false;
-  profileGamesEmptyMessage = "No shared games found in recent play history.";
+  profileGamesEmptyMessage = "No recent games found.";
   profileAutoLoadingAll = false;
   profileSkipAutoLoadOnce = false;
   profileGamesFetchCount = PROFILE_GAMES_INITIAL;
@@ -4864,6 +4971,8 @@ async function openProfile(username) {
   profileCompletionByGameId = new Map();
   profileCompletionLoading = false;
   profileCompletionTarget = "";
+  profileRecentGames = [];
+  profileCommonGames = [];
   profileAllowCompare = !isSelf;
   profileIsSelf = isSelf;
   if (profileLegendMeEl) {
@@ -4873,16 +4982,14 @@ async function openProfile(username) {
     profileLegendThemEl.textContent = target || "Friend";
   }
   if (profileShowMoreBtn) {
-    profileShowMoreBtn.disabled = false;
-    profileShowMoreBtn.hidden = false;
+    profileShowMoreBtn.disabled = true;
+    profileShowMoreBtn.hidden = true;
     profileShowMoreBtn.textContent = "Show more";
   }
   if (profileCloseBtn) profileCloseBtn.hidden = isSelf;
   if (profileBacklogBtn) profileBacklogBtn.hidden = isSelf;
   if (profileGamesNoteEl) {
-    profileGamesNoteEl.textContent = isSelf
-      ? "Your recent games."
-      : "Shows recently played games you both have in common.";
+    profileGamesNoteEl.textContent = "Recent games sorted by last played.";
   }
   if (profileGameSearchEl) {
     profileGameSearchEl.value = "";
@@ -4890,73 +4997,106 @@ async function openProfile(username) {
   if (selfGameTitleEl) selfGameTitleEl.textContent = "";
   if (selfGameMetaEl) selfGameMetaEl.textContent = "";
   if (selfGameAchievementsEl) selfGameAchievementsEl.innerHTML = "";
+  if (profileActivityListEl) {
+    profileActivityListEl.innerHTML = `<div class="meta">Loading activity...</div>`;
+  }
+  if (profileRecentGamesEl) {
+    profileRecentGamesEl.innerHTML = `<div class="meta">Loading recent games...</div>`;
+  }
+  setProfileRecentTab("recent");
 
   setLoading(profileLoadingEl, true);
+  loadProfileActivity(target);
+  loadProfileRecentGames(target);
 
+  let summaryRendered = false;
   try {
     const count = PROFILE_GAMES_INITIAL;
     const mineCache = readRecentGamesCache(me, count);
     const theirsCache = readRecentGamesCache(target, count);
-    if (mineCache?.data && theirsCache?.data) {
+    const cachedList = isSelf ? mineCache?.data?.results : theirsCache?.data?.results;
+    if (cachedList) {
       if (loadToken !== activeProfileLoadToken) return;
-      const uniqueCached = buildProfileGameList(mineCache.data.results || [], theirsCache.data.results || [], isSelf);
-      profileBaseGames = uniqueCached;
-      profileSharedGames = uniqueCached;
-      profileDisplayedGames = uniqueCached;
-      profileAllGamesLoaded = uniqueCached.length >= PROFILE_GAMES_MAX;
+      const normalizedCached = normalizeRecentGames(cachedList || []);
+      const cachedMine = normalizeRecentGames(mineCache?.data?.results || []);
+      const cachedTheirs = normalizeRecentGames(theirsCache?.data?.results || []);
+      profileBaseGames = normalizedCached;
+      profileSharedGames = normalizedCached;
+      profileDisplayedGames = normalizedCached;
+      profileCommonGames = isSelf ? normalizedCached : getCommonGames(cachedMine, cachedTheirs.length ? cachedTheirs : normalizedCached);
+      profileAllGamesLoaded = normalizedCached.length >= PROFILE_GAMES_MAX;
       profileExpanded = false;
-      renderSharedGames(uniqueCached, isSelf ? "No recent games found." : "No shared games found in recent play history.");
+      renderSharedGames(normalizedCached, "No recent games found.");
       if (profileShowMoreBtn) {
-        profileShowMoreBtn.hidden = profileAllGamesLoaded;
+        profileShowMoreBtn.hidden = true;
         profileShowMoreBtn.textContent = "Show more";
       }
-      loadProfileCompletionProgress(target, uniqueCached);
+      loadProfileCompletionProgress(target, normalizedCached);
     }
 
     const needMine = !mineCache || mineCache.stale;
     const needTheirs = !theirsCache || theirsCache.stale;
-    const [mine, theirs, meSummary, themSummaryRaw] = await Promise.all([
-      needMine ? fetchRecentGames(me, count) : Promise.resolve(mineCache.data),
-      needTheirs ? fetchRecentGames(target, count) : Promise.resolve(theirsCache.data),
-      fetchUserSummary(me).catch(() => null),
-      fetchUserSummary(target).catch(() => null)
-    ]);
+
+    let meSummary = null;
+    let themSummaryRaw = null;
+    try {
+      meSummary = await fetchUserSummary(me).catch(() => null);
+      themSummaryRaw = await fetchUserSummary(target).catch(() => null);
+    } catch {
+      meSummary = null;
+      themSummaryRaw = null;
+    }
+
+    let mine = mineCache?.data || null;
+    let theirs = theirsCache?.data || null;
+    try {
+      if (needMine) mine = await fetchRecentGames(me, count);
+      if (needTheirs) theirs = await fetchRecentGames(target, count);
+    } catch {
+      // allow summary to render even if recent games fail
+    }
     if (loadToken !== activeProfileLoadToken) return;
 
     const themSummary = isSelf ? meSummary : themSummaryRaw;
-
     if (themSummary) {
       renderProfileSummary(themSummary);
+      summaryRendered = true;
     } else {
       profileSummaryEl.innerHTML = `<div class="meta">Profile summary unavailable.</div>`;
+      summaryRendered = true;
     }
 
-    const mineCombined = combineRecentGames(mineCache?.data?.results, mine.results || []);
-    const theirsCombined = combineRecentGames(theirsCache?.data?.results, theirs.results || []);
-    const unique = buildProfileGameList(mineCombined, theirsCombined, isSelf);
+    const mineCombined = combineRecentGames(mineCache?.data?.results, mine?.results || []);
+    const theirsCombined = combineRecentGames(theirsCache?.data?.results, theirs?.results || []);
+    const baseList = isSelf ? (mine?.results || mineCombined) : (theirs?.results || theirsCombined);
+    const normalized = normalizeRecentGames(baseList);
+    const mineNormalized = normalizeRecentGames(isSelf ? baseList : (mine?.results || mineCombined));
 
-    profileBaseGames = unique;
-    profileSharedGames = unique;
-    profileDisplayedGames = unique;
-    profileAllGamesLoaded = unique.length >= PROFILE_GAMES_MAX;
+    profileBaseGames = normalized;
+    profileSharedGames = normalized;
+    profileDisplayedGames = normalized;
+    profileCommonGames = isSelf ? normalized : getCommonGames(mineNormalized, normalized);
+    profileAllGamesLoaded = normalized.length >= PROFILE_GAMES_MAX;
     profileExpanded = false;
-    renderSharedGames(unique, isSelf ? "No recent games found." : "No shared games found in recent play history.");
-    loadProfileCompletionProgress(target, unique);
+    renderSharedGames(normalized, "No recent games found.");
+    loadProfileCompletionProgress(target, normalized);
     if (profileShowMoreBtn) {
-      profileShowMoreBtn.hidden = profileAllGamesLoaded;
+      profileShowMoreBtn.hidden = true;
       profileShowMoreBtn.textContent = "Show more";
     }
     renderProfileInsights({
-      sharedCount: unique.length,
+      sharedCount: normalized.length,
       meSummary,
       themSummary,
       isSelf
     });
     profilePanel.scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (e) {
-    profileSummaryEl.innerHTML = `<div class="meta">Failed to load profile summary.</div>`;
+    if (!summaryRendered) {
+      profileSummaryEl.innerHTML = `<div class="meta">Failed to load profile summary.</div>`;
+    }
     if (profileInsightsEl) profileInsightsEl.innerHTML = `<div class="meta">Failed to load profile insights.</div>`;
-    profileSharedGamesEl.innerHTML = `<div class="meta">Failed to load shared games.</div>`;
+    profileSharedGamesEl.innerHTML = `<div class="meta">Failed to load recent games.</div>`;
     setStatus(e?.message || "Failed to load profile.");
   } finally {
     setLoading(profileLoadingEl, false);
@@ -5101,6 +5241,12 @@ function renderSelfAchievements(items) {
   }
 
   const earnedItems = items.filter(a => a.earned);
+  const getEarnedTs = (a) => {
+    const raw = a.earnedHardcoreDate || a.earnedDate || "";
+    const ts = Date.parse(raw);
+    return Number.isFinite(ts) ? ts : 0;
+  };
+  earnedItems.sort((a, b) => getEarnedTs(b) - getEarnedTs(a));
   const lockedItems = items.filter(a => !a.earned);
   const sections = [
     { label: "Earned", items: earnedItems },
@@ -5134,15 +5280,29 @@ function renderSelfAchievements(items) {
       const main = document.createElement("div");
       main.className = "compareMain";
 
+      const titleRow = document.createElement("div");
+      titleRow.className = "compareTitleRow";
+
       const title = document.createElement("div");
       title.className = "compareTitle";
       title.textContent = a.title || `Achievement ${safeText(a.id)}`;
+
+      titleRow.appendChild(title);
+      if (a.earned) {
+        const earnedDate = a.earnedHardcoreDate || a.earnedDate;
+        if (earnedDate) {
+          const earnedMeta = document.createElement("div");
+          earnedMeta.className = "compareTitleDate";
+          earnedMeta.textContent = formatDate(earnedDate);
+          titleRow.appendChild(earnedMeta);
+        }
+      }
 
       const desc = document.createElement("div");
       desc.className = "compareDesc";
       desc.textContent = a.description || "";
 
-      main.appendChild(title);
+      main.appendChild(titleRow);
       main.appendChild(desc);
 
       const statusWrap = document.createElement("div");
@@ -5173,13 +5333,10 @@ async function openSelfGame(game) {
   const { me } = getUsersIncludingMe();
   if (!me) return setStatus("Set your username first.");
 
+  setActivePage("game");
   profilePanel.hidden = true;
   comparePanel.hidden = true;
-  if (profileIsSelf) {
-    moveSelfGamePanel(selfGameHostProfile);
-  } else {
-    moveSelfGamePanel(selfGameHostDashboard);
-  }
+  moveSelfGamePanel(selfGameHostPage);
   if (selfGamePanel) selfGamePanel.hidden = false;
   if (selfGameTitleEl) selfGameTitleEl.textContent = game.title || `Game ${safeText(game.gameId)}`;
   if (selfGameMetaEl) selfGameMetaEl.textContent = `User: ${me}`;
@@ -5193,7 +5350,9 @@ async function openSelfGame(game) {
       description: a.description,
       badgeUrl: a.badgeUrl,
       points: a.points,
-      earned: a.earned
+      earned: a.earned,
+      earnedDate: a.earnedDate,
+      earnedHardcoreDate: a.earnedHardcoreDate
     }));
     renderSelfAchievements(items);
     if (selfGamePanel) {
@@ -5213,6 +5372,8 @@ async function openGameCompare(game) {
   const { me } = getUsersIncludingMe();
   if (!me) return setStatus("Set your username first.");
 
+  compareReturnToProfile = activePageName === "profile";
+  setActivePage("game");
   profilePanel.hidden = true;
   comparePanel.hidden = false;
   setActiveCompareTab("achievements");
@@ -5729,6 +5890,198 @@ async function refreshRecentAchievements({ reset = true } = {}) {
   }
 }
 
+function renderProfileActivity(items) {
+  if (!profileActivityListEl) return;
+  profileActivityListEl.innerHTML = "";
+  const list = Array.isArray(items) ? items : [];
+  if (!list.length) {
+    profileActivityListEl.innerHTML = `<div class="meta">No recent achievements yet.</div>`;
+    return;
+  }
+
+  const frag = document.createDocumentFragment();
+  list.slice(0, 12).forEach((a) => {
+    const div = document.createElement("div");
+    div.className = "item profileActivityItem";
+    if (a.achievementId) {
+      div.classList.add("clickable");
+      div.tabIndex = 0;
+      div.setAttribute("role", "link");
+      div.setAttribute("aria-label", `Open achievement: ${a.title || ""}`);
+      const open = () => window.open(achievementUrl(a.achievementId), "_blank", "noopener,noreferrer");
+      div.addEventListener("click", open);
+      div.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
+      });
+    }
+
+    const badge = document.createElement("img");
+    badge.className = "badge";
+    badge.alt = "badge";
+    badge.src = iconUrl(a.badgeUrl);
+    badge.loading = "lazy";
+
+    const main = document.createElement("div");
+    main.className = "itemMain";
+
+    const title = document.createElement("div");
+    title.className = "itemTitle";
+    title.innerHTML = `
+      <strong>${a.title}</strong>
+      <span class="pointsPill compact">+${a.points} pts</span>
+      <span class="meta">${formatDate(a.date)}</span>
+    `;
+
+    const body = document.createElement("div");
+    body.innerHTML = `
+      <div class="meta">${a.gameTitle}${a.consoleName ? " - " + a.consoleName : ""}</div>
+      <div class="meta">${a.description || ""}</div>
+    `;
+
+    main.appendChild(title);
+    main.appendChild(body);
+    div.appendChild(badge);
+    div.appendChild(main);
+    frag.appendChild(div);
+  });
+  profileActivityListEl.appendChild(frag);
+}
+
+function setProfileRecentTab(name) {
+  profileRecentTab = name || "recent";
+  profileRecentTabButtons.forEach((btn) => {
+    const isActive = btn.dataset.profileRecentTab === profileRecentTab;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-selected", isActive ? "true" : "false");
+  });
+  renderProfileRecentTab();
+}
+
+function getProfileRecentCompletionKind(game) {
+  const id = String(game?.gameId ?? "");
+  if (!id) return "";
+  return profileCompletionByGameId.get(id) || "";
+}
+
+function filterProfileRecentByCompletion(list, mode) {
+  const items = Array.isArray(list) ? list : [];
+  if (!items.length) return [];
+  return items.filter((game) => {
+    const kind = getProfileRecentCompletionKind(game);
+    const isMastered = getMasteredFlag(kind);
+    if (mode === "mastered") return isMastered;
+    if (mode === "completed") return getCompletedFlag(kind) && !isMastered;
+    return false;
+  });
+}
+
+function renderProfileRecentTab(queryOverride = null) {
+  if (!profileRecentGamesEl) return;
+  const query = queryOverride !== null
+    ? String(queryOverride || "").trim().toLowerCase()
+    : (profileGameSearchEl?.value || "").trim().toLowerCase();
+
+  let baseList = [];
+  let emptyMessage = "No recent games found.";
+
+  if (profileRecentTab === "common") {
+    baseList = profileCommonGames || [];
+    emptyMessage = "No games in common found.";
+  } else if (profileRecentTab === "completed") {
+    if (profileCompletionLoading && !profileCompletionByGameId.size) {
+      profileRecentGamesEl.innerHTML = `<div class="meta">Loading completion data...</div>`;
+      return;
+    }
+    baseList = filterProfileRecentByCompletion(profileRecentGames, "completed");
+    emptyMessage = "No completed games found.";
+  } else if (profileRecentTab === "mastered") {
+    if (profileCompletionLoading && !profileCompletionByGameId.size) {
+      profileRecentGamesEl.innerHTML = `<div class="meta">Loading completion data...</div>`;
+      return;
+    }
+    baseList = filterProfileRecentByCompletion(profileRecentGames, "mastered");
+    emptyMessage = "No mastered games found.";
+  } else {
+    baseList = profileRecentGames || [];
+  }
+
+  let filtered = baseList;
+  if (query) {
+    filtered = baseList.filter(g => (g.title || "").toLowerCase().includes(query));
+    if (!filtered.length) emptyMessage = "No games match your search.";
+  }
+
+  renderProfileRecentGames(filtered, emptyMessage);
+}
+
+function renderProfileRecentGames(list, emptyMessage = "No recent games found.") {
+  if (!profileRecentGamesEl) return;
+  profileRecentGamesEl.innerHTML = "";
+  const items = Array.isArray(list) ? list : [];
+  if (!items.length) {
+    profileRecentGamesEl.innerHTML = `<div class="meta">${safeText(emptyMessage)}</div>`;
+    return;
+  }
+  const frag = document.createDocumentFragment();
+  items.forEach((g) => {
+    const tile = document.createElement("div");
+    const allowOpen = profileIsSelf || profileAllowCompare;
+    tile.className = allowOpen ? "tile clickable" : "tile";
+    if (g.gameId) tile.setAttribute("data-game-id", String(g.gameId));
+    if (allowOpen) {
+      tile.setAttribute("role", "button");
+      tile.tabIndex = 0;
+    }
+
+    const img = document.createElement("img");
+    img.src = iconUrl(g.imageIcon);
+    img.alt = safeText(g.title || "game");
+    img.loading = "lazy";
+
+    const title = document.createElement("div");
+    title.className = "tileTitle";
+    title.textContent = g.title || `Game ${safeText(g.gameId)}`;
+
+    tile.appendChild(img);
+    tile.appendChild(title);
+    frag.appendChild(tile);
+
+    if (allowOpen) {
+      const open = () => {
+        if (profileIsSelf) {
+          selfGameReturnToProfile = true;
+          openSelfGame(g);
+        } else {
+          openGameCompare(g);
+        }
+      };
+      tile.addEventListener("click", open);
+      tile.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
+      });
+    }
+  });
+  profileRecentGamesEl.appendChild(frag);
+}
+
+async function loadProfileRecentGames(username) {
+  if (!profileRecentGamesEl) return;
+  const target = clampUsername(username);
+  if (!target) return;
+  setLoading(profileRecentLoadingEl, true);
+  try {
+    const data = await fetchRecentGames(target, 24);
+    const items = normalizeRecentGames(data?.results || []);
+    profileRecentGames = items;
+    renderProfileRecentTab();
+    loadProfileCompletionProgress(target, items);
+  } catch {
+    profileRecentGamesEl.innerHTML = `<div class="meta">Failed to load recent games.</div>`;
+  } finally {
+    setLoading(profileRecentLoadingEl, false);
+  }
+}
+
 async function refreshRecentTimes() {
   if (activeActivityTab !== "times") return;
   const { me, users } = getUsersIncludingMe();
@@ -5988,8 +6341,9 @@ if (socialPostBtn) {
   });
 }
 
-if (socialPostListEl) {
-  socialPostListEl.addEventListener("submit", async (e) => {
+function bindSocialList(listEl) {
+  if (!listEl) return;
+  listEl.addEventListener("submit", async (e) => {
     const form = e.target.closest(".socialCommentForm");
     if (!form) return;
     e.preventDefault();
@@ -6009,7 +6363,7 @@ if (socialPostListEl) {
       setSocialStatus("Failed to post comment.");
     }
   });
-  socialPostListEl.addEventListener("click", (e) => {
+  listEl.addEventListener("click", (e) => {
     const img = e.target.closest(".socialPostImage");
     if (!img || !imageModal || !imageModalImg) return;
     const src = img.getAttribute("src");
@@ -6019,8 +6373,17 @@ if (socialPostListEl) {
   });
 }
 
+bindSocialList(socialPostListEl);
+bindSocialList(profileSocialListEl);
+
 if (profileGameSearchEl) {
   profileGameSearchEl.addEventListener("input", applyProfileGameFilter);
+}
+
+if (profileRecentTabButtons.length) {
+  profileRecentTabButtons.forEach((btn) => {
+    btn.addEventListener("click", () => setProfileRecentTab(btn.dataset.profileRecentTab));
+  });
 }
 
 if (recentAchievementsToggleBtn) {
@@ -6112,7 +6475,7 @@ if (profileCloseBtn) {
     profileSharedGames = [];
     profileDisplayedGames = [];
     profileAllGamesLoaded = false;
-    profileGamesEmptyMessage = "No shared games found in recent play history.";
+    profileGamesEmptyMessage = "No recent games found.";
     profileAutoLoadingAll = false;
     profileSkipAutoLoadOnce = false;
     profileGameAchievementCounts = new Map();
@@ -6127,7 +6490,8 @@ if (profileCloseBtn) {
       profileLegendThemEl.textContent = "";
     }
     if (profileShowMoreBtn) {
-      profileShowMoreBtn.disabled = false;
+      profileShowMoreBtn.disabled = true;
+      profileShowMoreBtn.hidden = true;
       profileShowMoreBtn.textContent = "Show more";
     }
     if (profileGamesNoteEl) {
@@ -6147,6 +6511,8 @@ if (profileCloseBtn) {
     if (selfGameTitleEl) selfGameTitleEl.textContent = "";
     if (selfGameMetaEl) selfGameMetaEl.textContent = "";
     if (selfGameAchievementsEl) selfGameAchievementsEl.innerHTML = "";
+    if (profileActivityListEl) profileActivityListEl.innerHTML = "";
+    if (profileRecentGamesEl) profileRecentGamesEl.innerHTML = "";
     setActiveCompareTab("achievements");
     currentProfileUser = "";
     activeProfileLoadToken = 0;
@@ -6165,6 +6531,12 @@ if (compareBackBtn) {
     compareMetaEl.textContent = "";
     compareAchievementsEl.innerHTML = "";
     compareTimesEl.innerHTML = "";
+    if (compareReturnToProfile) {
+      compareReturnToProfile = false;
+      setActivePage("profile");
+      return;
+    }
+    setActivePage("dashboard");
   });
 }
 
@@ -6182,7 +6554,7 @@ if (selfGameBackBtn) {
         return;
       }
     }
-    profilePanel.hidden = false;
+    setActivePage("dashboard");
   });
 }
 

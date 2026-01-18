@@ -2589,7 +2589,9 @@ app.get("/api/game-achievements/:username/:gameId", async (req, res) => {
         a.DateEarnedHardcore || a.dateEarnedHardcore ||
         a.Earned || a.earned
       ),
-      earnedHardcore: Boolean(a.DateEarnedHardcore || a.dateEarnedHardcore)
+      earnedHardcore: Boolean(a.DateEarnedHardcore || a.dateEarnedHardcore),
+      earnedDate: a.DateEarned ?? a.dateEarned ?? null,
+      earnedHardcoreDate: a.DateEarnedHardcore ?? a.dateEarnedHardcore ?? null
     }));
 
     const payload = {
