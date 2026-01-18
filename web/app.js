@@ -220,6 +220,30 @@ const backlogListEl = document.getElementById("backlogList");
 const backlogStatusEl = document.getElementById("backlogStatus");
 const backlogLoadingEl = document.getElementById("backlogLoading");
 const backlogRemoveBtn = document.getElementById("backlogRemoveBtn");
+const socialPage = document.getElementById("socialPage");
+const socialPostListEl = document.getElementById("socialPostList");
+const socialPostTypeSelect = document.getElementById("socialPostType");
+const socialTextInput = document.getElementById("socialTextBody");
+const socialTextSection = document.getElementById("socialTextSection");
+const socialScreenshotSection = document.getElementById("socialScreenshotSection");
+const socialAchievementSection = document.getElementById("socialAchievementSection");
+const socialAchievementGameBtn = document.getElementById("socialAchievementGameBtn");
+const socialAchievementGameSelected = document.getElementById("socialAchievementGameSelected");
+const socialAchievementGamesEl = document.getElementById("socialAchievementGames");
+const socialAchievementStatusEl = document.getElementById("socialAchievementStatus");
+const socialAchievementListEl = document.getElementById("socialAchievementList");
+const socialAchievementCaptionInput = document.getElementById("socialAchievementCaption");
+const socialUploadInput = document.getElementById("socialUpload");
+const socialCaptionInput = document.getElementById("socialCaption");
+const socialGameInput = document.getElementById("socialGame");
+const socialPostBtn = document.getElementById("socialPostBtn");
+const socialPreview = document.getElementById("socialPreview");
+const socialPreviewImg = document.getElementById("socialPreviewImg");
+const socialPreviewRemoveBtn = document.getElementById("socialPreviewRemoveBtn");
+const socialStatusEl = document.getElementById("socialStatus");
+const socialComposerOpenBtn = document.getElementById("socialComposerOpenBtn");
+const socialComposerModal = document.getElementById("socialComposerModal");
+const socialComposerCloseBtn = document.getElementById("socialComposerCloseBtn");
 
 if (apiQueueCounterEl) {
   apiQueueCounterEl.textContent = "API Calls in Queue: 0";
@@ -495,6 +519,17 @@ const backlogProgressLimiter = createLimiter(2);
 const backlogProgressUpdateLimiter = createLimiter(2);
 let backlogRenderToken = 0;
 let backlogRemoveMode = false;
+const SOCIAL_MAX_POSTS = 40;
+const SOCIAL_MAX_IMAGE_BYTES = 2 * 1024 * 1024;
+const SOCIAL_POLL_MS = 15000;
+let socialPosts = [];
+let socialDraftImageData = "";
+let socialPollTimer = null;
+let socialPostType = "text";
+let socialAchievementGame = null;
+let socialAchievementItems = [];
+let socialAchievementSelected = null;
+let socialAchievementGames = [];
 
 function clampUsername(s) {
   return (s || "").trim().replace(/\s+/g, "");
@@ -509,6 +544,10 @@ function setCurrentUser(username) {
   if (meInput) meInput.value = currentUser;
   if (currentUser && usernameModal) {
     usernameModal.hidden = true;
+  }
+  updateSocialComposerState();
+  if (socialPage && !socialPage.hidden) {
+    loadSocialPostsFromServer({ silent: true });
   }
 }
 
@@ -536,7 +575,461 @@ function saveState() {
   applyDebugUiState();
 }
 
+function setSocialStatus(message) {
+  if (!socialStatusEl) return;
+  socialStatusEl.textContent = message || "";
+}
+
+function setSocialPostType(nextType) {
+  socialPostType = nextType || "text";
+  if (socialTextSection) socialTextSection.hidden = socialPostType !== "text";
+  if (socialScreenshotSection) socialScreenshotSection.hidden = socialPostType !== "screenshot";
+  if (socialAchievementSection) socialAchievementSection.hidden = socialPostType !== "achievement";
+  if (socialPostType !== "achievement" && socialAchievementGamesEl) {
+    socialAchievementGamesEl.hidden = true;
+  }
+  updateSocialComposerState();
+}
+
+function renderSocialAchievementGames(list) {
+  if (!socialAchievementGamesEl) return;
+  socialAchievementGamesEl.innerHTML = "";
+  const items = Array.isArray(list) ? list : [];
+  if (!items.length) {
+    socialAchievementGamesEl.innerHTML = `<div class="meta">No recent games found.</div>`;
+    return;
+  }
+  const frag = document.createDocumentFragment();
+  items.forEach((game) => {
+    const tile = document.createElement("div");
+    tile.className = "tile clickable socialAchievementGameTile";
+    tile.dataset.gameId = game.gameId;
+    tile.dataset.gameTitle = game.title || "";
+    tile.dataset.gameIcon = game.imageIcon || "";
+    const img = document.createElement("img");
+    img.src = iconUrl(game.imageIcon || "");
+    img.alt = game.title || "Game";
+    img.loading = "lazy";
+    const title = document.createElement("div");
+    title.className = "tileTitle";
+    title.textContent = game.title || "";
+    const meta = document.createElement("div");
+    meta.className = "tileMeta";
+    meta.textContent = game.consoleName || "";
+    tile.append(img, title, meta);
+    frag.append(tile);
+  });
+  socialAchievementGamesEl.append(frag);
+}
+
+function renderSocialAchievementList(list) {
+  if (!socialAchievementListEl) return;
+  socialAchievementListEl.innerHTML = "";
+  const items = Array.isArray(list) ? list : [];
+  if (!items.length) {
+    if (socialAchievementStatusEl) {
+      socialAchievementStatusEl.textContent = "No earned achievements found.";
+    }
+    return;
+  }
+  if (socialAchievementStatusEl) {
+    socialAchievementStatusEl.textContent = `${items.length} earned achievements found.`;
+  }
+  const frag = document.createDocumentFragment();
+  items.forEach((ach) => {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "socialAchievementItem";
+    if (socialAchievementSelected && String(socialAchievementSelected.id) === String(ach.id)) {
+      row.classList.add("selected");
+    }
+    row.dataset.achievementId = String(ach.id || "");
+    const img = document.createElement("img");
+    img.src = iconUrl(ach.badgeUrl || "");
+    img.alt = ach.title || "Achievement";
+    img.loading = "lazy";
+    const body = document.createElement("div");
+    body.className = "socialAchievementBody";
+    const title = document.createElement("div");
+    title.className = "socialAchievementTitle";
+    title.textContent = ach.title || "";
+    const desc = document.createElement("div");
+    desc.className = "socialAchievementDesc";
+    desc.textContent = ach.description || "";
+    body.append(title, desc);
+    row.append(img, body);
+    frag.append(row);
+  });
+  socialAchievementListEl.append(frag);
+}
+
+async function ensureSocialAchievementGames() {
+  if (!currentUser) {
+    if (socialAchievementStatusEl) socialAchievementStatusEl.textContent = "Set your username first.";
+    return;
+  }
+  if (socialAchievementGames.length) return;
+  const cached = readRecentGamesCache(currentUser, 30);
+  if (cached?.data?.results) {
+    socialAchievementGames = cached.data.results.slice();
+    socialAchievementGames.sort((a, b) => {
+      const da = Date.parse(a.lastPlayed || "") || 0;
+      const db = Date.parse(b.lastPlayed || "") || 0;
+      return db - da;
+    });
+    renderSocialAchievementGames(socialAchievementGames);
+    if (!cached.stale) return;
+  }
+  try {
+    if (socialAchievementStatusEl) socialAchievementStatusEl.textContent = "Loading recent games...";
+    const data = await fetchRecentGames(currentUser, 30);
+    socialAchievementGames = Array.isArray(data?.results) ? data.results.slice() : [];
+    socialAchievementGames.sort((a, b) => {
+      const da = Date.parse(a.lastPlayed || "") || 0;
+      const db = Date.parse(b.lastPlayed || "") || 0;
+      return db - da;
+    });
+    renderSocialAchievementGames(socialAchievementGames);
+    if (socialAchievementStatusEl) socialAchievementStatusEl.textContent = "Select a game to see earned achievements.";
+  } catch {
+    if (socialAchievementStatusEl) socialAchievementStatusEl.textContent = "Failed to load recent games.";
+  }
+}
+
+async function loadSocialAchievementList(gameId) {
+  if (!currentUser || !gameId) return;
+  if (socialAchievementStatusEl) socialAchievementStatusEl.textContent = "Loading achievements...";
+  socialAchievementItems = [];
+  socialAchievementSelected = null;
+  renderSocialAchievementList([]);
+  updateSocialComposerState();
+  try {
+    const data = await fetchGameAchievements(currentUser, gameId);
+    const achievements = Array.isArray(data?.achievements) ? data.achievements : [];
+    socialAchievementItems = achievements.filter(a => a.earned);
+    renderSocialAchievementList(socialAchievementItems);
+  } catch {
+    if (socialAchievementStatusEl) socialAchievementStatusEl.textContent = "Failed to load achievements.";
+  }
+}
+
+function openSocialComposer() {
+  if (!socialComposerModal) return;
+  socialComposerModal.hidden = false;
+  setSocialPostType(socialPostType || "text");
+  if (socialAchievementGameBtn) {
+    socialAchievementGameBtn.textContent = socialAchievementGame ? "Change Game" : "Select Game";
+  }
+  if (socialAchievementGameSelected) {
+    socialAchievementGameSelected.textContent = socialAchievementGame?.title
+      ? `Selected: ${socialAchievementGame.title}`
+      : "No game selected.";
+  }
+  updateSocialComposerState();
+}
+
+function closeSocialComposer() {
+  if (!socialComposerModal) return;
+  socialComposerModal.hidden = true;
+  setSocialStatus("");
+}
+
+function setSocialPreview(dataUrl) {
+  socialDraftImageData = dataUrl || "";
+  if (socialPreviewImg) socialPreviewImg.src = socialDraftImageData || "";
+  if (socialPreview) socialPreview.hidden = !socialDraftImageData;
+  updateSocialComposerState();
+}
+
+function readImageAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error("Failed to read image."));
+    reader.readAsDataURL(file);
+  });
+}
+
+function updateSocialComposerState() {
+  const hasImage = !!socialDraftImageData;
+  let canPost = false;
+  let status = "";
+  if (!currentUser) {
+    status = "Set your username in Settings to post.";
+  } else if (socialPostType === "text") {
+    const text = (socialTextInput?.value || "").trim();
+    canPost = !!text;
+    status = canPost ? "" : "Write something to post.";
+  } else if (socialPostType === "screenshot") {
+    canPost = hasImage;
+    status = canPost ? "" : "Add a screenshot to post.";
+  } else if (socialPostType === "achievement") {
+    canPost = !!socialAchievementGame && !!socialAchievementSelected;
+    status = canPost ? "" : "Select a game and achievement.";
+  }
+  if (socialPostBtn) {
+    socialPostBtn.disabled = !canPost;
+    socialPostBtn.textContent =
+      socialPostType === "text"
+        ? "Post"
+        : socialPostType === "achievement"
+          ? "Post Achievement"
+          : "Post Screenshot";
+  }
+  if (socialPostTypeSelect && socialPostTypeSelect.value !== socialPostType) {
+    socialPostTypeSelect.value = socialPostType;
+  }
+  setSocialStatus(status);
+}
+
+function renderSocialPosts(posts = socialPosts) {
+  if (!socialPostListEl) return;
+  socialPostListEl.innerHTML = "";
+  const list = Array.isArray(posts) ? posts : [];
+  if (!list.length) {
+    socialPostListEl.innerHTML = `<div class="meta">No screenshots yet. Be the first to post.</div>`;
+    return;
+  }
+  const frag = document.createDocumentFragment();
+  list.forEach((post) => {
+    const card = document.createElement("article");
+    card.className = "socialPost";
+    const isAuto = !!post?.isAuto;
+    if (isAuto) card.classList.add("autoPost");
+    if (post?.id) card.dataset.postId = post.id;
+
+    let autoLabel = "";
+    let autoGameTitle = "";
+    if (isAuto) {
+      const captionText = String(post?.caption || "").trim();
+      const lower = captionText.toLowerCase();
+      autoGameTitle = String(post?.game || "").trim();
+      if (lower.startsWith("mastered ")) {
+        autoLabel = "Mastered";
+        if (!autoGameTitle) autoGameTitle = captionText.slice(9).trim();
+      } else if (lower.startsWith("beaten ")) {
+        autoLabel = "Completed";
+        if (!autoGameTitle) autoGameTitle = captionText.slice(7).trim();
+      } else if (lower.startsWith("completed ")) {
+        autoLabel = "Completed";
+        if (!autoGameTitle) autoGameTitle = captionText.slice(10).trim();
+      } else {
+        autoLabel = "Completed";
+      }
+      if (!autoGameTitle) autoGameTitle = "a game";
+    }
+
+    const header = document.createElement("div");
+    header.className = "socialPostHeader";
+    const author = document.createElement("div");
+    author.className = "socialPostAuthor";
+    author.textContent = post?.user || "Unknown";
+    const time = document.createElement("div");
+    time.className = "meta";
+    time.textContent = formatDate(post?.createdAt);
+    if (post?.postType === "achievement" && !post?.isAuto) {
+      header.classList.add("isAchievement");
+      const title = document.createElement("div");
+      title.className = "socialHeaderTitle";
+      title.textContent = "Achievement";
+      header.append(author, title, time);
+    } else if (isAuto) {
+      header.classList.add("isAchievement");
+      const title = document.createElement("div");
+      title.className = "socialHeaderTitle";
+      title.textContent = `Game ${autoLabel}`;
+      header.append(author, title, time);
+    } else {
+      header.append(author, time);
+    }
+    card.append(header);
+
+    const isAchievementPost = !isAuto && post?.postType === "achievement";
+
+    if (isAchievementPost) {
+      const achievementLayout = document.createElement("div");
+      achievementLayout.className = "socialAutoLayout socialAchievementLayout";
+      const imgSrc = post?.imageData || post?.imageUrl || "";
+      if (imgSrc) {
+        const img = document.createElement("img");
+        img.className = "socialPostImage socialAutoImage";
+        img.loading = "lazy";
+        img.src = imgSrc;
+        img.alt = post?.achievementTitle ? `Achievement ${post.achievementTitle}` : "Achievement";
+        achievementLayout.append(img);
+      }
+      const info = document.createElement("div");
+      info.className = "socialAutoInfo";
+      const title = document.createElement("div");
+      title.className = "socialAutoTitle";
+      title.textContent = post?.achievementTitle || "Achievement unlocked";
+      const meta = document.createElement("div");
+      meta.className = "socialPostMeta";
+      meta.textContent = post?.game ? `Game: ${post.game}` : "";
+      info.append(title);
+      if (meta.textContent) info.append(meta);
+      if (post?.caption) {
+        const caption = document.createElement("div");
+        caption.className = "socialAchievementCaption";
+        caption.textContent = post.caption;
+        info.append(caption);
+      }
+      achievementLayout.append(info);
+      card.append(achievementLayout);
+    } else if (!isAuto && post?.game) {
+      const meta = document.createElement("div");
+      meta.className = "socialPostMeta";
+      meta.textContent = `Game: ${post.game}`;
+      card.append(meta);
+    }
+
+    if (!isAuto && !isAchievementPost && post?.caption) {
+      const caption = document.createElement("p");
+      caption.className = "socialPostCaption";
+      caption.textContent = post.caption;
+      card.append(caption);
+    }
+
+    const imgSrc = post?.imageData || post?.imageUrl || "";
+    if (isAuto) {
+      const autoLayout = document.createElement("div");
+      autoLayout.className = "socialAutoLayout";
+
+      if (imgSrc) {
+        const img = document.createElement("img");
+        img.className = "socialPostImage socialAutoImage";
+        img.loading = "lazy";
+        img.src = imgSrc;
+        img.alt = `Game art for ${post?.game || post?.caption || "a game"}`;
+        if (autoLabel === "Mastered") {
+          img.classList.add("isMastered");
+        } else if (autoLabel === "Completed") {
+          img.classList.add("isCompleted");
+        }
+        autoLayout.append(img);
+      }
+
+      const autoInfo = document.createElement("div");
+      autoInfo.className = "socialAutoInfo";
+
+      const status = document.createElement("div");
+      status.className = "socialAutoStatus";
+      status.textContent = autoLabel;
+      if (autoLabel === "Mastered") {
+        status.classList.add("isMastered");
+      }
+
+      const title = document.createElement("div");
+      title.className = "socialAutoTitle";
+      title.textContent = autoGameTitle;
+
+      autoInfo.append(status, title);
+      autoLayout.append(autoInfo);
+      card.append(autoLayout);
+    } else if (!isAchievementPost && imgSrc) {
+      const img = document.createElement("img");
+      img.className = "socialPostImage";
+      img.loading = "lazy";
+      img.src = imgSrc;
+      img.alt = `Screenshot posted by ${post?.user || "Unknown"}`;
+      card.append(img);
+    }
+
+    const commentsWrap = document.createElement("div");
+    commentsWrap.className = "socialComments";
+    const comments = Array.isArray(post?.comments) ? post.comments : [];
+    if (!comments.length) {
+      const empty = document.createElement("div");
+      empty.className = "meta";
+      empty.textContent = "No comments yet.";
+      commentsWrap.append(empty);
+    } else {
+      comments.forEach((comment) => {
+        const commentEl = document.createElement("div");
+        commentEl.className = "socialComment";
+
+        const commentHeader = document.createElement("div");
+        commentHeader.className = "socialCommentHeader";
+        const commentAuthor = document.createElement("div");
+        commentAuthor.className = "socialCommentAuthor";
+        commentAuthor.textContent = comment?.user || "Unknown";
+        const commentTime = document.createElement("div");
+        commentTime.className = "meta";
+        commentTime.textContent = formatDate(comment?.createdAt);
+        commentHeader.append(commentAuthor, commentTime);
+
+        const commentBody = document.createElement("div");
+        commentBody.className = "socialCommentBody";
+        commentBody.textContent = comment?.text || "";
+
+        commentEl.append(commentHeader, commentBody);
+        commentsWrap.append(commentEl);
+      });
+    }
+
+    const form = document.createElement("form");
+    form.className = "socialCommentForm";
+    if (post?.id) form.dataset.postId = post.id;
+    const input = document.createElement("input");
+    input.className = "socialCommentInput";
+    input.type = "text";
+    input.placeholder = currentUser ? "Add a comment" : "Set username to comment";
+    input.autocomplete = "off";
+    input.disabled = !currentUser;
+    const btn = document.createElement("button");
+    btn.className = "smallBtn";
+    btn.type = "submit";
+    btn.textContent = "Post";
+    btn.disabled = !currentUser;
+    form.append(input, btn);
+    commentsWrap.append(form);
+
+    card.append(commentsWrap);
+    frag.append(card);
+  });
+  socialPostListEl.append(frag);
+}
+
+async function loadSocialPostsFromServer({ silent = false } = {}) {
+  if (!socialPostListEl) return;
+  try {
+    if (!silent) setSocialStatus("Loading feed...");
+    const data = await fetchSocialPosts(SOCIAL_MAX_POSTS);
+    const results = Array.isArray(data?.results) ? data.results : [];
+    socialPosts = results;
+    renderSocialPosts(socialPosts);
+    if (!silent) setSocialStatus("");
+  } catch (err) {
+    if (!silent) setSocialStatus("Failed to load social feed.");
+    socialPostListEl.innerHTML = `<div class="meta">Failed to load screenshots.</div>`;
+  }
+}
+
+function startSocialPolling() {
+  stopSocialPolling();
+  socialPollTimer = setInterval(() => {
+    loadSocialPostsFromServer({ silent: true });
+  }, SOCIAL_POLL_MS);
+}
+
+function stopSocialPolling() {
+  if (socialPollTimer) {
+    clearInterval(socialPollTimer);
+    socialPollTimer = null;
+  }
+}
+
+function addSocialComment(postId, text) {
+  if (!postId || !text) return;
+  const payload = { text };
+  return fetchServerJson(`/api/social/posts/${encodeURIComponent(postId)}/comments`, {
+    method: "POST",
+    body: payload
+  });
+}
+
 loadState();
+updateSocialComposerState();
 
 function cacheSet(key, data) {
   try {
@@ -1303,6 +1796,26 @@ async function loginUser(username) {
   return clampUsername(data?.username || username);
 }
 
+async function fetchSocialPosts(limit = SOCIAL_MAX_POSTS) {
+  const count = Number.isFinite(limit) ? limit : SOCIAL_MAX_POSTS;
+  return fetchServerJson(`/api/social/posts?limit=${encodeURIComponent(count)}`, { silent: true });
+}
+
+async function createSocialPost({ postType = "text", imageData = "", imageUrl = "", caption = "", game = "", achievementTitle = "", achievementId = "" }) {
+  return fetchServerJson("/api/social/posts", {
+    method: "POST",
+    body: {
+      postType,
+      imageData,
+      imageUrl,
+      caption,
+      game,
+      achievementTitle,
+      achievementId
+    }
+  });
+}
+
 async function loadFriendsFromServer() {
   try {
     const data = await fetchServerJson("/api/friends", { silent: true });
@@ -1607,6 +2120,7 @@ function setActivePage(name) {
   if (dashboardPage) dashboardPage.hidden = name !== "dashboard";
   if (findGamesPage) findGamesPage.hidden = name !== "find-games";
   if (challengesPage) challengesPage.hidden = name !== "challenges";
+  if (socialPage) socialPage.hidden = name !== "social";
   if (profilePage) profilePage.hidden = name !== "profile";
   if (backlogPage) backlogPage.hidden = name !== "backlog";
   if (name !== "backlog") setBacklogRemoveMode(false);
@@ -1621,6 +2135,13 @@ function setActivePage(name) {
   if (name === "backlog") {
     if (!backlogViewUser) setBacklogViewUser(currentUser);
     renderBacklog();
+  }
+  if (name === "social") {
+    loadSocialPostsFromServer();
+    updateSocialComposerState();
+    startSocialPolling();
+  } else {
+    stopSocialPolling();
   }
   if (name === "profile") {
     moveProfilePanel(profileHostProfile);
@@ -5298,6 +5819,204 @@ if (backlogListEl) {
     const gameId = tile.getAttribute("data-game-id");
     if (!gameId) return;
     removeFromBacklog(gameId);
+  });
+}
+
+if (socialComposerOpenBtn) {
+  socialComposerOpenBtn.addEventListener("click", openSocialComposer);
+}
+if (socialComposerCloseBtn) {
+  socialComposerCloseBtn.addEventListener("click", closeSocialComposer);
+}
+if (socialComposerModal) {
+  socialComposerModal.addEventListener("click", (e) => {
+    if (e.target === socialComposerModal) closeSocialComposer();
+  });
+}
+
+if (socialPostTypeSelect) {
+  socialPostTypeSelect.addEventListener("change", () => {
+    setSocialPostType(socialPostTypeSelect.value);
+  });
+  setSocialPostType(socialPostTypeSelect.value || "text");
+}
+
+if (socialTextInput) {
+  socialTextInput.addEventListener("input", updateSocialComposerState);
+}
+
+if (socialCaptionInput) {
+  socialCaptionInput.addEventListener("input", updateSocialComposerState);
+}
+
+if (socialAchievementCaptionInput) {
+  socialAchievementCaptionInput.addEventListener("input", updateSocialComposerState);
+}
+
+if (socialAchievementGameBtn) {
+  socialAchievementGameBtn.addEventListener("click", async () => {
+    if (!socialAchievementGamesEl) return;
+    const nextHidden = !socialAchievementGamesEl.hidden;
+    socialAchievementGamesEl.hidden = nextHidden;
+    if (!nextHidden) {
+      await ensureSocialAchievementGames();
+    }
+  });
+}
+
+if (socialAchievementGamesEl) {
+  socialAchievementGamesEl.addEventListener("click", async (e) => {
+    const tile = e.target.closest(".socialAchievementGameTile");
+    if (!tile) return;
+    const gameId = Number(tile.dataset.gameId);
+    const title = tile.dataset.gameTitle || "";
+    const icon = tile.dataset.gameIcon || "";
+    if (!Number.isFinite(gameId)) return;
+    socialAchievementGame = { gameId, title, imageIcon: icon };
+    if (socialAchievementGameSelected) {
+      socialAchievementGameSelected.textContent = title ? `Selected: ${title}` : "Game selected.";
+    }
+    if (socialAchievementGameBtn) {
+      socialAchievementGameBtn.textContent = "Change Game";
+    }
+    if (socialAchievementGamesEl) socialAchievementGamesEl.hidden = true;
+    await loadSocialAchievementList(gameId);
+    updateSocialComposerState();
+  });
+}
+
+if (socialAchievementListEl) {
+  socialAchievementListEl.addEventListener("click", (e) => {
+    const item = e.target.closest(".socialAchievementItem");
+    if (!item) return;
+    const achievementId = item.dataset.achievementId;
+    socialAchievementSelected = socialAchievementItems.find(a => String(a.id) === String(achievementId)) || null;
+    socialAchievementListEl.querySelectorAll(".socialAchievementItem").forEach((el) => {
+      el.classList.toggle("selected", el === item);
+    });
+    updateSocialComposerState();
+  });
+}
+
+if (socialUploadInput) {
+  socialUploadInput.addEventListener("change", async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setSocialStatus("Please choose an image file.");
+      e.target.value = "";
+      return;
+    }
+    if (file.size > SOCIAL_MAX_IMAGE_BYTES) {
+      setSocialStatus("Screenshot too large. Keep it under 2MB.");
+      e.target.value = "";
+      return;
+    }
+    try {
+      setSocialStatus("Loading preview...");
+      const dataUrl = await readImageAsDataUrl(file);
+      setSocialPreview(String(dataUrl || ""));
+    } catch (err) {
+      setSocialStatus("Failed to load screenshot.");
+    }
+  });
+}
+
+if (socialPreviewRemoveBtn) {
+  socialPreviewRemoveBtn.addEventListener("click", () => {
+    if (socialUploadInput) socialUploadInput.value = "";
+    setSocialPreview("");
+  });
+}
+
+if (socialPostBtn) {
+  socialPostBtn.addEventListener("click", async () => {
+    if (!currentUser) {
+      setSocialStatus("Set your username in Settings to post.");
+      return;
+    }
+    try {
+      socialPostBtn.disabled = true;
+      if (socialPostType === "text") {
+        const text = (socialTextInput?.value || "").trim();
+        if (!text) {
+          setSocialStatus("Write something to post.");
+          return;
+        }
+        setSocialStatus("Posting...");
+        await createSocialPost({ postType: "text", caption: text });
+      } else if (socialPostType === "achievement") {
+        if (!socialAchievementGame || !socialAchievementSelected) {
+          setSocialStatus("Select a game and achievement.");
+          return;
+        }
+        const achievementCaption = (socialAchievementCaptionInput?.value || "").trim();
+        setSocialStatus("Posting achievement...");
+        await createSocialPost({
+          postType: "achievement",
+          game: socialAchievementGame.title,
+          imageUrl: iconUrl(socialAchievementSelected.badgeUrl || ""),
+          caption: achievementCaption,
+          achievementTitle: socialAchievementSelected.title,
+          achievementId: socialAchievementSelected.id
+        });
+      } else {
+        if (!socialDraftImageData) {
+          setSocialStatus("Add a screenshot to post.");
+          return;
+        }
+        const caption = (socialCaptionInput?.value || "").trim();
+        const game = (socialGameInput?.value || "").trim();
+        setSocialStatus("Posting screenshot...");
+        await createSocialPost({ postType: "screenshot", imageData: socialDraftImageData, caption, game });
+      }
+      if (socialCaptionInput) socialCaptionInput.value = "";
+      if (socialGameInput) socialGameInput.value = "";
+      if (socialTextInput) socialTextInput.value = "";
+      if (socialAchievementCaptionInput) socialAchievementCaptionInput.value = "";
+      if (socialUploadInput) socialUploadInput.value = "";
+      setSocialPreview("");
+      socialAchievementSelected = null;
+      renderSocialAchievementList(socialAchievementItems);
+      await loadSocialPostsFromServer({ silent: true });
+      setSocialStatus("");
+      closeSocialComposer();
+    } catch (err) {
+      setSocialStatus("Failed to post.");
+    } finally {
+      updateSocialComposerState();
+    }
+  });
+}
+
+if (socialPostListEl) {
+  socialPostListEl.addEventListener("submit", async (e) => {
+    const form = e.target.closest(".socialCommentForm");
+    if (!form) return;
+    e.preventDefault();
+    const input = form.querySelector(".socialCommentInput");
+    const text = (input?.value || "").trim();
+    if (!text) return;
+    if (!currentUser) {
+      setSocialStatus("Set your username in Settings to comment.");
+      return;
+    }
+    try {
+      setSocialStatus("Posting comment...");
+      await addSocialComment(form.dataset.postId, text);
+      await loadSocialPostsFromServer({ silent: true });
+      setSocialStatus("");
+    } catch (err) {
+      setSocialStatus("Failed to post comment.");
+    }
+  });
+  socialPostListEl.addEventListener("click", (e) => {
+    const img = e.target.closest(".socialPostImage");
+    if (!img || !imageModal || !imageModalImg) return;
+    const src = img.getAttribute("src");
+    if (!src) return;
+    imageModalImg.src = src;
+    imageModal.hidden = false;
   });
 }
 

@@ -20,13 +20,15 @@ if (fs.existsSync(envPath)) {
 
 const app = express();
 app.set("trust proxy", 1);
-app.use(express.json());
+app.use(express.json({ limit: "3mb" }));
 
 const PORT = Number(process.env.PORT || 5179);
 const RA_API_KEY = process.env.RA_API_KEY;
 const DATABASE_URL = process.env.DATABASE_URL;
 const SESSION_SECRET = process.env.SESSION_SECRET || "dev-session-secret";
 const SNAPSHOT_SECRET = process.env.SNAPSHOT_SECRET || "";
+const SOCIAL_MAX_IMAGE_BYTES = 2 * 1024 * 1024;
+const SOCIAL_MAX_POSTS = 40;
 
 if (!RA_API_KEY) {
   console.warn("WARNING: RA_API_KEY is not set. Check .env next to server.js.");
@@ -180,6 +182,50 @@ async function initDb() {
     ADD COLUMN IF NOT EXISTS started_awarded INTEGER NOT NULL DEFAULT 0,
     ADD COLUMN IF NOT EXISTS started_total INTEGER NOT NULL DEFAULT 0,
     ADD COLUMN IF NOT EXISTS started_checked_at TIMESTAMPTZ
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS social_posts (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      username TEXT NOT NULL,
+      game_title TEXT,
+      caption TEXT,
+      image_data TEXT NOT NULL,
+      image_url TEXT,
+      is_auto BOOLEAN NOT NULL DEFAULT false,
+      post_type TEXT NOT NULL DEFAULT 'screenshot',
+      achievement_title TEXT,
+      achievement_id INTEGER,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+  await pool.query(`
+    ALTER TABLE social_posts
+    ADD COLUMN IF NOT EXISTS image_url TEXT,
+    ADD COLUMN IF NOT EXISTS is_auto BOOLEAN NOT NULL DEFAULT false,
+    ADD COLUMN IF NOT EXISTS post_type TEXT NOT NULL DEFAULT 'screenshot',
+    ADD COLUMN IF NOT EXISTS achievement_title TEXT,
+    ADD COLUMN IF NOT EXISTS achievement_id INTEGER
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS social_comments (
+      id SERIAL PRIMARY KEY,
+      post_id INTEGER NOT NULL REFERENCES social_posts(id) ON DELETE CASCADE,
+      user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      username TEXT NOT NULL,
+      body TEXT NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS social_completion_events (
+      id SERIAL PRIMARY KEY,
+      username TEXT NOT NULL,
+      game_id INTEGER NOT NULL,
+      award_kind TEXT NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(username, game_id, award_kind)
+    );
   `);
 }
 
@@ -692,6 +738,67 @@ app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
 function normalizeUsername(u) {
   return String(u || "").trim().replace(/\s+/g, "").toLowerCase();
+}
+
+function estimateDataUrlBytes(dataUrl) {
+  const raw = String(dataUrl || "");
+  if (!raw) return 0;
+  const commaIndex = raw.indexOf(",");
+  if (commaIndex === -1) return Buffer.byteLength(raw, "utf8");
+  const base64 = raw.slice(commaIndex + 1);
+  const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
+  return Math.max(0, Math.floor((base64.length * 3) / 4) - padding);
+}
+
+function raAssetUrl(rel) {
+  if (!rel) return "";
+  if (String(rel).startsWith("http")) return rel;
+  if (String(rel).startsWith("//")) return `https:${rel}`;
+  return `https://retroachievements.org${rel}`;
+}
+
+function completionAwardKind(raw) {
+  const value = String(raw || "").toLowerCase();
+  if (value.includes("master")) return "mastered";
+  if (value.includes("beaten")) return "beaten";
+  return "";
+}
+
+async function recordCompletionSocialPost({ username, gameId, gameTitle, imageIcon, awardKind }) {
+  if (!pool) return;
+  if (!username || !gameId || !awardKind) return;
+  const normalized = normalizeUsername(username);
+  const imageUrl = raAssetUrl(imageIcon);
+  const label = awardKind === "mastered" ? "Mastered" : "Completed";
+  const caption = `${label} ${gameTitle || "a game"}`;
+
+  const userRes = await pool.query(
+    `SELECT id, username FROM users WHERE LOWER(username) = LOWER($1)`,
+    [normalized]
+  );
+  const userId = userRes.rows[0]?.id ?? null;
+  const displayName = userRes.rows[0]?.username ?? username;
+
+  const insertEvent = await pool.query(
+    `
+      INSERT INTO social_completion_events (username, game_id, award_kind, created_at)
+      VALUES ($1, $2, $3, NOW())
+      ON CONFLICT (username, game_id, award_kind) DO NOTHING
+      RETURNING id
+    `,
+    [normalized, Number(gameId), awardKind]
+  );
+
+  if (!insertEvent.rows.length) return;
+
+  await pool.query(
+    `
+      INSERT INTO social_posts
+        (user_id, username, game_title, caption, image_data, image_url, is_auto, post_type, created_at)
+      VALUES ($1, $2, $3, $4, '', $5, true, 'completion', NOW())
+    `,
+    [userId, displayName, gameTitle || null, caption, imageUrl || null]
+  );
 }
 
 function requireAuth(req, res, next) {
@@ -1989,6 +2096,37 @@ app.get("/api/user-completion-progress/:username", async (req, res) => {
       highestAwardDate: r.HighestAwardDate ?? r.highestAwardDate
     }));
 
+    const completionCandidates = normalized
+      .map((row) => ({
+        gameId: row.gameId,
+        title: row.title,
+        imageIcon: row.imageIcon,
+        awardKind: completionAwardKind(row.highestAwardKind)
+      }))
+      .filter((row) => row.gameId && row.awardKind);
+
+    if (completionCandidates.length) {
+      const unique = new Map();
+      completionCandidates.forEach((row) => {
+        const key = `${row.gameId}:${row.awardKind}`;
+        if (!unique.has(key)) unique.set(key, row);
+      });
+      const list = Array.from(unique.values()).slice(0, 30);
+      for (const row of list) {
+        try {
+          await recordCompletionSocialPost({
+            username,
+            gameId: row.gameId,
+            gameTitle: row.title,
+            imageIcon: row.imageIcon,
+            awardKind: row.awardKind
+          });
+        } catch (err) {
+          // ignore social auto-post failures
+        }
+      }
+    }
+
     const payload = {
       username,
       count: normalized.length,
@@ -2001,6 +2139,184 @@ app.get("/api/user-completion-progress/:username", async (req, res) => {
   } catch (err) {
     const status = err?.status || 500;
     res.status(status).json({ error: err?.message || "Failed to fetch completion progress" });
+  }
+});
+
+// Social screenshots (public read)
+app.get("/api/social/posts", async (req, res) => {
+  try {
+    if (!pool) return res.json({ count: 0, results: [] });
+    const limitQ = typeof req.query.limit === "string" ? Number(req.query.limit) : SOCIAL_MAX_POSTS;
+    const limit = Math.max(1, Math.min(SOCIAL_MAX_POSTS, Number.isFinite(limitQ) ? limitQ : SOCIAL_MAX_POSTS));
+    const postsRes = await pool.query(
+      `
+        SELECT id, username, game_title, caption, image_data, image_url, is_auto, post_type, achievement_title, achievement_id, created_at
+        FROM social_posts
+        ORDER BY created_at DESC
+        LIMIT $1
+      `,
+      [limit]
+    );
+    const posts = postsRes.rows.map((row) => ({
+      id: row.id,
+      user: row.username,
+      game: row.game_title || "",
+      caption: row.caption || "",
+      imageData: row.image_data,
+      imageUrl: row.image_url,
+      isAuto: row.is_auto,
+      postType: row.post_type,
+      achievementTitle: row.achievement_title,
+      achievementId: row.achievement_id,
+      createdAt: row.created_at,
+      comments: []
+    }));
+
+    if (!posts.length) {
+      return res.json({ count: 0, results: [] });
+    }
+
+    const postIds = posts.map(p => p.id);
+    const commentsRes = await pool.query(
+      `
+        SELECT id, post_id, username, body, created_at
+        FROM social_comments
+        WHERE post_id = ANY($1)
+        ORDER BY created_at ASC
+      `,
+      [postIds]
+    );
+    const byPost = new Map();
+    commentsRes.rows.forEach((row) => {
+      if (!byPost.has(row.post_id)) byPost.set(row.post_id, []);
+      byPost.get(row.post_id).push({
+        id: row.id,
+        user: row.username,
+        text: row.body,
+        createdAt: row.created_at
+      });
+    });
+    posts.forEach((post) => {
+      post.comments = byPost.get(post.id) || [];
+    });
+
+    res.json({ count: posts.length, results: posts });
+  } catch (err) {
+    const status = err?.status || 500;
+    res.status(status).json({ error: err?.message || "Failed to fetch social posts" });
+  }
+});
+
+// Create social post (auth required)
+app.post("/api/social/posts", requireAuth, async (req, res) => {
+  try {
+    if (!pool) return res.status(500).json({ error: "Database unavailable" });
+    const userId = req.session?.user?.id;
+    const username = req.session?.user?.username;
+    if (!userId || !username) return res.status(401).json({ error: "Not authenticated" });
+
+    const postType = String(req.body?.postType || "text").trim().toLowerCase();
+    const caption = String(req.body?.caption || "").trim();
+    const gameTitle = String(req.body?.game || "").trim();
+    const imageData = String(req.body?.imageData || "").trim();
+    const imageUrl = String(req.body?.imageUrl || "").trim();
+    const achievementTitle = String(req.body?.achievementTitle || "").trim();
+    const achievementIdRaw = req.body?.achievementId;
+    const achievementId = Number.isFinite(Number(achievementIdRaw)) ? Number(achievementIdRaw) : null;
+
+    if (!["text", "screenshot", "achievement"].includes(postType)) {
+      return res.status(400).json({ error: "Invalid post type" });
+    }
+    if (postType === "screenshot") {
+      if (!imageData || !imageData.startsWith("data:image/")) {
+        return res.status(400).json({ error: "Invalid image data" });
+      }
+      const sizeBytes = estimateDataUrlBytes(imageData);
+      if (sizeBytes <= 0 || sizeBytes > SOCIAL_MAX_IMAGE_BYTES) {
+        return res.status(400).json({ error: "Image too large (max 2MB)" });
+      }
+    } else if (postType === "text") {
+      if (!caption) return res.status(400).json({ error: "Text post requires content" });
+    } else if (postType === "achievement") {
+      if (!achievementTitle || !gameTitle || !imageUrl) {
+        return res.status(400).json({ error: "Achievement post missing details" });
+      }
+    }
+
+    const insertRes = await pool.query(
+      `
+        INSERT INTO social_posts
+          (user_id, username, game_title, caption, image_data, image_url, is_auto, post_type, achievement_title, achievement_id, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, false, $7, $8, $9, NOW())
+        RETURNING id, created_at
+      `,
+      [
+        userId,
+        username,
+        gameTitle || null,
+        caption || null,
+        imageData,
+        imageUrl || null,
+        postType,
+        achievementTitle || null,
+        achievementId
+      ]
+    );
+
+    res.json({
+      id: insertRes.rows[0].id,
+      user: username,
+      game: gameTitle,
+      caption,
+      imageData,
+      imageUrl: imageUrl || null,
+      isAuto: false,
+      postType,
+      achievementTitle: achievementTitle || null,
+      achievementId,
+      createdAt: insertRes.rows[0].created_at,
+      comments: []
+    });
+  } catch (err) {
+    const status = err?.status || 500;
+    res.status(status).json({ error: err?.message || "Failed to create social post" });
+  }
+});
+
+// Add social comment (auth required)
+app.post("/api/social/posts/:id/comments", requireAuth, async (req, res) => {
+  try {
+    if (!pool) return res.status(500).json({ error: "Database unavailable" });
+    const userId = req.session?.user?.id;
+    const username = req.session?.user?.username;
+    if (!userId || !username) return res.status(401).json({ error: "Not authenticated" });
+    const postId = Number(req.params.id);
+    if (!Number.isFinite(postId)) return res.status(400).json({ error: "Invalid post id" });
+    const text = String(req.body?.text || "").trim();
+    if (!text) return res.status(400).json({ error: "Missing comment text" });
+
+    const postRes = await pool.query(`SELECT id FROM social_posts WHERE id = $1`, [postId]);
+    if (!postRes.rows.length) return res.status(404).json({ error: "Post not found" });
+
+    const insertRes = await pool.query(
+      `
+        INSERT INTO social_comments (post_id, user_id, username, body, created_at)
+        VALUES ($1, $2, $3, $4, NOW())
+        RETURNING id, created_at
+      `,
+      [postId, userId, username, text]
+    );
+
+    res.json({
+      id: insertRes.rows[0].id,
+      postId,
+      user: username,
+      text,
+      createdAt: insertRes.rows[0].created_at
+    });
+  } catch (err) {
+    const status = err?.status || 500;
+    res.status(status).json({ error: err?.message || "Failed to add comment" });
   }
 });
 

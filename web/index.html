@@ -34,6 +34,7 @@
       <button class="pageBtn active" data-page="dashboard" role="tab" aria-selected="true">Dashboard</button>
       <button class="pageBtn" data-page="find-games" role="tab" aria-selected="false">Find Games</button>
       <button class="pageBtn" data-page="challenges" role="tab" aria-selected="false">Challenges</button>
+      <button class="pageBtn" data-page="social" role="tab" aria-selected="false">Social</button>
       <button class="pageBtn backlogTab" data-page="backlog" role="tab" aria-selected="false">My Backlog</button>
       <button class="pageBtn profileTab" data-page="profile" role="tab" aria-selected="false">My Profile</button>
     </div>
@@ -377,6 +378,82 @@
         </div>
       </section>
     </section>
+    <section id="socialPage" class="page" hidden>
+      <section class="card">
+        <div class="sectionHead">
+          <h2 class="sectionTitle">Social</h2>
+          <div class="sectionControls">
+            <button id="socialComposerOpenBtn" class="primaryBtn" type="button">Make a Post</button>
+          </div>
+        </div>
+        <div class="socialLayout single">
+          <div class="socialFeed">
+            <h3 class="sectionTitle">Latest Posts</h3>
+            <div id="socialPostList" class="socialPostList"></div>
+          </div>
+        </div>
+      </section>
+    </section>
+    <div id="socialComposerModal" class="modal" hidden>
+      <div class="modalCard">
+        <div class="sectionHead">
+          <h2 class="sectionTitle">Make a Post</h2>
+          <button id="socialComposerCloseBtn" class="smallBtn">Close</button>
+        </div>
+        <div class="field">
+          <label for="socialPostType">Post type</label>
+          <select id="socialPostType" class="mutedSelect">
+            <option value="text">Text</option>
+            <option value="screenshot">Screenshot</option>
+            <option value="achievement">Achievement</option>
+          </select>
+        </div>
+        <div id="socialTextSection" class="socialComposerSection">
+          <div class="field">
+            <label for="socialTextBody">Post</label>
+            <textarea id="socialTextBody" rows="5" placeholder="Share something with the group..." autocomplete="off"></textarea>
+          </div>
+        </div>
+        <div id="socialScreenshotSection" class="socialComposerSection" hidden>
+        <div class="field">
+          <label for="socialGame">Game (optional)</label>
+          <input id="socialGame" placeholder="Game title" autocomplete="off" />
+        </div>
+        <div class="field">
+          <label for="socialCaption">Caption (optional)</label>
+          <textarea id="socialCaption" rows="4" placeholder="What did you just do?" autocomplete="off"></textarea>
+        </div>
+        <div class="field">
+          <label for="socialUpload">Screenshot</label>
+          <input id="socialUpload" type="file" accept="image/*" />
+        </div>
+        <div id="socialPreview" class="socialPreview" hidden>
+          <img id="socialPreviewImg" alt="Screenshot preview" />
+          <button id="socialPreviewRemoveBtn" class="smallBtn" type="button">Remove</button>
+        </div>
+        </div>
+        <div id="socialAchievementSection" class="socialComposerSection" hidden>
+          <div class="socialAchievementHeader">
+            <button id="socialAchievementGameBtn" class="smallBtn" type="button">Select Game</button>
+            <div id="socialAchievementGameSelected" class="note">No game selected.</div>
+          </div>
+          <div id="socialAchievementGames" class="socialAchievementGames" hidden></div>
+          <div class="field">
+            <label for="socialAchievementCaption">Caption (optional)</label>
+            <textarea id="socialAchievementCaption" rows="3" placeholder="Say something about this unlock..." autocomplete="off"></textarea>
+          </div>
+          <div class="socialAchievementListWrap">
+            <div id="socialAchievementStatus" class="note">Select a game to see earned achievements.</div>
+            <div id="socialAchievementList" class="socialAchievementList"></div>
+          </div>
+        </div>
+        <div class="buttons">
+          <button id="socialPostBtn" class="primaryBtn" type="button">Post Screenshot</button>
+        </div>
+        <p id="socialStatus" class="note"></p>
+        <p class="note">Screenshots and comments are synced to the server.</p>
+      </div>
+    </div>
     <div id="challengeHistoryModal" class="modal" hidden>
       <div class="modalCard">
         <div class="sectionHead">
