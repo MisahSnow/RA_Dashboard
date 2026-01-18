@@ -443,6 +443,8 @@ let profileActivityUser = "";
 let profileRecentGames = [];
 let profileCommonGames = [];
 let profileRecentTab = "recent";
+let profileCompletionList = [];
+let profileCompletionListLoading = false;
 const profileAchievementLimiter = createLimiter(2);
 const summaryLimiter = createLimiter(2);
 const RECENT_DEFAULT_ROWS = 6;
@@ -2192,7 +2194,6 @@ function setActivePage(name) {
   } else if (name === "game") {
     moveSelfGamePanel(selfGameHostPage);
     moveComparePanel(compareHostPage);
-    if (selfGamePanel) selfGamePanel.hidden = false;
   } else {
     const isSelfOpen = currentProfileUser && currentUser &&
       currentProfileUser.toLowerCase() === currentUser.toLowerCase();
@@ -4368,6 +4369,12 @@ function getMasteredFlag(kindRaw) {
   return Boolean(kind && kind.includes("mastered"));
 }
 
+function getCompletionSortTs(game) {
+  const raw = game?.highestAwardDate || game?.mostRecentAwardedDate || "";
+  const ts = Date.parse(raw);
+  return Number.isFinite(ts) ? ts : 0;
+}
+
 function updateTileBadge(tile, gameId) {
   if (!tile || !gameId) return;
   const counts = profileGameAchievementCounts.get(String(gameId));
@@ -4583,6 +4590,18 @@ function getCommonGames(mineList, theirsList) {
   const mineIds = new Set((mineList || []).map(g => String(g.gameId ?? "")).filter(Boolean));
   if (!mineIds.size) return [];
   return (theirsList || []).filter(g => mineIds.has(String(g.gameId ?? "")));
+}
+
+function normalizeCompletionList(list) {
+  const items = Array.isArray(list) ? list : [];
+  return items.map((row) => ({
+    gameId: row.gameId ?? row.GameID,
+    title: row.title ?? row.Title ?? "",
+    imageIcon: row.imageIcon ?? row.ImageIcon ?? "",
+    highestAwardKind: row.highestAwardKind ?? row.HighestAwardKind ?? "",
+    highestAwardDate: row.highestAwardDate ?? row.HighestAwardDate ?? "",
+    mostRecentAwardedDate: row.mostRecentAwardedDate ?? row.MostRecentAwardedDate ?? ""
+  })).filter(g => g.gameId);
 }
 
 async function loadMoreProfileGames() {
@@ -4975,6 +4994,8 @@ async function openProfile(username) {
   profileCommonGames = [];
   profileAllowCompare = !isSelf;
   profileIsSelf = isSelf;
+  profileCompletionList = [];
+  profileCompletionListLoading = false;
   if (profileLegendMeEl) {
     profileLegendMeEl.textContent = me || "You";
   }
@@ -5008,6 +5029,7 @@ async function openProfile(username) {
   setLoading(profileLoadingEl, true);
   loadProfileActivity(target);
   loadProfileRecentGames(target);
+  loadProfileCompletionList(target);
 
   let summaryRendered = false;
   try {
@@ -5375,6 +5397,7 @@ async function openGameCompare(game) {
   compareReturnToProfile = activePageName === "profile";
   setActivePage("game");
   profilePanel.hidden = true;
+  if (selfGamePanel) selfGamePanel.hidden = true;
   comparePanel.hidden = false;
   setActiveCompareTab("achievements");
   compareTitleGameEl.textContent = game.title || `Game ${safeText(game.gameId)}`;
@@ -5954,6 +5977,9 @@ function setProfileRecentTab(name) {
     btn.classList.toggle("active", isActive);
     btn.setAttribute("aria-selected", isActive ? "true" : "false");
   });
+  if ((profileRecentTab === "completed" || profileRecentTab === "mastered") && currentProfileUser) {
+    loadProfileCompletionList(currentProfileUser);
+  }
   renderProfileRecentTab();
 }
 
@@ -5975,6 +6001,18 @@ function filterProfileRecentByCompletion(list, mode) {
   });
 }
 
+function filterProfileCompletionList(mode) {
+  const items = Array.isArray(profileCompletionList) ? profileCompletionList : [];
+  if (!items.length) return [];
+  return items.filter((game) => {
+    const kind = game.highestAwardKind || "";
+    const isMastered = getMasteredFlag(kind);
+    if (mode === "mastered") return isMastered;
+    if (mode === "completed") return getCompletedFlag(kind) && !isMastered;
+    return false;
+  });
+}
+
 function renderProfileRecentTab(queryOverride = null) {
   if (!profileRecentGamesEl) return;
   const query = queryOverride !== null
@@ -5988,18 +6026,18 @@ function renderProfileRecentTab(queryOverride = null) {
     baseList = profileCommonGames || [];
     emptyMessage = "No games in common found.";
   } else if (profileRecentTab === "completed") {
-    if (profileCompletionLoading && !profileCompletionByGameId.size) {
-      profileRecentGamesEl.innerHTML = `<div class="meta">Loading completion data...</div>`;
+    if (profileCompletionListLoading && !profileCompletionList.length) {
+      profileRecentGamesEl.innerHTML = `<div class="meta">Loading completed games...</div>`;
       return;
     }
-    baseList = filterProfileRecentByCompletion(profileRecentGames, "completed");
+    baseList = filterProfileCompletionList("completed");
     emptyMessage = "No completed games found.";
   } else if (profileRecentTab === "mastered") {
-    if (profileCompletionLoading && !profileCompletionByGameId.size) {
-      profileRecentGamesEl.innerHTML = `<div class="meta">Loading completion data...</div>`;
+    if (profileCompletionListLoading && !profileCompletionList.length) {
+      profileRecentGamesEl.innerHTML = `<div class="meta">Loading mastered games...</div>`;
       return;
     }
-    baseList = filterProfileRecentByCompletion(profileRecentGames, "mastered");
+    baseList = filterProfileCompletionList("mastered");
     emptyMessage = "No mastered games found.";
   } else {
     baseList = profileRecentGames || [];
@@ -6062,6 +6100,67 @@ function renderProfileRecentGames(list, emptyMessage = "No recent games found.")
     }
   });
   profileRecentGamesEl.appendChild(frag);
+}
+
+async function loadProfileCompletionList(username) {
+  const target = clampUsername(username);
+  if (!target) return;
+  if (profileCompletionList.length && clampUsername(currentProfileUser) === target) return;
+  if (profileCompletionListLoading) return;
+  profileCompletionListLoading = true;
+  const loadToken = activeProfileLoadToken;
+
+  try {
+    const perPage = 500;
+    let offset = 0;
+    let total = null;
+    let pages = 0;
+    const maxPages = 20;
+    const combined = [];
+
+    while (pages < maxPages) {
+      pages += 1;
+      const data = await fetchUserCompletionProgress(target, perPage, offset);
+      if (loadToken !== activeProfileLoadToken || clampUsername(currentProfileUser) !== target) return;
+      const results = data?.results || [];
+      if (results.length) combined.push(...results);
+
+      if (total === null) {
+        const t = Number(data?.total ?? data?.Total ?? 0);
+        total = Number.isFinite(t) ? t : 0;
+      }
+
+      if (results.length < perPage) break;
+      offset += perPage;
+      if (total && offset >= total) break;
+    }
+
+    const normalized = normalizeCompletionList(combined);
+    normalized.sort((a, b) => getCompletionSortTs(b) - getCompletionSortTs(a));
+    profileCompletionList = normalized;
+
+    if (normalized.length) {
+      const map = new Map();
+      normalized.forEach((row) => {
+        if (!row.gameId || !row.highestAwardKind) return;
+        map.set(String(row.gameId), String(row.highestAwardKind));
+      });
+      map.forEach((kind, id) => {
+        profileCompletionByGameId.set(id, kind);
+      });
+      refreshCompletionBadges();
+    }
+
+    renderProfileRecentTab();
+  } catch {
+    if (profileRecentTab === "completed" || profileRecentTab === "mastered") {
+      if (profileRecentGamesEl) {
+        profileRecentGamesEl.innerHTML = `<div class="meta">Failed to load completed games.</div>`;
+      }
+    }
+  } finally {
+    profileCompletionListLoading = false;
+  }
 }
 
 async function loadProfileRecentGames(username) {
