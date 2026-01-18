@@ -1659,6 +1659,21 @@ async function fetchHourlyHistory(users, hours = 24) {
   return data?.results || {};
 }
 
+async function fetchUserLevels(users) {
+  const list = users.map(normalizeUserKey).filter(Boolean);
+  if (!list.length) return {};
+  const params = new URLSearchParams();
+  params.set("users", list.join(","));
+  const data = await fetchJson(`/api/user-levels?${params.toString()}`);
+  const results = Array.isArray(data?.results) ? data.results : [];
+  const map = {};
+  results.forEach((row) => {
+    const key = normalizeUserKey(row.username);
+    if (key) map[key] = row.level;
+  });
+  return map;
+}
+
 async function fetchGameLeaderboards(gameId) {
   return fetchJson(`/api/game-leaderboards/${encodeURIComponent(gameId)}`);
 }
@@ -4110,11 +4125,12 @@ function renderLeaderboard(rows, me) {
     const delta = r.deltaVsYou;
     const cls = delta > 0 ? "delta-neg" : delta < 0 ? "delta-pos" : "delta-zero";
     const isMe = (r.username && me) ? r.username.toLowerCase() === me.toLowerCase() : false;
+    const levelValue = Number.isFinite(Number(r.level)) ? Number(r.level) : 1;
     const avatar = r.avatarUrl
       ? `<img class="leaderboardAvatar" src="${iconUrl(r.avatarUrl)}" alt="" loading="lazy" />`
       : `<span class="leaderboardAvatar placeholder" aria-hidden="true"></span>`;
-tr.innerHTML = `
-      <td><button class="linkBtn" type="button" data-profile="${safeText(r.username)}">${avatar}<span class="leaderboardIdentity"><span class="nameRank">${idx + 1}.</span><span class="leaderboardName"><strong>${safeText(r.username)}</strong></span>${isMe ? '<span class="note">(you)</span>' : ""}</span></button></td>
+    tr.innerHTML = `
+      <td><button class="linkBtn" type="button" data-profile="${safeText(r.username)}">${avatar}<span class="leaderboardIdentity"><span class="nameRank">${idx + 1}.</span><span class="leaderboardName"><span class="leaderboardLevel">Level ${levelValue}</span><strong>${safeText(r.username)}</strong></span>${isMe ? '<span class="note">(you)</span>' : ""}</span></button></td>
       <td>
         <strong>${Math.round(r.points)}</strong>
         ${r.showDailyPoints && r.dailyPoints !== null ? `<span class="dailyPoints">(+${Math.round(r.dailyPoints)})</span>` : ""}
@@ -4835,6 +4851,13 @@ function renderProfileSummary(summary) {
   const completed = Number.isFinite(Number(summary.completedGames))
     ? Number(summary.completedGames).toLocaleString()
     : "--";
+  const totalPointsRaw = Number(summary.totalPoints);
+  const levelValue = Number.isFinite(Number(summary.level))
+    ? Number(summary.level)
+    : 1;
+  const pointsUntilNext = Number.isFinite(totalPointsRaw)
+    ? Math.max(0, (((levelValue + 1) / 3) ** 2) * 10 - totalPointsRaw)
+    : null;
 
   const memberSince = summary.memberSince ? formatDate(summary.memberSince) : "";
   let lastActiveValue = summary.lastActivity;
@@ -4868,13 +4891,21 @@ function renderProfileSummary(summary) {
 
   const identity = document.createElement("div");
   identity.className = "profileHeroIdentity";
+  const levelEl = document.createElement("div");
+  levelEl.className = "profileHeroLevel";
+  levelEl.textContent = `Level ${levelValue}`;
+  const nextLevelEl = document.createElement("div");
+  nextLevelEl.className = "profileHeroNext";
+  nextLevelEl.textContent = pointsUntilNext !== null
+    ? `Points Until Next Level: ${Math.max(0, Math.round(pointsUntilNext)).toLocaleString()}`
+    : "Points Until Next Level: --";
   const nameEl = document.createElement("div");
   nameEl.className = "profileHeroName";
   nameEl.textContent = username;
   const rankEl = document.createElement("div");
   rankEl.className = "profileHeroRank";
   rankEl.innerHTML = `Rank <span>${rank}</span>`;
-  identity.append(nameEl, rankEl);
+  identity.append(levelEl, nextLevelEl, nameEl, rankEl);
   top.append(avatarWrap, identity);
 
   const stats = document.createElement("div");
@@ -5745,6 +5776,7 @@ async function refreshLeaderboard() {
         username: u,
         points: map[u]?.points ?? 0,
         monthlyPoints: map[u]?.points ?? 0,
+        level: map[u]?.level ?? prev?.level ?? null,
         deltaVsYou: (map[u]?.points ?? 0) - myPoints,
         unlocks: map[u]?.unlockCount ?? 0,
         nowPlayingHtml: keepNow ? prevNow : "Loading...",
@@ -5757,6 +5789,26 @@ async function refreshLeaderboard() {
     baseRows.sort((a, b) => (b.points - a.points) || a.username.localeCompare(b.username));
     leaderboardBaseRows = baseRows.map(r => ({ ...r }));
     renderLeaderboardForRange(leaderboardBaseRows, me);
+
+    // 1b) Load DB-backed levels and update rows without changing rank/points.
+    (async () => {
+      try {
+        const levelMap = await fetchUserLevels(users);
+        let didChange = false;
+        leaderboardBaseRows.forEach((row) => {
+          const key = normalizeUserKey(row.username);
+          if (!key) return;
+          const next = levelMap[key];
+          if (Number.isFinite(next) && row.level !== next) {
+            row.level = next;
+            didChange = true;
+          }
+        });
+        if (didChange) renderLeaderboardForRange(leaderboardBaseRows, me);
+      } catch {
+        // ignore level fetch errors
+      }
+    })().catch(() => {});
 
     // 2) Load daily history from the DB for a quick chart render.
     (async () => {
@@ -7161,6 +7213,7 @@ if (usernameModalInput) {
   authResolved = true;
   if (me) {
     setCurrentUser(me);
+    fetchUserSummary(me).catch(() => {});
     friends = await loadFriendsFromServer();
     await bootstrapAfterLogin();
   } else {

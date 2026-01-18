@@ -86,8 +86,17 @@ async function initDb() {
     CREATE TABLE IF NOT EXISTS users (
       id SERIAL PRIMARY KEY,
       username TEXT UNIQUE NOT NULL,
+      total_points INTEGER DEFAULT 0,
+      level INTEGER DEFAULT 1,
+      level_updated_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
+  `);
+  await pool.query(`
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS total_points INTEGER DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS level INTEGER DEFAULT 1,
+      ADD COLUMN IF NOT EXISTS level_updated_at TIMESTAMPTZ
   `);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS friends (
@@ -738,6 +747,29 @@ app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
 function normalizeUsername(u) {
   return String(u || "").trim().replace(/\s+/g, "").toLowerCase();
+}
+
+function computeLevelFromPoints(pointsRaw) {
+  const points = Number(pointsRaw);
+  if (!Number.isFinite(points) || points <= 0) return 1;
+  return Math.max(1, Math.floor(Math.sqrt(points / 10) * 3));
+}
+
+async function upsertUserLevel(username, totalPoints) {
+  if (!pool) return null;
+  const normalized = normalizeUsername(username);
+  if (!normalized) return null;
+  const points = Number.isFinite(Number(totalPoints)) ? Number(totalPoints) : 0;
+  const level = computeLevelFromPoints(points);
+  const result = await pool.query(
+    `INSERT INTO users (username, total_points, level, level_updated_at)
+     VALUES ($1, $2, $3, NOW())
+     ON CONFLICT (username)
+     DO UPDATE SET total_points = EXCLUDED.total_points, level = EXCLUDED.level, level_updated_at = NOW()
+     RETURNING level, total_points`,
+    [normalized, points, level]
+  );
+  return result.rows[0] || { level, total_points: points };
 }
 
 function estimateDataUrlBytes(dataUrl) {
@@ -1615,6 +1647,32 @@ app.post("/api/presence/remove", (req, res) => {
       points += Number(u.points ?? u.Points ?? 0);
     }
 
+    let level = null;
+    if (pool) {
+      const normalized = normalizeUsername(username);
+      const stored = await pool.query("SELECT level FROM users WHERE username = $1", [normalized]);
+      if (stored.rows.length) {
+        const val = stored.rows[0].level;
+        if (val !== null && val !== undefined) level = Number(val);
+      }
+      if (level === null) {
+        try {
+          const summary = await raGetUserSummary(username, apiKey);
+          const user =
+            (summary && typeof summary.User === "object" ? summary.User : null) ||
+            (summary && typeof summary.user === "object" ? summary.user : null) ||
+            summary;
+          const totalPoints =
+            user?.TotalPoints ?? summary?.TotalPoints ?? user?.totalPoints ?? summary?.totalPoints ??
+            user?.Points ?? summary?.Points ?? user?.points ?? summary?.points;
+          const saved = await upsertUserLevel(username, totalPoints);
+          level = saved?.level ?? computeLevelFromPoints(totalPoints);
+        } catch {
+          level = null;
+        }
+      }
+    }
+
     res.json({
       username,
       mode: includeSoftcore ? "all" : "hc",
@@ -1623,7 +1681,8 @@ app.post("/api/presence/remove", (req, res) => {
       retroPoints,
       points,
       unlockCount: considered.length,
-      unlockCountAll: unlocks.length
+      unlockCountAll: unlocks.length,
+      level
     });
     } catch (err) {
       const status = err?.status || 500;
@@ -2053,11 +2112,36 @@ app.get("/api/user-summary/:username", async (req, res) => {
         user?.UserPicURL ?? data?.UserPicURL ?? user?.userPicUrl ?? data?.userPicUrl
     };
 
+    const levelRow = await upsertUserLevel(username, payload.totalPoints);
+    payload.level = levelRow?.level ?? computeLevelFromPoints(payload.totalPoints);
+
     cacheSet(cacheKey, payload, DEFAULT_CACHE_TTL_MS);
     res.json(payload);
   } catch (err) {
     const status = err?.status || 500;
     res.status(status).json({ error: err?.message || "Failed to fetch user summary" });
+  }
+});
+
+// User levels from DB only
+app.get("/api/user-levels", async (req, res) => {
+  try {
+    if (!pool) return res.status(500).json({ error: "Database unavailable" });
+    const usersParam = typeof req.query.users === "string" ? req.query.users : "";
+    const users = usersParam
+      .split(",")
+      .map(normalizeUsername)
+      .filter(Boolean);
+    if (!users.length) return res.status(400).json({ error: "Missing users" });
+
+    const result = await pool.query(
+      "SELECT username, level FROM users WHERE username = ANY($1)",
+      [users]
+    );
+    res.json({ results: result.rows.map(r => ({ username: r.username, level: r.level })) });
+  } catch (err) {
+    const status = err?.status || 500;
+    res.status(status).json({ error: err?.message || "Failed to fetch user levels" });
   }
 });
 
