@@ -445,6 +445,8 @@ let profileCommonGames = [];
 let profileRecentTab = "recent";
 let profileCompletionList = [];
 let profileCompletionListLoading = false;
+let profileBacklogItems = [];
+let profileBacklogLoading = false;
 const profileAchievementLimiter = createLimiter(2);
 const summaryLimiter = createLimiter(2);
 const RECENT_DEFAULT_ROWS = 6;
@@ -2151,14 +2153,10 @@ function setActivePage(name) {
     processClientQueue();
     processFastQueue();
   }
-  const isBacklogSelf = name === "backlog" &&
-    backlogViewUser && currentUser &&
-    normalizeUserKey(backlogViewUser) === normalizeUserKey(currentUser);
   pageButtons.forEach(btn => {
     const isTarget = btn.dataset.page === name;
-    const isActive = isTarget && (name !== "backlog" || isBacklogSelf);
-    btn.classList.toggle("active", isActive);
-    btn.setAttribute("aria-selected", isActive ? "true" : "false");
+    btn.classList.toggle("active", isTarget);
+    btn.setAttribute("aria-selected", isTarget ? "true" : "false");
   });
   if (dashboardPage) dashboardPage.hidden = name !== "dashboard";
   if (findGamesPage) findGamesPage.hidden = name !== "find-games";
@@ -4604,6 +4602,48 @@ function normalizeCompletionList(list) {
   })).filter(g => g.gameId);
 }
 
+function normalizeBacklogGames(list) {
+  const items = Array.isArray(list) ? list : [];
+  return items.map((row) => ({
+    gameId: row.gameId ?? row.GameID,
+    title: row.title ?? row.Title ?? "",
+    imageIcon: row.imageIcon ?? row.ImageIcon ?? "",
+    startedAwarded: row.startedAwarded ?? row.StartedAwarded ?? 0,
+    startedTotal: row.startedTotal ?? row.StartedTotal ?? 0
+  })).filter(g => g.gameId);
+}
+
+function getBacklogProgressForGame(username, game) {
+  const userKey = normalizeUserKey(username || "");
+  const gameId = String(game?.gameId ?? "");
+  if (!userKey || !gameId) return null;
+  const cacheKey = `${userKey}:${gameId}`;
+  const cached = backlogProgressCache.get(cacheKey);
+  if (cached?.data) return cached.data;
+  const startedAwarded = Number(game?.startedAwarded ?? 0);
+  const startedTotal = Number(game?.startedTotal ?? 0);
+  if (startedAwarded > 0 || startedTotal > 0) {
+    return { earned: startedAwarded, total: startedTotal };
+  }
+  return null;
+}
+
+function sortBacklogItemsByProgress(items, username) {
+  const list = normalizeBacklogGames(items);
+  return list.sort((a, b) => {
+    const aProgress = getBacklogProgressForGame(username, a);
+    const bProgress = getBacklogProgressForGame(username, b);
+    const aTotal = Number(aProgress?.total || 0);
+    const bTotal = Number(bProgress?.total || 0);
+    const aEarned = Number(aProgress?.earned || 0);
+    const bEarned = Number(bProgress?.earned || 0);
+    const aPct = aTotal > 0 ? aEarned / aTotal : 0;
+    const bPct = bTotal > 0 ? bEarned / bTotal : 0;
+    if (bPct !== aPct) return bPct - aPct;
+    return String(a.title || "").localeCompare(String(b.title || ""));
+  });
+}
+
 async function loadMoreProfileGames() {
   const target = clampUsername(currentProfileUser);
   if (!target || !profileShowMoreBtn) return;
@@ -4996,6 +5036,8 @@ async function openProfile(username) {
   profileIsSelf = isSelf;
   profileCompletionList = [];
   profileCompletionListLoading = false;
+  profileBacklogItems = [];
+  profileBacklogLoading = false;
   if (profileLegendMeEl) {
     profileLegendMeEl.textContent = me || "You";
   }
@@ -5030,6 +5072,7 @@ async function openProfile(username) {
   loadProfileActivity(target);
   loadProfileRecentGames(target);
   loadProfileCompletionList(target);
+  loadProfileBacklog(target);
 
   let summaryRendered = false;
   try {
@@ -5980,6 +6023,9 @@ function setProfileRecentTab(name) {
   if ((profileRecentTab === "completed" || profileRecentTab === "mastered") && currentProfileUser) {
     loadProfileCompletionList(currentProfileUser);
   }
+  if (profileRecentTab === "backlog" && currentProfileUser) {
+    loadProfileBacklog(currentProfileUser);
+  }
   renderProfileRecentTab();
 }
 
@@ -6039,6 +6085,13 @@ function renderProfileRecentTab(queryOverride = null) {
     }
     baseList = filterProfileCompletionList("mastered");
     emptyMessage = "No mastered games found.";
+  } else if (profileRecentTab === "backlog") {
+    if (profileBacklogLoading && !profileBacklogItems.length) {
+      profileRecentGamesEl.innerHTML = `<div class="meta">Loading backlog...</div>`;
+      return;
+    }
+    baseList = sortBacklogItemsByProgress(profileBacklogItems, currentProfileUser);
+    emptyMessage = "No backlog games found.";
   } else {
     baseList = profileRecentGames || [];
   }
@@ -6082,6 +6135,22 @@ function renderProfileRecentGames(list, emptyMessage = "No recent games found.")
 
     tile.appendChild(img);
     tile.appendChild(title);
+    if (profileRecentTab === "backlog") {
+      const progress = getBacklogProgressForGame(currentProfileUser, g);
+      if (progress) {
+        const total = Number(progress.total || 0);
+        const earned = Number(progress.earned || 0);
+        const pct = total > 0 ? Math.min(100, Math.max(0, Math.round((earned / total) * 100))) : 0;
+        const progressLine = document.createElement("div");
+        progressLine.className = "tileMeta progressLine";
+        progressLine.style.setProperty("--progress", String(pct));
+        const text = document.createElement("span");
+        text.className = "progressLineText";
+        text.textContent = `${earned} / ${total} achievements`;
+        progressLine.appendChild(text);
+        tile.appendChild(progressLine);
+      }
+    }
     frag.appendChild(tile);
 
     if (allowOpen) {
@@ -6160,6 +6229,37 @@ async function loadProfileCompletionList(username) {
     }
   } finally {
     profileCompletionListLoading = false;
+  }
+}
+
+async function loadProfileBacklog(username) {
+  const target = clampUsername(username);
+  if (!target) return;
+  if (profileBacklogLoading) return;
+  if (profileBacklogItems.length && clampUsername(currentProfileUser) === target) {
+    renderProfileRecentTab();
+    return;
+  }
+
+  profileBacklogLoading = true;
+  try {
+    const items = await fetchBacklog(target);
+    profileBacklogItems = items;
+    renderProfileRecentTab();
+
+    const games = normalizeBacklogGames(items);
+    await Promise.all(
+      games.map((g) => backlogProgressLimiter(() => fetchBacklogProgress(target, g.gameId).catch(() => null)))
+    );
+    if (clampUsername(currentProfileUser) === target) {
+      renderProfileRecentTab();
+    }
+  } catch {
+    if (profileRecentTab === "backlog" && profileRecentGamesEl) {
+      profileRecentGamesEl.innerHTML = `<div class="meta">Failed to load backlog.</div>`;
+    }
+  } finally {
+    profileBacklogLoading = false;
   }
 }
 
@@ -6671,6 +6771,8 @@ pageButtons.forEach(btn => {
     const page = btn.dataset.page;
     if (page === "backlog") {
       setBacklogViewUser(currentUser);
+      setActivePage("backlog");
+      return;
     }
     setActivePage(page);
     if (page === "challenges") {

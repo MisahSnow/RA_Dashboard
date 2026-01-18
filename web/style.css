@@ -1878,6 +1878,10 @@ tbody tr:nth-child(even){
 
 .profileRecentRow .tileTitle {
   font-size: 11px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 #profileShowMoreBtn {
