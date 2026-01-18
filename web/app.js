@@ -1019,7 +1019,11 @@ async function loadSocialPostsFromServer({ silent = false } = {}) {
     const results = Array.isArray(data?.results) ? data.results : [];
     socialPosts = results;
     renderSocialPosts(socialPosts, socialPostListEl);
-    renderSocialPosts(socialPosts, profileSocialListEl, { showComments: false, limit: 3 });
+    const profileUser = clampUsername(currentProfileUser);
+    const profilePosts = profileUser
+      ? socialPosts.filter(p => normalizeUserKey(p?.user) === normalizeUserKey(profileUser))
+      : [];
+    renderSocialPosts(profilePosts, profileSocialListEl, { showComments: false, limit: 3 });
     if (!silent) setSocialStatus("");
   } catch (err) {
     const message = String(err?.message || "");
