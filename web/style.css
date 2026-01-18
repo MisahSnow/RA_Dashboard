@@ -1823,7 +1823,24 @@ tbody tr:nth-child(even){
 }
 
 .profileSocialCard .socialPost {
-  margin-bottom: 12px;
+  margin-bottom: 10px;
+  padding: 12px;
+}
+
+.profileSocialCard .socialPost.autoPost {
+  padding: 8px 10px;
+}
+
+.profileSocialCard .socialPostHeader {
+  margin-bottom: 6px;
+}
+
+.profileSocialCard .socialPostMeta {
+  margin-bottom: 6px;
+}
+
+.profileSocialCard .socialPostCaption {
+  margin-bottom: 8px;
 }
 
 .profileRecentCard {
