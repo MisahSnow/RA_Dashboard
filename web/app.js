@@ -4839,17 +4839,10 @@ async function openProfile(username) {
   if (!me) return setStatus("Set your username first.");
   const isSelf = me.toLowerCase() === target.toLowerCase();
 
-  if (isSelf && profilePage && profilePage.hidden) {
-    setActivePage("profile");
-  }
+  setActivePage("profile");
 
-  if (isSelf) {
-    moveProfilePanel(profileHostProfile);
-    moveSelfGamePanel(selfGameHostProfile);
-  } else {
-    moveProfilePanel(profileHostDashboard);
-    moveSelfGamePanel(selfGameHostDashboard);
-  }
+  moveProfilePanel(profileHostProfile);
+  moveSelfGamePanel(selfGameHostProfile);
   profilePanel.hidden = false;
   comparePanel.hidden = true;
   if (selfGamePanel) selfGamePanel.hidden = true;
@@ -6108,6 +6101,7 @@ refreshBtn.addEventListener("click", () => {
 
 if (profileCloseBtn) {
   profileCloseBtn.addEventListener("click", () => {
+    const shouldReturnToDashboard = profilePage && !profilePage.hidden;
     profilePanel.hidden = true;
     profileTitleNameEl.textContent = "";
     profileSummaryEl.innerHTML = "";
@@ -6156,6 +6150,9 @@ if (profileCloseBtn) {
     setActiveCompareTab("achievements");
     currentProfileUser = "";
     activeProfileLoadToken = 0;
+    if (shouldReturnToDashboard) {
+      setActivePage("dashboard");
+    }
   });
 }
 
