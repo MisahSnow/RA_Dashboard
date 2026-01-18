@@ -2142,20 +2142,30 @@ app.get("/api/user-completion-progress/:username", async (req, res) => {
   }
 });
 
-// Social screenshots (public read)
-app.get("/api/social/posts", async (req, res) => {
+// Social posts (friends-only read)
+app.get("/api/social/posts", requireAuth, async (req, res) => {
   try {
     if (!pool) return res.json({ count: 0, results: [] });
+    const userId = req.session?.user?.id;
+    const username = req.session?.user?.username;
+    if (!userId || !username) return res.status(401).json({ error: "Not authenticated" });
     const limitQ = typeof req.query.limit === "string" ? Number(req.query.limit) : SOCIAL_MAX_POSTS;
     const limit = Math.max(1, Math.min(SOCIAL_MAX_POSTS, Number.isFinite(limitQ) ? limitQ : SOCIAL_MAX_POSTS));
+    const friendsRes = await pool.query(
+      `SELECT friend_username FROM friends WHERE user_id = $1`,
+      [userId]
+    );
+    const friendUsernames = friendsRes.rows.map(r => normalizeUsername(r.friend_username));
+    const allowed = [normalizeUsername(username), ...friendUsernames];
     const postsRes = await pool.query(
       `
         SELECT id, username, game_title, caption, image_data, image_url, is_auto, post_type, achievement_title, achievement_id, created_at
         FROM social_posts
+        WHERE LOWER(username) = ANY($1)
         ORDER BY created_at DESC
-        LIMIT $1
+        LIMIT $2
       `,
-      [limit]
+      [allowed, limit]
     );
     const posts = postsRes.rows.map((row) => ({
       id: row.id,

@@ -1000,6 +1000,12 @@ async function loadSocialPostsFromServer({ silent = false } = {}) {
     renderSocialPosts(socialPosts);
     if (!silent) setSocialStatus("");
   } catch (err) {
+    const message = String(err?.message || "");
+    if (message.toLowerCase().includes("not authenticated")) {
+      if (!silent) setSocialStatus("Set your username in Settings to see the social feed.");
+      socialPostListEl.innerHTML = `<div class="meta">Set your username to see friends posts.</div>`;
+      return;
+    }
     if (!silent) setSocialStatus("Failed to load social feed.");
     socialPostListEl.innerHTML = `<div class="meta">Failed to load screenshots.</div>`;
   }
