@@ -488,81 +488,89 @@
       </section>
     </section>
     <section id="socialPage" class="page" hidden>
-      <section class="card">
-        <div class="sectionHead">
-          <h2 class="sectionTitle">Social</h2>
-          <div class="sectionControls">
-            <button id="socialComposerOpenBtn" class="primaryBtn" type="button">Make a Post</button>
+      <section class="card socialCard">
+        <div class="socialHeader">
+          <div>
+            <h2 class="sectionTitle">Social Feed</h2>
+            <p class="note">Friends activity and milestones</p>
+          </div>
+          <div class="socialHeaderActions">
+            <div class="socialSort" role="group" aria-label="Sort posts">
+              <button class="smallBtn active" type="button">Newest</button>
+              <button class="smallBtn" type="button">Top (24h)</button>
+              <button class="smallBtn" type="button">Top (Week)</button>
+            </div>
           </div>
         </div>
-        <div class="socialLayout single">
-          <div class="socialFeed">
-            <h3 class="sectionTitle">Latest Posts</h3>
-            <div id="socialPostList" class="socialPostList"></div>
+        <div class="socialLayout">
+          <div class="socialMain">
+            <div class="socialComposerBar">
+              <div class="socialComposerInput">
+                <textarea id="socialTextBody" rows="3" placeholder="Share something..." autocomplete="off"></textarea>
+                <div class="socialComposerActions">
+                  <button id="socialLinkGameBtn" class="smallBtn" type="button">Add Game</button>
+                  <button id="socialAddScreenshotBtn" class="smallBtn" type="button">Add Screenshot</button>
+                  <button id="socialAddAchievementBtn" class="smallBtn" type="button">Add Achievement</button>
+                  <button id="socialPostBtn" class="primaryBtn" type="button">Post</button>
+                </div>
+              </div>
+            </div>
+            <div class="socialFilters" role="tablist" aria-label="Post filters">
+              <button class="filterPill active" type="button" data-filter="all">All</button>
+              <button class="filterPill" type="button" data-filter="achievement">Achievements</button>
+              <button class="filterPill" type="button" data-filter="completion">Completion</button>
+              <button class="filterPill" type="button" data-filter="posts">Posts</button>
+            </div>
+            <div id="socialGameRow" class="socialComposerSection" hidden>
+              <div class="field">
+                <label for="socialGame">Game</label>
+                <input id="socialGame" placeholder="Game title" autocomplete="off" />
+              </div>
+              <div id="socialGameResults" class="socialGameResults" hidden></div>
+            </div>
+            <div id="socialScreenshotSection" class="socialComposerSection" hidden>
+              <div class="field">
+                <label for="socialUpload">Screenshot</label>
+                <input id="socialUpload" type="file" accept="image/*" />
+              </div>
+              <div id="socialPreview" class="socialPreview" hidden>
+                <img id="socialPreviewImg" alt="Screenshot preview" />
+                <button id="socialPreviewRemoveBtn" class="smallBtn" type="button">Remove</button>
+              </div>
+            </div>
+            <div id="socialAchievementSection" class="socialComposerSection" hidden>
+              <div class="socialAchievementHeader">
+                <div id="socialAchievementGameSelected" class="note">No game selected.</div>
+              </div>
+              <div id="socialAchievementGames" class="socialAchievementGames" hidden></div>
+              <div class="socialAchievementListWrap">
+                <div id="socialAchievementStatus" class="note">Select a game to see earned achievements.</div>
+                <div id="socialAchievementList" class="socialAchievementList"></div>
+              </div>
+            </div>
+            <p id="socialStatus" class="note"></p>
+            <div class="socialFeed">
+              <h3 class="sectionTitle">Latest Posts</h3>
+              <div id="socialPostList" class="socialPostList"></div>
+            </div>
           </div>
+          <aside class="socialSidebar">
+            <div class="socialSideCard">
+              <h3 class="sectionTitle">Trending Now</h3>
+              <div id="socialSidebarTrending" class="socialMiniList"></div>
+            </div>
+            <div class="socialSideCard">
+              <h3 class="sectionTitle">Friend Activity</h3>
+              <div id="socialSidebarActivity" class="socialMiniList"></div>
+            </div>
+            <div class="socialSideCard">
+              <h3 class="sectionTitle">Suggested Friends</h3>
+              <div id="socialSidebarSuggestions" class="socialMiniList"></div>
+            </div>
+          </aside>
         </div>
       </section>
     </section>
-    <div id="socialComposerModal" class="modal" hidden>
-      <div class="modalCard">
-        <div class="sectionHead">
-          <h2 class="sectionTitle">Make a Post</h2>
-          <button id="socialComposerCloseBtn" class="smallBtn">Close</button>
-        </div>
-        <div class="field">
-          <label for="socialPostType">Post type</label>
-          <select id="socialPostType" class="mutedSelect">
-            <option value="text">Text</option>
-            <option value="screenshot">Screenshot</option>
-            <option value="achievement">Achievement</option>
-          </select>
-        </div>
-        <div id="socialTextSection" class="socialComposerSection">
-          <div class="field">
-            <label for="socialTextBody">Post</label>
-            <textarea id="socialTextBody" rows="5" placeholder="Share something with the group..." autocomplete="off"></textarea>
-          </div>
-        </div>
-        <div id="socialScreenshotSection" class="socialComposerSection" hidden>
-        <div class="field">
-          <label for="socialGame">Game (optional)</label>
-          <input id="socialGame" placeholder="Game title" autocomplete="off" />
-        </div>
-        <div class="field">
-          <label for="socialCaption">Caption (optional)</label>
-          <textarea id="socialCaption" rows="4" placeholder="What did you just do?" autocomplete="off"></textarea>
-        </div>
-        <div class="field">
-          <label for="socialUpload">Screenshot</label>
-          <input id="socialUpload" type="file" accept="image/*" />
-        </div>
-        <div id="socialPreview" class="socialPreview" hidden>
-          <img id="socialPreviewImg" alt="Screenshot preview" />
-          <button id="socialPreviewRemoveBtn" class="smallBtn" type="button">Remove</button>
-        </div>
-        </div>
-        <div id="socialAchievementSection" class="socialComposerSection" hidden>
-          <div class="socialAchievementHeader">
-            <button id="socialAchievementGameBtn" class="smallBtn" type="button">Select Game</button>
-            <div id="socialAchievementGameSelected" class="note">No game selected.</div>
-          </div>
-          <div id="socialAchievementGames" class="socialAchievementGames" hidden></div>
-          <div class="field">
-            <label for="socialAchievementCaption">Caption (optional)</label>
-            <textarea id="socialAchievementCaption" rows="3" placeholder="Say something about this unlock..." autocomplete="off"></textarea>
-          </div>
-          <div class="socialAchievementListWrap">
-            <div id="socialAchievementStatus" class="note">Select a game to see earned achievements.</div>
-            <div id="socialAchievementList" class="socialAchievementList"></div>
-          </div>
-        </div>
-        <div class="buttons">
-          <button id="socialPostBtn" class="primaryBtn" type="button">Post Screenshot</button>
-        </div>
-        <p id="socialStatus" class="note"></p>
-        <p class="note">Screenshots and comments are synced to the server.</p>
-      </div>
-    </div>
     <div id="challengeHistoryModal" class="modal" hidden>
       <div class="modalCard">
         <div class="sectionHead">

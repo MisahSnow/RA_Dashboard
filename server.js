@@ -250,6 +250,7 @@ async function initDb() {
       post_type TEXT NOT NULL DEFAULT 'screenshot',
       achievement_title TEXT,
       achievement_id INTEGER,
+      achievement_description TEXT,
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
   `);
@@ -259,7 +260,8 @@ async function initDb() {
     ADD COLUMN IF NOT EXISTS is_auto BOOLEAN NOT NULL DEFAULT false,
     ADD COLUMN IF NOT EXISTS post_type TEXT NOT NULL DEFAULT 'screenshot',
     ADD COLUMN IF NOT EXISTS achievement_title TEXT,
-    ADD COLUMN IF NOT EXISTS achievement_id INTEGER
+    ADD COLUMN IF NOT EXISTS achievement_id INTEGER,
+    ADD COLUMN IF NOT EXISTS achievement_description TEXT
   `);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS social_comments (
@@ -2610,7 +2612,7 @@ app.get("/api/social/posts", requireAuth, async (req, res) => {
     const allowed = [normalizeUsername(username), ...friendUsernames];
     const postsRes = await pool.query(
       `
-        SELECT id, username, game_title, caption, image_data, image_url, is_auto, post_type, achievement_title, achievement_id, created_at
+        SELECT id, username, game_title, caption, image_data, image_url, is_auto, post_type, achievement_title, achievement_id, achievement_description, created_at
         FROM social_posts
         WHERE LOWER(username) = ANY($1)
         ORDER BY created_at DESC
@@ -2629,6 +2631,7 @@ app.get("/api/social/posts", requireAuth, async (req, res) => {
       postType: row.post_type,
       achievementTitle: row.achievement_title,
       achievementId: row.achievement_id,
+      achievementDescription: row.achievement_description,
       createdAt: row.created_at,
       comments: []
     }));
@@ -2683,6 +2686,7 @@ app.post("/api/social/posts", requireAuth, async (req, res) => {
     const imageUrl = String(req.body?.imageUrl || "").trim();
     const achievementTitle = String(req.body?.achievementTitle || "").trim();
     const achievementIdRaw = req.body?.achievementId;
+    const achievementDescription = String(req.body?.achievementDescription || "").trim();
     const achievementId = Number.isFinite(Number(achievementIdRaw)) ? Number(achievementIdRaw) : null;
 
     if (!["text", "screenshot", "achievement"].includes(postType)) {
@@ -2707,8 +2711,8 @@ app.post("/api/social/posts", requireAuth, async (req, res) => {
     const insertRes = await pool.query(
       `
         INSERT INTO social_posts
-          (user_id, username, game_title, caption, image_data, image_url, is_auto, post_type, achievement_title, achievement_id, created_at)
-        VALUES ($1, $2, $3, $4, $5, $6, false, $7, $8, $9, NOW())
+          (user_id, username, game_title, caption, image_data, image_url, is_auto, post_type, achievement_title, achievement_id, achievement_description, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, false, $7, $8, $9, $10, NOW())
         RETURNING id, created_at
       `,
       [
@@ -2720,7 +2724,8 @@ app.post("/api/social/posts", requireAuth, async (req, res) => {
         imageUrl || null,
         postType,
         achievementTitle || null,
-        achievementId
+        achievementId,
+        achievementDescription || null
       ]
     );
 
@@ -2735,6 +2740,7 @@ app.post("/api/social/posts", requireAuth, async (req, res) => {
       postType,
       achievementTitle: achievementTitle || null,
       achievementId,
+      achievementDescription: achievementDescription || null,
       createdAt: insertRes.rows[0].created_at,
       comments: []
     });
@@ -2768,16 +2774,41 @@ app.post("/api/social/posts/:id/comments", requireAuth, async (req, res) => {
       [postId, userId, username, text]
     );
 
-    res.json({
-      id: insertRes.rows[0].id,
-      postId,
-      user: username,
-      text,
-      createdAt: insertRes.rows[0].created_at
-    });
+  res.json({
+    id: insertRes.rows[0].id,
+    postId,
+    user: username,
+    text,
+    createdAt: insertRes.rows[0].created_at
+  });
+} catch (err) {
+  const status = err?.status || 500;
+  res.status(status).json({ error: err?.message || "Failed to add comment" });
+}
+});
+
+// Delete social post (auth required)
+app.delete("/api/social/posts/:id", requireAuth, async (req, res) => {
+  try {
+    if (!pool) return res.status(500).json({ error: "Database unavailable" });
+    const userId = req.session?.user?.id;
+    const username = req.session?.user?.username;
+    if (!userId || !username) return res.status(401).json({ error: "Not authenticated" });
+    const postId = Number(req.params.id);
+    if (!Number.isFinite(postId)) return res.status(400).json({ error: "Invalid post id" });
+    const result = await pool.query(
+      `
+        DELETE FROM social_posts
+        WHERE id = $1 AND (user_id = $2 OR LOWER(username) = LOWER($3))
+        RETURNING id
+      `,
+      [postId, userId, username]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: "Post not found" });
+    res.json({ ok: true });
   } catch (err) {
     const status = err?.status || 500;
-    res.status(status).json({ error: err?.message || "Failed to add comment" });
+    res.status(status).json({ error: err?.message || "Failed to delete post" });
   }
 });
 

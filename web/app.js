@@ -255,28 +255,30 @@ const groupMyListEl = document.getElementById("groupMyList");
 const groupInvitesListEl = document.getElementById("groupInvitesList");
 const socialPage = document.getElementById("socialPage");
 const socialPostListEl = document.getElementById("socialPostList");
-const socialPostTypeSelect = document.getElementById("socialPostType");
 const socialTextInput = document.getElementById("socialTextBody");
-const socialTextSection = document.getElementById("socialTextSection");
 const socialScreenshotSection = document.getElementById("socialScreenshotSection");
 const socialAchievementSection = document.getElementById("socialAchievementSection");
-const socialAchievementGameBtn = document.getElementById("socialAchievementGameBtn");
 const socialAchievementGameSelected = document.getElementById("socialAchievementGameSelected");
 const socialAchievementGamesEl = document.getElementById("socialAchievementGames");
 const socialAchievementStatusEl = document.getElementById("socialAchievementStatus");
 const socialAchievementListEl = document.getElementById("socialAchievementList");
-const socialAchievementCaptionInput = document.getElementById("socialAchievementCaption");
 const socialUploadInput = document.getElementById("socialUpload");
-const socialCaptionInput = document.getElementById("socialCaption");
+const socialLinkGameBtn = document.getElementById("socialLinkGameBtn");
+const socialGameRow = document.getElementById("socialGameRow");
 const socialGameInput = document.getElementById("socialGame");
+const socialGameResultsEl = document.getElementById("socialGameResults");
 const socialPostBtn = document.getElementById("socialPostBtn");
 const socialPreview = document.getElementById("socialPreview");
 const socialPreviewImg = document.getElementById("socialPreviewImg");
 const socialPreviewRemoveBtn = document.getElementById("socialPreviewRemoveBtn");
 const socialStatusEl = document.getElementById("socialStatus");
-const socialComposerOpenBtn = document.getElementById("socialComposerOpenBtn");
-const socialComposerModal = document.getElementById("socialComposerModal");
-const socialComposerCloseBtn = document.getElementById("socialComposerCloseBtn");
+const socialAddScreenshotBtn = document.getElementById("socialAddScreenshotBtn");
+const socialAddAchievementBtn = document.getElementById("socialAddAchievementBtn");
+const socialSidebarTrendingEl = document.getElementById("socialSidebarTrending");
+const socialSidebarActivityEl = document.getElementById("socialSidebarActivity");
+const socialSidebarSuggestionsEl = document.getElementById("socialSidebarSuggestions");
+const socialFiltersEl = document.querySelector(".socialFilters");
+const socialFilterButtons = document.querySelectorAll(".socialFilters .filterPill");
 
 if (apiQueueCounterEl) {
   apiQueueCounterEl.textContent = "API Calls in Queue: 0";
@@ -573,7 +575,10 @@ const SOCIAL_POLL_MS = 15000;
 let socialPosts = [];
 let socialDraftImageData = "";
 let socialPollTimer = null;
-let socialPostType = "text";
+let socialAttachScreenshot = false;
+let socialAttachAchievement = false;
+let socialAttachGame = false;
+let socialComposerPanel = "";
 let socialAchievementGame = null;
 let socialAchievementItems = [];
 let socialAchievementSelected = null;
@@ -583,6 +588,10 @@ let notificationsUnreadCount = 0;
 let notificationsEventSource = null;
 let notificationsOpen = false;
 let notificationsReadAfterClose = false;
+let socialFilter = "all";
+let socialGameSuggestions = [];
+let socialGameSelected = null;
+let socialGameSuggestionsLoaded = false;
 
 function clampUsername(s) {
   return (s || "").trim().replace(/\s+/g, "");
@@ -633,15 +642,111 @@ function setSocialStatus(message) {
   socialStatusEl.textContent = message || "";
 }
 
-function setSocialPostType(nextType) {
-  socialPostType = nextType || "text";
-  if (socialTextSection) socialTextSection.hidden = socialPostType !== "text";
-  if (socialScreenshotSection) socialScreenshotSection.hidden = socialPostType !== "screenshot";
-  if (socialAchievementSection) socialAchievementSection.hidden = socialPostType !== "achievement";
-  if (socialPostType !== "achievement" && socialAchievementGamesEl) {
-    socialAchievementGamesEl.hidden = true;
+function refreshSocialComposerLayout() {
+  const showGame = socialAttachGame && socialComposerPanel === "game";
+  const showScreenshot = socialAttachScreenshot && socialComposerPanel === "screenshot";
+  const showAchievement = socialAttachAchievement && socialComposerPanel === "achievement";
+  if (socialGameRow) socialGameRow.hidden = !showGame;
+  if (socialScreenshotSection) socialScreenshotSection.hidden = !showScreenshot;
+  if (socialAchievementSection) socialAchievementSection.hidden = !showAchievement;
+  if (socialAchievementGamesEl) {
+    socialAchievementGamesEl.hidden = !showAchievement;
+  }
+  if (socialAddScreenshotBtn) {
+    const hasScreenshot = !!socialDraftImageData;
+    socialAddScreenshotBtn.classList.toggle("active", socialComposerPanel === "screenshot");
+    socialAddScreenshotBtn.textContent = hasScreenshot ? "Screenshot Added" : "Add Screenshot";
+    socialAddScreenshotBtn.classList.toggle("added", hasScreenshot);
+  }
+  if (socialAddAchievementBtn) {
+    const hasAchievement = !!socialAchievementSelected;
+    socialAddAchievementBtn.classList.toggle("active", socialComposerPanel === "achievement");
+    socialAddAchievementBtn.textContent = hasAchievement ? "Achievement Added" : "Add Achievement";
+    socialAddAchievementBtn.classList.toggle("added", hasAchievement);
+  }
+  if (socialLinkGameBtn) {
+    const hasGame = !!socialGameSelected;
+    socialLinkGameBtn.classList.toggle("active", socialComposerPanel === "game");
+    socialLinkGameBtn.textContent = hasGame ? "Game Added" : "Add Game";
+    socialLinkGameBtn.classList.toggle("added", hasGame);
+    socialLinkGameBtn.disabled = socialAttachAchievement;
+  }
+  if (socialGameRow && socialAttachAchievement) {
+    socialGameRow.hidden = true;
+  }
+  if (socialFiltersEl) {
+    const composer = document.querySelector(".socialComposerBar");
+    if (showScreenshot && socialScreenshotSection) {
+      socialScreenshotSection.insertAdjacentElement("afterend", socialFiltersEl);
+    } else if (showAchievement && socialAchievementSection) {
+      socialAchievementSection.insertAdjacentElement("afterend", socialFiltersEl);
+    } else if (showGame && socialGameRow) {
+      socialGameRow.insertAdjacentElement("afterend", socialFiltersEl);
+    } else if (composer) {
+      composer.insertAdjacentElement("afterend", socialFiltersEl);
+    }
   }
   updateSocialComposerState();
+}
+
+function setSocialComposerPanel(panel) {
+  socialComposerPanel = panel || "";
+  refreshSocialComposerLayout();
+}
+
+async function ensureSocialGameSuggestions() {
+  if (socialGameSuggestionsLoaded) return;
+  if (!currentUser) return;
+  const cached = readRecentGamesCache(currentUser, 50);
+  if (cached?.data?.results) {
+    socialGameSuggestions = normalizeRecentGames(cached.data.results || []);
+    socialGameSuggestionsLoaded = true;
+    return;
+  }
+  try {
+    const data = await fetchRecentGames(currentUser, 50);
+    socialGameSuggestions = normalizeRecentGames(data?.results || []);
+    socialGameSuggestionsLoaded = true;
+  } catch {
+    socialGameSuggestions = [];
+  }
+}
+
+function renderSocialGameResults(query) {
+  if (!socialGameResultsEl) return;
+  const q = (query || "").trim().toLowerCase();
+  if (!q) {
+    socialGameResultsEl.hidden = true;
+    socialGameResultsEl.innerHTML = "";
+    return;
+  }
+  const matches = socialGameSuggestions
+    .filter((g) => (g.title || "").toLowerCase().includes(q))
+    .slice(0, 8);
+  if (!matches.length) {
+    socialGameResultsEl.innerHTML = `<div class="meta">No matching games.</div>`;
+    socialGameResultsEl.hidden = false;
+    return;
+  }
+  const frag = document.createDocumentFragment();
+  matches.forEach((g) => {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "socialGameOption";
+    row.dataset.gameId = String(g.gameId || "");
+    row.dataset.gameTitle = g.title || "";
+    row.innerHTML = `
+      ${g.imageIcon ? `<img src="${iconUrl(g.imageIcon)}" alt="" loading="lazy" />` : ""}
+      <div>
+        <div>${safeText(g.title || "")}</div>
+        <div class="socialGameOptionMeta">${safeText(g.consoleName || "")}</div>
+      </div>
+    `;
+    frag.appendChild(row);
+  });
+  socialGameResultsEl.innerHTML = "";
+  socialGameResultsEl.appendChild(frag);
+  socialGameResultsEl.hidden = false;
 }
 
 function renderSocialAchievementGames(list) {
@@ -673,6 +778,13 @@ function renderSocialAchievementGames(list) {
     frag.append(tile);
   });
   socialAchievementGamesEl.append(frag);
+}
+
+function setSocialAchievementSelectedGame({ gameId, title = "", imageIcon = "" }) {
+  socialAchievementGame = { gameId, title, imageIcon };
+  if (socialAchievementGameSelected) {
+    socialAchievementGameSelected.textContent = title ? `Selected: ${title}` : "Game selected.";
+  }
 }
 
 function renderSocialAchievementList(list) {
@@ -766,27 +878,6 @@ async function loadSocialAchievementList(gameId) {
   }
 }
 
-function openSocialComposer() {
-  if (!socialComposerModal) return;
-  socialComposerModal.hidden = false;
-  setSocialPostType(socialPostType || "text");
-  if (socialAchievementGameBtn) {
-    socialAchievementGameBtn.textContent = socialAchievementGame ? "Change Game" : "Select Game";
-  }
-  if (socialAchievementGameSelected) {
-    socialAchievementGameSelected.textContent = socialAchievementGame?.title
-      ? `Selected: ${socialAchievementGame.title}`
-      : "No game selected.";
-  }
-  updateSocialComposerState();
-}
-
-function closeSocialComposer() {
-  if (!socialComposerModal) return;
-  socialComposerModal.hidden = true;
-  setSocialStatus("");
-}
-
 function setSocialPreview(dataUrl) {
   socialDraftImageData = dataUrl || "";
   if (socialPreviewImg) socialPreviewImg.src = socialDraftImageData || "";
@@ -807,38 +898,51 @@ function updateSocialComposerState() {
   const hasImage = !!socialDraftImageData;
   let canPost = false;
   let status = "";
+  const gameLinkActive = socialAttachGame;
+  const gameValue = (socialGameInput?.value || "").trim();
+  const needsGameSelection = gameLinkActive && (!socialGameSelected || !gameValue);
+  const hasText = !!(socialTextInput?.value || "").trim();
   if (!currentUser) {
     status = "Set your username in Settings to post.";
-  } else if (socialPostType === "text") {
-    const text = (socialTextInput?.value || "").trim();
-    canPost = !!text;
-    status = canPost ? "" : "Write something to post.";
-  } else if (socialPostType === "screenshot") {
-    canPost = hasImage;
-    status = canPost ? "" : "Add a screenshot to post.";
-  } else if (socialPostType === "achievement") {
-    canPost = !!socialAchievementGame && !!socialAchievementSelected;
-    status = canPost ? "" : "Select a game and achievement.";
+  } else {
+    const needsAchievement = socialAttachAchievement && (!socialAchievementGame || !socialAchievementSelected);
+    const needsScreenshot = socialAttachScreenshot && !hasImage;
+    const hasAnyAttachment = socialAttachScreenshot || socialAttachAchievement || socialAttachGame;
+    canPost = !needsGameSelection && !needsAchievement && !needsScreenshot && (hasAnyAttachment || hasText);
+    if (needsGameSelection) status = "Select a game from the list.";
+    else if (needsAchievement) status = "Select a game and achievement.";
+    else if (needsScreenshot) status = "Add a screenshot to post.";
+    else if (!hasAnyAttachment && !hasText) status = "Write something to post.";
   }
   if (socialPostBtn) {
     socialPostBtn.disabled = !canPost;
-    socialPostBtn.textContent =
-      socialPostType === "text"
-        ? "Post"
-        : socialPostType === "achievement"
-          ? "Post Achievement"
-          : "Post Screenshot";
-  }
-  if (socialPostTypeSelect && socialPostTypeSelect.value !== socialPostType) {
-    socialPostTypeSelect.value = socialPostType;
+    socialPostBtn.textContent = "Post";
   }
   setSocialStatus(status);
 }
 
-function renderSocialPosts(posts = socialPosts, targetEl = socialPostListEl, { showComments = true, limit = null } = {}) {
+function filterSocialPosts(posts, filter) {
+  if (!filter || filter === "all") return posts;
+  return posts.filter((post) => {
+    const type = String(post?.postType || "").toLowerCase();
+    const isAuto = !!post?.isAuto;
+    if (filter === "achievement") {
+      return type === "achievement";
+    }
+    if (filter === "completion") {
+      return type === "completion" || isAuto;
+    }
+    if (filter === "posts") {
+      return type === "text" || type === "screenshot";
+    }
+    return true;
+  });
+}
+
+function renderSocialPosts(posts = socialPosts, targetEl = socialPostListEl, { showComments = true, limit = null, filter = "all" } = {}) {
   if (!targetEl) return;
   targetEl.innerHTML = "";
-  const list = Array.isArray(posts) ? posts : [];
+  const list = filterSocialPosts(Array.isArray(posts) ? posts : [], filter);
   if (!list.length) {
     targetEl.innerHTML = `<div class="meta">No screenshots yet. Be the first to post.</div>`;
     return;
@@ -881,20 +985,31 @@ function renderSocialPosts(posts = socialPosts, targetEl = socialPostListEl, { s
     const time = document.createElement("div");
     time.className = "meta";
     time.textContent = formatDate(post?.createdAt);
+    const isMine = currentUser && post?.user && normalizeUserKey(post.user) === normalizeUserKey(currentUser);
+    const actions = document.createElement("div");
+    actions.className = "socialPostActions";
+    if (isMine && post?.id) {
+      const removeBtn = document.createElement("button");
+      removeBtn.className = "smallBtn dangerBtn";
+      removeBtn.type = "button";
+      removeBtn.textContent = "Remove";
+      removeBtn.dataset.deletePostId = String(post.id);
+      actions.appendChild(removeBtn);
+    }
     if (post?.postType === "achievement" && !post?.isAuto) {
       header.classList.add("isAchievement");
       const title = document.createElement("div");
       title.className = "socialHeaderTitle";
       title.textContent = "Achievement";
-      header.append(author, title, time);
+      header.append(author, title, time, actions);
     } else if (isAuto) {
       header.classList.add("isAchievement");
       const title = document.createElement("div");
       title.className = "socialHeaderTitle";
       title.textContent = `Game ${autoLabel}`;
-      header.append(author, title, time);
+      header.append(author, title, time, actions);
     } else {
-      header.append(author, time);
+      header.append(author, time, actions);
     }
     card.append(header);
 
@@ -903,14 +1018,17 @@ function renderSocialPosts(posts = socialPosts, targetEl = socialPostListEl, { s
     if (isAchievementPost) {
       const achievementLayout = document.createElement("div");
       achievementLayout.className = "socialAutoLayout socialAchievementLayout";
-      const imgSrc = post?.imageData || post?.imageUrl || "";
-      if (imgSrc) {
-        const img = document.createElement("img");
-        img.className = "socialPostImage socialAutoImage";
-        img.loading = "lazy";
-        img.src = imgSrc;
-        img.alt = post?.achievementTitle ? `Achievement ${post.achievementTitle}` : "Achievement";
-        achievementLayout.append(img);
+      const badgeSrc = post?.imageUrl || "";
+      const screenshotSrc = post?.imageData || "";
+      let badgeImg = null;
+      let shotImg = null;
+      if (badgeSrc) {
+        badgeImg = document.createElement("img");
+        badgeImg.className = "socialPostImage socialAutoImage";
+        badgeImg.loading = "lazy";
+        badgeImg.src = badgeSrc;
+        badgeImg.alt = post?.achievementTitle ? `Achievement ${post.achievementTitle}` : "Achievement";
+        achievementLayout.append(badgeImg);
       }
       const info = document.createElement("div");
       info.className = "socialAutoInfo";
@@ -921,6 +1039,12 @@ function renderSocialPosts(posts = socialPosts, targetEl = socialPostListEl, { s
       meta.className = "socialPostMeta";
       meta.textContent = post?.game ? `Game: ${post.game}` : "";
       info.append(title);
+      if (post?.achievementDescription) {
+        const desc = document.createElement("div");
+        desc.className = "socialAchievementDesc";
+        desc.textContent = post.achievementDescription;
+        info.append(desc);
+      }
       if (meta.textContent) info.append(meta);
       if (post?.caption) {
         const caption = document.createElement("div");
@@ -929,6 +1053,14 @@ function renderSocialPosts(posts = socialPosts, targetEl = socialPostListEl, { s
         info.append(caption);
       }
       achievementLayout.append(info);
+      if (screenshotSrc) {
+        shotImg = document.createElement("img");
+        shotImg.className = "socialPostImage socialAchievementShot";
+        shotImg.loading = "lazy";
+        shotImg.src = screenshotSrc;
+        shotImg.alt = post?.game ? `Screenshot from ${post.game}` : "Screenshot";
+        achievementLayout.append(shotImg);
+      }
       card.append(achievementLayout);
     } else if (!isAuto && post?.game) {
       const meta = document.createElement("div");
@@ -1053,7 +1185,8 @@ async function loadSocialPostsFromServer({ silent = false } = {}) {
     const data = await fetchSocialPosts(SOCIAL_MAX_POSTS);
     const results = Array.isArray(data?.results) ? data.results : [];
     socialPosts = results;
-    renderSocialPosts(socialPosts, socialPostListEl);
+    renderSocialPosts(socialPosts, socialPostListEl, { filter: socialFilter });
+    renderSocialSidebar();
     const profileUser = clampUsername(currentProfileUser);
     const profilePosts = profileUser
       ? socialPosts.filter(p => normalizeUserKey(p?.user) === normalizeUserKey(profileUser))
@@ -1670,6 +1803,81 @@ async function fetchMonthly(username) {
   return fetchJson(`/api/monthly/${encodeURIComponent(username)}`);
 }
 
+function renderSocialSidebar() {
+  if (socialSidebarTrendingEl) {
+    const counts = new Map();
+    socialPosts.forEach((post) => {
+      const title = (post?.game || "").trim();
+      if (!title) return;
+      counts.set(title, (counts.get(title) || 0) + 1);
+    });
+    const trending = Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5);
+    if (!trending.length) {
+      socialSidebarTrendingEl.innerHTML = `<div class="meta">No trending games yet.</div>`;
+    } else {
+      socialSidebarTrendingEl.innerHTML = "";
+      const frag = document.createDocumentFragment();
+      trending.forEach(([title, count]) => {
+        const row = document.createElement("div");
+        row.className = "socialMiniItem";
+        row.innerHTML = `
+          <div class="socialMiniTitle">${safeText(title)}</div>
+          <div class="socialMiniMeta">${count} posts</div>
+        `;
+        frag.appendChild(row);
+      });
+      socialSidebarTrendingEl.appendChild(frag);
+    }
+  }
+
+  if (socialSidebarActivityEl) {
+    const items = socialPosts.slice(0, 4);
+    if (!items.length) {
+      socialSidebarActivityEl.innerHTML = `<div class="meta">No recent activity.</div>`;
+    } else {
+      socialSidebarActivityEl.innerHTML = "";
+      const frag = document.createDocumentFragment();
+      items.forEach((post) => {
+        const row = document.createElement("div");
+        row.className = "socialMiniItem";
+        const title = post?.user || "Friend";
+        const time = post?.createdAt ? formatDate(post.createdAt) : "";
+        row.innerHTML = `
+          <div>
+            <div class="socialMiniTitle">${safeText(title)}</div>
+            <div class="socialMiniMeta">${safeText(post?.game || post?.caption || "New post")}</div>
+          </div>
+          <div class="socialMiniMeta">${safeText(time)}</div>
+        `;
+        frag.appendChild(row);
+      });
+      socialSidebarActivityEl.appendChild(frag);
+    }
+  }
+
+  if (socialSidebarSuggestionsEl) {
+    const list = Array.from(new Set(friends.map(clampUsername).filter(Boolean))).slice(0, 3);
+    if (!list.length) {
+      socialSidebarSuggestionsEl.innerHTML = `<div class="meta">No suggestions yet.</div>`;
+    } else {
+      socialSidebarSuggestionsEl.innerHTML = "";
+      const frag = document.createDocumentFragment();
+      list.forEach((name) => {
+        const row = document.createElement("div");
+        row.className = "socialMiniItem";
+        row.innerHTML = `
+          <div class="socialMiniTitle">${safeText(name)}</div>
+          <button class="smallBtn" type="button" data-profile="${safeText(name)}">View</button>
+        `;
+        frag.appendChild(row);
+      });
+      socialSidebarSuggestionsEl.appendChild(frag);
+    }
+  }
+}
+
 async function fetchDaily(username) {
   return fetchJson(`/api/daily/${encodeURIComponent(username)}`);
 }
@@ -2124,7 +2332,7 @@ async function fetchSocialPosts(limit = SOCIAL_MAX_POSTS) {
   return fetchServerJson(`/api/social/posts?limit=${encodeURIComponent(count)}`, { silent: true });
 }
 
-async function createSocialPost({ postType = "text", imageData = "", imageUrl = "", caption = "", game = "", achievementTitle = "", achievementId = "" }) {
+async function createSocialPost({ postType = "text", imageData = "", imageUrl = "", caption = "", game = "", achievementTitle = "", achievementDescription = "", achievementId = "" }) {
   return fetchServerJson("/api/social/posts", {
     method: "POST",
     body: {
@@ -2134,6 +2342,7 @@ async function createSocialPost({ postType = "text", imageData = "", imageUrl = 
       caption,
       game,
       achievementTitle,
+      achievementDescription,
       achievementId
     }
   });
@@ -7021,44 +7230,76 @@ if (backlogListEl) {
   });
 }
 
-if (socialComposerOpenBtn) {
-  socialComposerOpenBtn.addEventListener("click", openSocialComposer);
-}
-if (socialComposerCloseBtn) {
-  socialComposerCloseBtn.addEventListener("click", closeSocialComposer);
-}
-if (socialComposerModal) {
-  socialComposerModal.addEventListener("click", (e) => {
-    if (e.target === socialComposerModal) closeSocialComposer();
+if (socialAddScreenshotBtn) {
+  socialAddScreenshotBtn.addEventListener("click", () => {
+    if (socialComposerPanel === "screenshot") {
+      setSocialComposerPanel("");
+      return;
+    }
+    socialAttachScreenshot = true;
+    setSocialComposerPanel("screenshot");
   });
 }
-
-if (socialPostTypeSelect) {
-  socialPostTypeSelect.addEventListener("change", () => {
-    setSocialPostType(socialPostTypeSelect.value);
+if (socialAddAchievementBtn) {
+  socialAddAchievementBtn.addEventListener("click", () => {
+    if (socialComposerPanel === "achievement") {
+      setSocialComposerPanel("");
+      return;
+    }
+    socialAttachAchievement = true;
+    setSocialComposerPanel("achievement");
+    if (socialAchievementGamesEl) socialAchievementGamesEl.hidden = false;
+    ensureSocialAchievementGames();
   });
-  setSocialPostType(socialPostTypeSelect.value || "text");
 }
+refreshSocialComposerLayout();
 
 if (socialTextInput) {
   socialTextInput.addEventListener("input", updateSocialComposerState);
 }
 
-if (socialCaptionInput) {
-  socialCaptionInput.addEventListener("input", updateSocialComposerState);
+if (socialGameInput) {
+  socialGameInput.addEventListener("input", async () => {
+    socialGameSelected = null;
+    await ensureSocialGameSuggestions();
+    renderSocialGameResults(socialGameInput.value);
+    updateSocialComposerState();
+  });
 }
 
-if (socialAchievementCaptionInput) {
-  socialAchievementCaptionInput.addEventListener("input", updateSocialComposerState);
+if (socialGameResultsEl) {
+  socialGameResultsEl.addEventListener("click", (e) => {
+    const option = e.target.closest(".socialGameOption");
+    if (!option) return;
+    const gameId = Number(option.dataset.gameId);
+    const title = option.dataset.gameTitle || "";
+    if (!Number.isFinite(gameId)) return;
+    socialGameSelected = { gameId, title };
+    if (socialGameInput) socialGameInput.value = title;
+    socialGameResultsEl.hidden = true;
+    socialGameResultsEl.innerHTML = "";
+    if (socialLinkGameBtn) {
+      socialLinkGameBtn.textContent = "Game Added";
+      socialLinkGameBtn.classList.add("added");
+    }
+    setSocialComposerPanel("");
+    updateSocialComposerState();
+  });
 }
 
-if (socialAchievementGameBtn) {
-  socialAchievementGameBtn.addEventListener("click", async () => {
-    if (!socialAchievementGamesEl) return;
-    const nextHidden = !socialAchievementGamesEl.hidden;
-    socialAchievementGamesEl.hidden = nextHidden;
-    if (!nextHidden) {
-      await ensureSocialAchievementGames();
+if (socialLinkGameBtn) {
+  socialLinkGameBtn.addEventListener("click", () => {
+    if (socialComposerPanel === "game") {
+      setSocialComposerPanel("");
+      return;
+    }
+    socialAttachGame = true;
+    setSocialComposerPanel("game");
+    if (socialGameInput) {
+      socialGameInput.focus();
+      ensureSocialGameSuggestions().then(() => {
+        renderSocialGameResults(socialGameInput.value);
+      });
     }
   });
 }
@@ -7071,13 +7312,7 @@ if (socialAchievementGamesEl) {
     const title = tile.dataset.gameTitle || "";
     const icon = tile.dataset.gameIcon || "";
     if (!Number.isFinite(gameId)) return;
-    socialAchievementGame = { gameId, title, imageIcon: icon };
-    if (socialAchievementGameSelected) {
-      socialAchievementGameSelected.textContent = title ? `Selected: ${title}` : "Game selected.";
-    }
-    if (socialAchievementGameBtn) {
-      socialAchievementGameBtn.textContent = "Change Game";
-    }
+    setSocialAchievementSelectedGame({ gameId, title, imageIcon: icon });
     if (socialAchievementGamesEl) socialAchievementGamesEl.hidden = true;
     await loadSocialAchievementList(gameId);
     updateSocialComposerState();
@@ -7093,6 +7328,21 @@ if (socialAchievementListEl) {
     socialAchievementListEl.querySelectorAll(".socialAchievementItem").forEach((el) => {
       el.classList.toggle("selected", el === item);
     });
+    if (socialAttachAchievement && socialAchievementGame) {
+      socialAttachGame = false;
+      socialGameSelected = null;
+      if (socialGameInput) socialGameInput.value = "";
+      if (socialGameResultsEl) {
+        socialGameResultsEl.hidden = true;
+        socialGameResultsEl.innerHTML = "";
+      }
+    }
+    if (socialAchievementSelected) {
+      if (socialAddAchievementBtn) socialAddAchievementBtn.textContent = "Achievement Added";
+      if (socialAddAchievementBtn) socialAddAchievementBtn.classList.add("added");
+      if (socialAchievementGamesEl) socialAchievementGamesEl.hidden = true;
+      setSocialComposerPanel("");
+    }
     updateSocialComposerState();
   });
 }
@@ -7115,6 +7365,11 @@ if (socialUploadInput) {
       setSocialStatus("Loading preview...");
       const dataUrl = await readImageAsDataUrl(file);
       setSocialPreview(String(dataUrl || ""));
+      if (socialAddScreenshotBtn) {
+        socialAddScreenshotBtn.textContent = "Screenshot Added";
+        socialAddScreenshotBtn.classList.add("added");
+      }
+      setSocialComposerPanel("");
     } catch (err) {
       setSocialStatus("Failed to load screenshot.");
     }
@@ -7136,50 +7391,77 @@ if (socialPostBtn) {
     }
     try {
       socialPostBtn.disabled = true;
-      if (socialPostType === "text") {
-        const text = (socialTextInput?.value || "").trim();
-        if (!text) {
-          setSocialStatus("Write something to post.");
-          return;
-        }
-        setSocialStatus("Posting...");
-        await createSocialPost({ postType: "text", caption: text });
-      } else if (socialPostType === "achievement") {
-        if (!socialAchievementGame || !socialAchievementSelected) {
-          setSocialStatus("Select a game and achievement.");
-          return;
-        }
-        const achievementCaption = (socialAchievementCaptionInput?.value || "").trim();
-        setSocialStatus("Posting achievement...");
-        await createSocialPost({
-          postType: "achievement",
-          game: socialAchievementGame.title,
-          imageUrl: iconUrl(socialAchievementSelected.badgeUrl || ""),
-          caption: achievementCaption,
-          achievementTitle: socialAchievementSelected.title,
-          achievementId: socialAchievementSelected.id
-        });
-      } else {
-        if (!socialDraftImageData) {
-          setSocialStatus("Add a screenshot to post.");
-          return;
-        }
-        const caption = (socialCaptionInput?.value || "").trim();
-        const game = (socialGameInput?.value || "").trim();
-        setSocialStatus("Posting screenshot...");
-        await createSocialPost({ postType: "screenshot", imageData: socialDraftImageData, caption, game });
+      const caption = (socialTextInput?.value || "").trim();
+      const hasAnyAttachment = socialAttachScreenshot || socialAttachAchievement || socialAttachGame;
+      if (!hasAnyAttachment && !caption) {
+        setSocialStatus("Write something to post.");
+        return;
       }
-      if (socialCaptionInput) socialCaptionInput.value = "";
+      if (socialAttachGame && !socialGameSelected) {
+        setSocialStatus("Select a game from the list.");
+        return;
+      }
+      if (socialAttachScreenshot && !socialDraftImageData) {
+        setSocialStatus("Add a screenshot to post.");
+        return;
+      }
+      if (socialAttachAchievement && (!socialAchievementGame || !socialAchievementSelected)) {
+        setSocialStatus("Select a game and achievement.");
+        return;
+      }
+
+      const postType = socialAttachAchievement
+        ? "achievement"
+        : (socialAttachScreenshot ? "screenshot" : "text");
+      const game =
+        (socialAttachAchievement ? socialAchievementGame?.title : socialGameSelected?.title) ||
+        (socialGameInput?.value || "").trim();
+      const payload = {
+        postType,
+        caption,
+        game,
+        imageData: socialAttachScreenshot ? socialDraftImageData : "",
+        imageUrl: socialAttachAchievement ? iconUrl(socialAchievementSelected?.badgeUrl || "") : "",
+        achievementTitle: socialAttachAchievement ? socialAchievementSelected?.title || "" : "",
+        achievementDescription: socialAttachAchievement ? socialAchievementSelected?.description || "" : "",
+        achievementId: socialAttachAchievement ? socialAchievementSelected?.id || "" : ""
+      };
+
+      setSocialStatus("Posting...");
+      await createSocialPost(payload);
       if (socialGameInput) socialGameInput.value = "";
       if (socialTextInput) socialTextInput.value = "";
-      if (socialAchievementCaptionInput) socialAchievementCaptionInput.value = "";
       if (socialUploadInput) socialUploadInput.value = "";
       setSocialPreview("");
       socialAchievementSelected = null;
+      socialAchievementGame = null;
+      socialAttachScreenshot = false;
+      socialAttachAchievement = false;
+      socialAttachGame = false;
+    if (socialAddScreenshotBtn) {
+      socialAddScreenshotBtn.classList.remove("active");
+      socialAddScreenshotBtn.textContent = "Add Screenshot";
+      socialAddScreenshotBtn.classList.remove("added");
+    }
+    if (socialAddAchievementBtn) {
+      socialAddAchievementBtn.classList.remove("active");
+      socialAddAchievementBtn.textContent = "Add Achievement";
+      socialAddAchievementBtn.classList.remove("added");
+    }
+    if (socialLinkGameBtn) {
+      socialLinkGameBtn.classList.remove("active");
+      socialLinkGameBtn.classList.remove("added");
+      socialLinkGameBtn.textContent = "Add Game";
+    }
+      socialGameSelected = null;
+      if (socialGameResultsEl) {
+        socialGameResultsEl.hidden = true;
+        socialGameResultsEl.innerHTML = "";
+      }
+      refreshSocialComposerLayout();
       renderSocialAchievementList(socialAchievementItems);
       await loadSocialPostsFromServer({ silent: true });
       setSocialStatus("");
-      closeSocialComposer();
     } catch (err) {
       setSocialStatus("Failed to post.");
     } finally {
@@ -7211,6 +7493,20 @@ function bindSocialList(listEl) {
     }
   });
   listEl.addEventListener("click", (e) => {
+    const deleteBtn = e.target.closest("button[data-delete-post-id]");
+    if (deleteBtn) {
+      const id = deleteBtn.getAttribute("data-delete-post-id");
+      if (!id) return;
+      (async () => {
+        try {
+          await fetchServerJson(`/api/social/posts/${encodeURIComponent(id)}`, { method: "DELETE" });
+          await loadSocialPostsFromServer({ silent: true });
+        } catch {
+          setSocialStatus("Failed to remove post.");
+        }
+      })();
+      return;
+    }
     const img = e.target.closest(".socialPostImage");
     if (!img || !imageModal || !imageModalImg) return;
     const src = img.getAttribute("src");
@@ -7521,6 +7817,27 @@ if (notificationsListEl) {
         closeNotificationsPanel();
       }
     }
+  });
+}
+
+if (socialSidebarSuggestionsEl) {
+  socialSidebarSuggestionsEl.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-profile]");
+    if (!btn) return;
+    const target = btn.getAttribute("data-profile");
+    if (!target) return;
+    setActivePage("dashboard");
+    openProfile(target);
+  });
+}
+
+if (socialFilterButtons.length) {
+  socialFilterButtons.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      socialFilter = btn.dataset.filter || "all";
+      socialFilterButtons.forEach((b) => b.classList.toggle("active", b === btn));
+      renderSocialPosts(socialPosts, socialPostListEl, { filter: socialFilter });
+    });
   });
 }
 if (settingsCloseBtn) {
