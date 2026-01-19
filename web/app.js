@@ -941,7 +941,7 @@ function filterSocialPosts(posts, filter) {
   });
 }
 
-function renderSocialPosts(posts = socialPosts, targetEl = socialPostListEl, { showComments = true, limit = null, filter = "all" } = {}) {
+function renderSocialPosts(posts = socialPosts, targetEl = socialPostListEl, { showComments = true, showActions = true, limit = null, filter = "all" } = {}) {
   if (!targetEl) return;
   targetEl.innerHTML = "";
   const list = filterSocialPosts(Array.isArray(posts) ? posts : [], filter);
@@ -990,7 +990,7 @@ function renderSocialPosts(posts = socialPosts, targetEl = socialPostListEl, { s
     const isMine = currentUser && post?.user && normalizeUserKey(post.user) === normalizeUserKey(currentUser);
     const actions = document.createElement("div");
     actions.className = "socialPostActions";
-    if (isMine && post?.id) {
+    if (showActions && isMine && post?.id) {
       const removeBtn = document.createElement("button");
       removeBtn.className = "smallBtn dangerBtn";
       removeBtn.type = "button";
@@ -1003,15 +1003,18 @@ function renderSocialPosts(posts = socialPosts, targetEl = socialPostListEl, { s
       const title = document.createElement("div");
       title.className = "socialHeaderTitle";
       title.textContent = "Achievement";
-      header.append(author, title, time, actions);
+      header.append(author, title, time);
+      if (showActions) header.append(actions);
     } else if (isAuto) {
       header.classList.add("isAchievement");
       const title = document.createElement("div");
       title.className = "socialHeaderTitle";
       title.textContent = `Game ${autoLabel}`;
-      header.append(author, title, time, actions);
+      header.append(author, title, time);
+      if (showActions) header.append(actions);
     } else {
-      header.append(author, time, actions);
+      header.append(author, time);
+      if (showActions) header.append(actions);
     }
     card.append(header);
 
@@ -1216,7 +1219,7 @@ async function loadSocialPostsFromServer({ silent = false } = {}) {
     const profilePosts = profileUser
       ? socialPosts.filter(p => normalizeUserKey(p?.user) === normalizeUserKey(profileUser))
       : [];
-    renderSocialPosts(profilePosts, profileSocialListEl, { showComments: false, limit: 3 });
+    renderSocialPosts(profilePosts, profileSocialListEl, { showComments: false, showActions: false, limit: 3 });
     if (!silent) setSocialStatus("");
   } catch (err) {
     const message = String(err?.message || "");
