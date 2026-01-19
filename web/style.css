@@ -3090,6 +3090,34 @@ tbody tr:nth-child(even){
   color: var(--ink-muted);
 }
 
+.socialTooltip{
+  position: absolute;
+  z-index: 80;
+  min-width: 180px;
+  max-width: 240px;
+  padding: 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(124, 92, 255, 0.4);
+  background: linear-gradient(180deg, rgba(16, 12, 34, 0.96), rgba(10, 8, 22, 0.92));
+  box-shadow: 0 16px 28px rgba(6, 4, 18, 0.6);
+  color: var(--ink);
+  pointer-events: none;
+}
+
+.socialTooltipTitle{
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.socialTooltipList{
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+
 .socialPreview {
   display: flex;
   flex-direction: column;
@@ -3230,6 +3258,19 @@ tbody tr:nth-child(even){
   margin: 0 0 10px;
   color: var(--ink);
   font-size: 14px;
+}
+
+.socialReactions{
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 8px;
+}
+
+.reactionBtn.active{
+  border-color: rgba(59, 130, 246, 0.7);
+  color: #bfdbfe;
+  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.35), 0 0 12px rgba(59, 130, 246, 0.2);
 }
 
 .socialPostImage {

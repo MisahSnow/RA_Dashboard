@@ -277,6 +277,7 @@ const socialAddAchievementBtn = document.getElementById("socialAddAchievementBtn
 const socialSidebarTrendingEl = document.getElementById("socialSidebarTrending");
 const socialSidebarActivityEl = document.getElementById("socialSidebarActivity");
 const socialSidebarSuggestionsEl = document.getElementById("socialSidebarSuggestions");
+const socialTrendingTooltip = document.getElementById("socialTrendingTooltip");
 const socialFiltersEl = document.querySelector(".socialFilters");
 const socialFilterButtons = document.querySelectorAll(".socialFilters .filterPill");
 
@@ -592,6 +593,7 @@ let socialFilter = "all";
 let socialGameSuggestions = [];
 let socialGameSelected = null;
 let socialGameSuggestionsLoaded = false;
+let socialTrendingPlayers = new Map();
 
 function clampUsername(s) {
   return (s || "").trim().replace(/\s+/g, "");
@@ -1076,6 +1078,25 @@ function renderSocialPosts(posts = socialPosts, targetEl = socialPostListEl, { s
       card.append(caption);
     }
 
+    const reactions = document.createElement("div");
+    reactions.className = "socialReactions";
+    const likes = Number(post?.reactions?.likes || 0);
+    const dislikes = Number(post?.reactions?.dislikes || 0);
+    const userReaction = post?.reactions?.userReaction || "";
+    const likeBtn = document.createElement("button");
+    likeBtn.className = `smallBtn reactionBtn${userReaction === "like" ? " active" : ""}`;
+    likeBtn.type = "button";
+    likeBtn.dataset.reaction = "like";
+    likeBtn.dataset.postId = String(post?.id || "");
+    likeBtn.textContent = `Like ${likes}`;
+    const dislikeBtn = document.createElement("button");
+    dislikeBtn.className = `smallBtn reactionBtn${userReaction === "dislike" ? " active" : ""}`;
+    dislikeBtn.type = "button";
+    dislikeBtn.dataset.reaction = "dislike";
+    dislikeBtn.dataset.postId = String(post?.id || "");
+    dislikeBtn.textContent = `Dislike ${dislikes}`;
+    reactions.append(likeBtn, dislikeBtn);
+
     const imgSrc = post?.imageData || post?.imageUrl || "";
     if (isAuto) {
       const autoLayout = document.createElement("div");
@@ -1168,7 +1189,7 @@ function renderSocialPosts(posts = socialPosts, targetEl = socialPostListEl, { s
       btn.type = "submit";
       btn.textContent = "Post";
       btn.disabled = !currentUser;
-      form.append(input, btn);
+      form.append(input, btn, reactions);
       commentsWrap.append(form);
 
       card.append(commentsWrap);
@@ -1186,7 +1207,8 @@ async function loadSocialPostsFromServer({ silent = false } = {}) {
     const results = Array.isArray(data?.results) ? data.results : [];
     socialPosts = results;
     renderSocialPosts(socialPosts, socialPostListEl, { filter: socialFilter });
-    renderSocialSidebar();
+    renderSocialSidebarActivity();
+    renderSocialTrendingGames();
     const profileUser = clampUsername(currentProfileUser);
     const profilePosts = profileUser
       ? socialPosts.filter(p => normalizeUserKey(p?.user) === normalizeUserKey(profileUser))
@@ -1803,35 +1825,7 @@ async function fetchMonthly(username) {
   return fetchJson(`/api/monthly/${encodeURIComponent(username)}`);
 }
 
-function renderSocialSidebar() {
-  if (socialSidebarTrendingEl) {
-    const counts = new Map();
-    socialPosts.forEach((post) => {
-      const title = (post?.game || "").trim();
-      if (!title) return;
-      counts.set(title, (counts.get(title) || 0) + 1);
-    });
-    const trending = Array.from(counts.entries())
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 5);
-    if (!trending.length) {
-      socialSidebarTrendingEl.innerHTML = `<div class="meta">No trending games yet.</div>`;
-    } else {
-      socialSidebarTrendingEl.innerHTML = "";
-      const frag = document.createDocumentFragment();
-      trending.forEach(([title, count]) => {
-        const row = document.createElement("div");
-        row.className = "socialMiniItem";
-        row.innerHTML = `
-          <div class="socialMiniTitle">${safeText(title)}</div>
-          <div class="socialMiniMeta">${count} posts</div>
-        `;
-        frag.appendChild(row);
-      });
-      socialSidebarTrendingEl.appendChild(frag);
-    }
-  }
-
+function renderSocialSidebarActivity() {
   if (socialSidebarActivityEl) {
     const items = socialPosts.slice(0, 4);
     if (!items.length) {
@@ -1876,6 +1870,64 @@ function renderSocialSidebar() {
       socialSidebarSuggestionsEl.appendChild(frag);
     }
   }
+}
+
+async function renderSocialTrendingGames() {
+  if (!socialSidebarTrendingEl) return;
+  const users = Array.from(new Set([currentUser, ...friends].map(clampUsername).filter(Boolean)));
+  if (!users.length) {
+    socialSidebarTrendingEl.innerHTML = `<div class="meta">No trending games yet.</div>`;
+    return;
+  }
+  const counts = new Map();
+  const playersByGame = new Map();
+  for (const user of users.slice(0, 12)) {
+    try {
+      const cached = readRecentGamesCache(user, 12);
+      const data = cached?.data || (await fetchRecentGames(user, 12));
+      const recent = normalizeRecentGames(data?.results || []);
+      const seen = new Set();
+      for (const game of recent) {
+        const id = String(game.gameId || "");
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        counts.set(id, {
+          title: game.title || "",
+          console: game.consoleName || "",
+          count: (counts.get(id)?.count || 0) + 1
+        });
+        if (!playersByGame.has(id)) playersByGame.set(id, new Set());
+        playersByGame.get(id).add(user);
+      }
+    } catch {
+      // ignore user fetch errors
+    }
+  }
+  const trending = Array.from(counts.entries())
+    .map(([gameId, data]) => ({ gameId, ...data }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 5);
+  if (!trending.length) {
+    socialSidebarTrendingEl.innerHTML = `<div class="meta">No trending games yet.</div>`;
+    return;
+  }
+  socialSidebarTrendingEl.innerHTML = "";
+  const frag = document.createDocumentFragment();
+  trending.forEach((item) => {
+    const row = document.createElement("div");
+    row.className = "socialMiniItem";
+    row.dataset.gameId = String(item.gameId || "");
+    row.innerHTML = `
+      <div>
+        <div class="socialMiniTitle">${safeText(item.title)}</div>
+        <div class="socialMiniMeta">${safeText(item.console)}</div>
+      </div>
+      <div class="socialMiniMeta">${item.count} people</div>
+    `;
+    frag.appendChild(row);
+  });
+  socialSidebarTrendingEl.appendChild(frag);
+  socialTrendingPlayers = playersByGame;
 }
 
 async function fetchDaily(username) {
@@ -2345,6 +2397,13 @@ async function createSocialPost({ postType = "text", imageData = "", imageUrl = 
       achievementDescription,
       achievementId
     }
+  });
+}
+
+async function setSocialReaction(postId, reaction) {
+  return fetchServerJson(`/api/social/posts/${encodeURIComponent(postId)}/reaction`, {
+    method: "POST",
+    body: { reaction }
   });
 }
 
@@ -7507,6 +7566,34 @@ function bindSocialList(listEl) {
       })();
       return;
     }
+    const reactionBtn = e.target.closest("button[data-reaction]");
+    if (reactionBtn) {
+      const postId = reactionBtn.getAttribute("data-post-id");
+      const reaction = reactionBtn.getAttribute("data-reaction");
+      if (!postId || !reaction) return;
+      const card = reactionBtn.closest(".socialPost");
+      const current = card?.querySelector(".reactionBtn.active")?.getAttribute("data-reaction") || "";
+      const nextReaction = current === reaction ? "none" : reaction;
+      (async () => {
+        try {
+          const data = await setSocialReaction(postId, nextReaction);
+          if (!data) return;
+          const likeBtn = card?.querySelector(".reactionBtn[data-reaction='like']");
+          const dislikeBtn = card?.querySelector(".reactionBtn[data-reaction='dislike']");
+          if (likeBtn) {
+            likeBtn.classList.toggle("active", data.userReaction === "like");
+            likeBtn.textContent = `Like ${data.likes ?? 0}`;
+          }
+          if (dislikeBtn) {
+            dislikeBtn.classList.toggle("active", data.userReaction === "dislike");
+            dislikeBtn.textContent = `Dislike ${data.dislikes ?? 0}`;
+          }
+        } catch {
+          setSocialStatus("Failed to update reaction.");
+        }
+      })();
+      return;
+    }
     const img = e.target.closest(".socialPostImage");
     if (!img || !imageModal || !imageModalImg) return;
     const src = img.getAttribute("src");
@@ -7828,6 +7915,38 @@ if (socialSidebarSuggestionsEl) {
     if (!target) return;
     setActivePage("dashboard");
     openProfile(target);
+  });
+}
+
+if (socialSidebarTrendingEl && socialTrendingTooltip) {
+  socialSidebarTrendingEl.addEventListener("mousemove", (e) => {
+    const row = e.target.closest(".socialMiniItem");
+    if (!row) return;
+    const gameId = row.dataset.gameId || "";
+    if (!gameId) return;
+    const players = Array.from(socialTrendingPlayers.get(gameId) || []);
+    if (!players.length) return;
+    const list = players.slice(0, 6).map(p => `<div>${safeText(p)}</div>`).join("");
+    socialTrendingTooltip.innerHTML = `
+      <div class="socialTooltipTitle">Recent players</div>
+      <div class="socialTooltipList">${list}</div>
+    `;
+    const wrap = document.querySelector(".wrap");
+    if (wrap) {
+      const rect = wrap.getBoundingClientRect();
+      const scale = rect.width && wrap.offsetWidth ? rect.width / wrap.offsetWidth : 1;
+      const x = (e.clientX - rect.left) / scale + 16;
+      const y = (e.clientY - rect.top) / scale + 10;
+      socialTrendingTooltip.style.left = `${x}px`;
+      socialTrendingTooltip.style.top = `${y}px`;
+    } else {
+      socialTrendingTooltip.style.left = `${e.clientX + 6}px`;
+      socialTrendingTooltip.style.top = `${e.clientY + 10}px`;
+    }
+    socialTrendingTooltip.hidden = false;
+  });
+  socialSidebarTrendingEl.addEventListener("mouseleave", () => {
+    socialTrendingTooltip.hidden = true;
   });
 }
 

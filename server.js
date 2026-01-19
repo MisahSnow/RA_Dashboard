@@ -274,6 +274,17 @@ async function initDb() {
     );
   `);
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS social_reactions (
+      id SERIAL PRIMARY KEY,
+      post_id INTEGER NOT NULL REFERENCES social_posts(id) ON DELETE CASCADE,
+      user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      username TEXT NOT NULL,
+      reaction TEXT NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(post_id, username)
+    );
+  `);
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS social_completion_events (
       id SERIAL PRIMARY KEY,
       username TEXT NOT NULL,
@@ -2633,6 +2644,7 @@ app.get("/api/social/posts", requireAuth, async (req, res) => {
       achievementId: row.achievement_id,
       achievementDescription: row.achievement_description,
       createdAt: row.created_at,
+      reactions: { likes: 0, dislikes: 0, userReaction: null },
       comments: []
     }));
 
@@ -2641,6 +2653,26 @@ app.get("/api/social/posts", requireAuth, async (req, res) => {
     }
 
     const postIds = posts.map(p => p.id);
+    const reactionsRes = await pool.query(
+      `
+        SELECT post_id, reaction, username
+        FROM social_reactions
+        WHERE post_id = ANY($1)
+      `,
+      [postIds]
+    );
+    const reactionsByPost = new Map();
+    reactionsRes.rows.forEach((row) => {
+      if (!reactionsByPost.has(row.post_id)) {
+        reactionsByPost.set(row.post_id, { likes: 0, dislikes: 0, userReaction: null });
+      }
+      const bucket = reactionsByPost.get(row.post_id);
+      if (row.reaction === "like") bucket.likes += 1;
+      if (row.reaction === "dislike") bucket.dislikes += 1;
+      if (normalizeUsername(row.username) === normalizeUsername(username)) {
+        bucket.userReaction = row.reaction;
+      }
+    });
     const commentsRes = await pool.query(
       `
         SELECT id, post_id, username, body, created_at
@@ -2662,6 +2694,7 @@ app.get("/api/social/posts", requireAuth, async (req, res) => {
     });
     posts.forEach((post) => {
       post.comments = byPost.get(post.id) || [];
+      post.reactions = reactionsByPost.get(post.id) || { likes: 0, dislikes: 0, userReaction: null };
     });
 
     res.json({ count: posts.length, results: posts });
@@ -2809,6 +2842,56 @@ app.delete("/api/social/posts/:id", requireAuth, async (req, res) => {
   } catch (err) {
     const status = err?.status || 500;
     res.status(status).json({ error: err?.message || "Failed to delete post" });
+  }
+});
+
+app.post("/api/social/posts/:id/reaction", requireAuth, async (req, res) => {
+  try {
+    if (!pool) return res.status(500).json({ error: "Database unavailable" });
+    const userId = req.session?.user?.id;
+    const username = req.session?.user?.username;
+    if (!userId || !username) return res.status(401).json({ error: "Not authenticated" });
+    const postId = Number(req.params.id);
+    if (!Number.isFinite(postId)) return res.status(400).json({ error: "Invalid post id" });
+    const reactionRaw = String(req.body?.reaction || "").trim().toLowerCase();
+    if (!["like", "dislike", "none"].includes(reactionRaw)) {
+      return res.status(400).json({ error: "Invalid reaction" });
+    }
+    if (reactionRaw === "none") {
+      await pool.query(
+        "DELETE FROM social_reactions WHERE post_id = $1 AND username = $2",
+        [postId, username]
+      );
+    } else {
+      await pool.query(
+        `
+          INSERT INTO social_reactions (post_id, user_id, username, reaction, created_at)
+          VALUES ($1, $2, $3, $4, NOW())
+          ON CONFLICT (post_id, username)
+          DO UPDATE SET reaction = EXCLUDED.reaction, created_at = NOW()
+        `,
+        [postId, userId, username, reactionRaw]
+      );
+    }
+    const counts = await pool.query(
+      `
+        SELECT
+          SUM(CASE WHEN reaction = 'like' THEN 1 ELSE 0 END) AS likes,
+          SUM(CASE WHEN reaction = 'dislike' THEN 1 ELSE 0 END) AS dislikes
+        FROM social_reactions
+        WHERE post_id = $1
+      `,
+      [postId]
+    );
+    res.json({
+      postId,
+      likes: Number(counts.rows[0]?.likes || 0),
+      dislikes: Number(counts.rows[0]?.dislikes || 0),
+      userReaction: reactionRaw === "none" ? null : reactionRaw
+    });
+  } catch (err) {
+    const status = err?.status || 500;
+    res.status(status).json({ error: err?.message || "Failed to update reaction" });
   }
 });
 

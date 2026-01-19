@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Competetive RetroAchievements</title>
+  <title>RetroRivals</title>
   <link rel="icon" type="image/png" href="favicon.png" />
   <link rel="stylesheet" href="style.css" />
 </head>
@@ -17,7 +17,7 @@
     <div class="wrap">
     <div class="panelHeader">
       <div class="panelTitle">
-        <h1><span class="titlePrimary">Competetive</span> <span class="titleAccent">RetroAchievements</span></h1>
+        <h1><span class="titleAccent">Retro</span><span class="titlePrimary">Rivals</span></h1>
         <p class="subtitle">Group Leaderboard and Achievement Tracking</p>
       </div>
       <div class="topActions">
@@ -45,6 +45,7 @@
       <button class="pageBtn profileTab" data-page="profile" role="tab" aria-selected="false">My Profile</button>
     </div>
     <div class="status" id="status"></div>
+    <div id="socialTrendingTooltip" class="socialTooltip" hidden></div>
     <div id="notificationsPanel" class="notifPanel" hidden>
       <div class="notifHeader">
         <h3 class="sectionTitle">Notifications</h3>
@@ -556,7 +557,7 @@
           </div>
           <aside class="socialSidebar">
             <div class="socialSideCard">
-              <h3 class="sectionTitle">Trending Now</h3>
+              <h3 class="sectionTitle">Trending Games</h3>
               <div id="socialSidebarTrending" class="socialMiniList"></div>
             </div>
             <div class="socialSideCard">
