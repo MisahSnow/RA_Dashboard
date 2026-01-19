@@ -1094,6 +1094,42 @@ app.get("/api/friends", requireAuth, async (req, res) => {
   res.json({ results: result.rows.map(r => r.friend_username) });
 });
 
+app.get("/api/friends/suggestions", requireAuth, async (req, res) => {
+  if (!pool) return res.status(500).json({ error: "Database unavailable" });
+  const userId = req.session.user.id;
+  const me = normalizeUsername(req.session.user.username);
+  const limitQ = typeof req.query.limit === "string" ? Number(req.query.limit) : 6;
+  const limit = Math.max(1, Math.min(20, Number.isFinite(limitQ) ? limitQ : 6));
+
+  const friendsRes = await pool.query(
+    "SELECT friend_username FROM friends WHERE user_id = $1",
+    [userId]
+  );
+  const myFriends = friendsRes.rows.map(r => normalizeUsername(r.friend_username)).filter(Boolean);
+  if (!myFriends.length) return res.json({ results: [] });
+
+  const friendIdsRes = await pool.query(
+    "SELECT id, username FROM users WHERE username = ANY($1)",
+    [myFriends]
+  );
+  const friendIds = friendIdsRes.rows.map(r => r.id);
+  if (!friendIds.length) return res.json({ results: [] });
+
+  const suggestionsRes = await pool.query(
+    `
+      SELECT DISTINCT f.friend_username AS username
+      FROM friends f
+      WHERE f.user_id = ANY($1)
+    `,
+    [friendIds]
+  );
+  const suggestions = suggestionsRes.rows
+    .map(r => normalizeUsername(r.username))
+    .filter(u => u && u !== me && !myFriends.includes(u))
+    .slice(0, limit);
+  res.json({ results: suggestions });
+});
+
 app.post("/api/friends", requireAuth, async (req, res) => {
   if (!pool) return res.status(500).json({ error: "Database unavailable" });
   const userId = req.session.user.id;

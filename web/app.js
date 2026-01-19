@@ -1209,6 +1209,9 @@ async function loadSocialPostsFromServer({ silent = false } = {}) {
     renderSocialPosts(socialPosts, socialPostListEl, { filter: socialFilter });
     renderSocialSidebarActivity();
     renderSocialTrendingGames();
+    loadFriendSuggestions().then(renderSocialSidebarSuggestions).catch(() => {
+      renderSocialSidebarSuggestions([]);
+    });
     const profileUser = clampUsername(currentProfileUser);
     const profilePosts = profileUser
       ? socialPosts.filter(p => normalizeUserKey(p?.user) === normalizeUserKey(profileUser))
@@ -1825,6 +1828,12 @@ async function fetchMonthly(username) {
   return fetchJson(`/api/monthly/${encodeURIComponent(username)}`);
 }
 
+async function loadFriendSuggestions(limit = 6) {
+  const data = await fetchServerJson(`/api/friends/suggestions?limit=${encodeURIComponent(limit)}`, { silent: true });
+  const list = Array.isArray(data?.results) ? data.results : [];
+  return list.map(clampUsername).filter(Boolean);
+}
+
 function renderSocialSidebarActivity() {
   if (socialSidebarActivityEl) {
     const items = socialPosts.slice(0, 4);
@@ -1851,25 +1860,26 @@ function renderSocialSidebarActivity() {
     }
   }
 
-  if (socialSidebarSuggestionsEl) {
-    const list = Array.from(new Set(friends.map(clampUsername).filter(Boolean))).slice(0, 3);
-    if (!list.length) {
-      socialSidebarSuggestionsEl.innerHTML = `<div class="meta">No suggestions yet.</div>`;
-    } else {
-      socialSidebarSuggestionsEl.innerHTML = "";
-      const frag = document.createDocumentFragment();
-      list.forEach((name) => {
-        const row = document.createElement("div");
-        row.className = "socialMiniItem";
-        row.innerHTML = `
-          <div class="socialMiniTitle">${safeText(name)}</div>
-          <button class="smallBtn" type="button" data-profile="${safeText(name)}">View</button>
-        `;
-        frag.appendChild(row);
-      });
-      socialSidebarSuggestionsEl.appendChild(frag);
-    }
+}
+
+function renderSocialSidebarSuggestions(list) {
+  if (!socialSidebarSuggestionsEl) return;
+  if (!list.length) {
+    socialSidebarSuggestionsEl.innerHTML = `<div class="meta">No suggestions yet.</div>`;
+    return;
   }
+  socialSidebarSuggestionsEl.innerHTML = "";
+  const frag = document.createDocumentFragment();
+  list.forEach((name) => {
+    const row = document.createElement("div");
+    row.className = "socialMiniItem";
+    row.innerHTML = `
+      <div class="socialMiniTitle">${safeText(name)}</div>
+      <button class="smallBtn" type="button" data-add-friend="${safeText(name)}">Add</button>
+    `;
+    frag.appendChild(row);
+  });
+  socialSidebarSuggestionsEl.appendChild(frag);
 }
 
 async function renderSocialTrendingGames() {
@@ -7909,12 +7919,20 @@ if (notificationsListEl) {
 
 if (socialSidebarSuggestionsEl) {
   socialSidebarSuggestionsEl.addEventListener("click", (e) => {
-    const btn = e.target.closest("button[data-profile]");
+    const btn = e.target.closest("button[data-add-friend]");
     if (!btn) return;
-    const target = btn.getAttribute("data-profile");
+    const target = btn.getAttribute("data-add-friend");
     if (!target) return;
-    setActivePage("dashboard");
-    openProfile(target);
+    (async () => {
+      try {
+        await addFriendToServer(target);
+        friends = Array.from(new Set([...friends, target]));
+        renderChallengeFriendOptions(friends);
+        await loadSocialPostsFromServer({ silent: true });
+      } catch {
+        setStatus("Failed to add friend.");
+      }
+    })();
   });
 }
 
