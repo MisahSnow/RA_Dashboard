@@ -140,6 +140,8 @@ const LS_LEADERBOARD_RANGE = "ra.leaderboardRange";
 const LS_PROFILE_COUNTS_PREFIX = "ra.profileCounts";
 const LS_FIND_GAMES_CONSOLE = "ra.findGamesConsole";
 const LS_BACKLOG_PREFIX = "ra.backlog";
+const friendSummaryCache = new Map();
+const friendPresenceCache = new Map();
 const PROFILE_COUNTS_CACHE_TTL_MS = 2 * 60 * 1000;
 const RECENT_CACHE_TTL_MS = 2 * 60 * 1000;
 const LS_RECENT_GAMES_PREFIX = "ra.recentGames";
@@ -167,6 +169,12 @@ const usernameModalConfirmBtn = document.getElementById("usernameModalConfirmBtn
 const usernameModalErrorEl = document.getElementById("usernameModalError");
 const usernameModalLoadingEl = document.getElementById("usernameModalLoading");
 const refreshBtn = document.getElementById("refreshBtn");
+const notificationsBtn = document.getElementById("notificationsBtn");
+const notificationsBadge = document.getElementById("notificationsBadge");
+const notificationsPanel = document.getElementById("notificationsPanel");
+const notificationsCloseBtn = document.getElementById("notificationsCloseBtn");
+const notificationsLoadingEl = document.getElementById("notificationsLoading");
+const notificationsListEl = document.getElementById("notificationsList");
 const tbody = document.querySelector("#leaderboard tbody");
 const statusEl = document.getElementById("status");
 const refreshCountdownEl = document.getElementById("refreshCountdown");
@@ -194,6 +202,7 @@ const groupsPage = document.getElementById("groupsPage");
 const profilePage = document.getElementById("profilePage");
 const findGamesPage = document.getElementById("findGamesPage");
 const backlogPage = document.getElementById("backlogPage");
+const friendsPage = document.getElementById("friendsPage");
 const gamePage = document.getElementById("gamePage");
 const profileHostDashboard = document.getElementById("profileHostDashboard");
 const profileHostProfile = document.getElementById("profileHostProfile");
@@ -233,6 +242,10 @@ const backlogListEl = document.getElementById("backlogList");
 const backlogStatusEl = document.getElementById("backlogStatus");
 const backlogLoadingEl = document.getElementById("backlogLoading");
 const backlogRemoveBtn = document.getElementById("backlogRemoveBtn");
+const friendsListEl = document.getElementById("friendsList");
+const friendsStatusEl = document.getElementById("friendsStatus");
+const friendsLoadingEl = document.getElementById("friendsLoading");
+const friendsAddBtn = document.getElementById("friendsAddBtn");
 const groupsLoadingEl = document.getElementById("groupsLoading");
 const groupNameInput = document.getElementById("groupNameInput");
 const groupCreateBtn = document.getElementById("groupCreateBtn");
@@ -565,6 +578,11 @@ let socialAchievementGame = null;
 let socialAchievementItems = [];
 let socialAchievementSelected = null;
 let socialAchievementGames = [];
+let notificationsPollTimer = null;
+let notificationsUnreadCount = 0;
+let notificationsEventSource = null;
+let notificationsOpen = false;
+let notificationsReadAfterClose = false;
 
 function clampUsername(s) {
   return (s || "").trim().replace(/\s+/g, "");
@@ -2223,8 +2241,67 @@ function getUserValidationError(err, username) {
   return `Could not verify user: ${username}`;
 }
 
+function formatAgeSeconds(secsRaw) {
+  const secs = Number(secsRaw);
+  if (!Number.isFinite(secs) || secs < 0) return "";
+  if (secs < 60) return `${Math.floor(secs)}s ago`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 120) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  return `${days}d ago`;
+}
+
+function formatLastSeen(summary) {
+  if (!summary) return "";
+  let lastActiveValue = summary.lastActivity;
+  if (lastActiveValue && typeof lastActiveValue === "object") {
+    lastActiveValue =
+      lastActiveValue.Date ?? lastActiveValue.date ??
+      lastActiveValue.LastActivity ?? lastActiveValue.lastActivity ??
+      lastActiveValue.LastUpdated ?? lastActiveValue.lastUpdated ??
+      lastActiveValue.timestamp ?? lastActiveValue.time ??
+      lastActiveValue.LastPlayed ?? lastActiveValue.lastPlayed ??
+      "";
+  }
+  if (!lastActiveValue) return "";
+  return formatDate(lastActiveValue);
+}
+
+async function hydrateFriendSummaries(list) {
+  const targets = list
+    .map(name => ({ name, key: normalizeUserKey(name) }))
+    .filter(entry => entry.key && !friendSummaryCache.has(entry.key));
+  if (!targets.length) return;
+  await Promise.all(targets.map(({ name, key }) => summaryLimiter(async () => {
+    try {
+      const data = await fetchUserSummary(name, { silent: true });
+      friendSummaryCache.set(key, data || null);
+    } catch {
+      friendSummaryCache.set(key, null);
+    }
+  })));
+}
+
+async function hydrateFriendPresence(list) {
+  const targets = list
+    .map(name => ({ name, key: normalizeUserKey(name) }))
+    .filter(entry => entry.key && !friendPresenceCache.has(entry.key));
+  if (!targets.length) return;
+  await Promise.all(targets.map(({ name, key }) => summaryLimiter(async () => {
+    try {
+      const data = await fetchNowPlaying(name, 600);
+      friendPresenceCache.set(key, data || null);
+    } catch {
+      friendPresenceCache.set(key, null);
+    }
+  })));
+}
+
 async function bootstrapAfterLogin() {
   startPresence();
+  startNotificationsLive();
   refreshLeaderboard();
   await refreshGroupsPage();
   if (activeActivityTab === "times") {
@@ -2303,6 +2380,7 @@ async function addFriendFromModal() {
     await addFriendToServer(u);
     friends = Array.from(new Set([...friends, u]));
     renderChallengeFriendOptions(friends);
+    if (activePageName === "friends") renderFriendsList(friends);
     friendInput.value = "";
     closeAddFriendModal();
   } catch (e) {
@@ -2317,6 +2395,232 @@ async function addFriendFromModal() {
   } else {
     refreshRecentAchievements();
   }
+}
+
+function renderFriendsList(list = friends) {
+  if (!friendsListEl) return;
+  const sorted = Array.from(new Set(list.map(clampUsername).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  if (!sorted.length) {
+    friendsListEl.innerHTML = `<div class="meta">No friends added yet.</div>`;
+    return;
+  }
+  const frag = document.createDocumentFragment();
+  for (const name of sorted) {
+    const summary = friendSummaryCache.get(normalizeUserKey(name)) || null;
+    const avatarUrl = summary?.userPic ? iconUrl(summary.userPic) : "";
+    const presence = friendPresenceCache.get(normalizeUserKey(name)) || null;
+    const lastSeenAge = presence ? formatAgeSeconds(presence.ageSeconds) : "";
+    const lastSeenDate = lastSeenAge || formatLastSeen(summary);
+    const lastSeenText = presence?.nowPlaying
+      ? "Playing now"
+      : (lastSeenDate ? `Last seen ${lastSeenDate}` : "Last seen --");
+    const row = document.createElement("div");
+    row.className = "friendRow";
+    row.innerHTML = `
+      <div class="friendMain">
+        <div class="friendAvatarWrap">
+          ${avatarUrl ? `<img class="friendAvatar" src="${avatarUrl}" alt="" loading="lazy" />` : `<div class="friendAvatar placeholder"></div>`}
+        </div>
+        <div class="friendMeta">
+          <button class="linkBtn friendName" type="button" data-profile="${safeText(name)}">${safeText(name)}</button>
+          <div class="friendLastSeen">${safeText(lastSeenText)}</div>
+        </div>
+      </div>
+      <button class="smallBtn" type="button" data-remove="${safeText(name)}">Remove</button>
+    `;
+    frag.appendChild(row);
+  }
+  friendsListEl.innerHTML = "";
+  friendsListEl.appendChild(frag);
+}
+
+async function refreshFriendsPage() {
+  if (!friendsListEl) return;
+  const me = ensureUsername({ prompt: true });
+  if (!me) {
+    if (friendsStatusEl) friendsStatusEl.textContent = "Set your username first.";
+    friendsListEl.innerHTML = "";
+    return;
+  }
+  if (friendsStatusEl) friendsStatusEl.textContent = "";
+  setLoading(friendsLoadingEl, true);
+  try {
+    friends = await loadFriendsFromServer();
+    renderFriendsList(friends);
+    await hydrateFriendSummaries(friends);
+    await hydrateFriendPresence(friends);
+    renderFriendsList(friends);
+  } catch {
+    if (friendsStatusEl) friendsStatusEl.textContent = "Failed to load friends.";
+    friendsListEl.innerHTML = `<div class="meta">Unable to load friends.</div>`;
+  } finally {
+    setLoading(friendsLoadingEl, false);
+  }
+}
+
+async function fetchNotifications({ unreadOnly = false, limit = 50, silent = false } = {}) {
+  const params = new URLSearchParams();
+  if (unreadOnly) params.set("unread", "1");
+  if (limit) params.set("limit", String(limit));
+  const url = params.toString()
+    ? `/api/notifications?${params.toString()}`
+    : "/api/notifications";
+  return fetchServerJson(url, { silent });
+}
+
+async function markNotificationsRead(ids = []) {
+  return fetchServerJson("/api/notifications/mark-read", {
+    method: "POST",
+    body: ids.length ? { ids } : {}
+  });
+}
+
+async function deleteNotification(id) {
+  return fetchServerJson(`/api/notifications/${encodeURIComponent(id)}`, {
+    method: "DELETE"
+  });
+}
+
+function updateNotificationsBadge(count) {
+  notificationsUnreadCount = Number.isFinite(Number(count)) ? Number(count) : 0;
+  if (!notificationsBadge) return;
+  if (notificationsUnreadCount <= 0) {
+    notificationsBadge.hidden = true;
+    notificationsBadge.textContent = "0";
+    return;
+  }
+  notificationsBadge.hidden = false;
+  notificationsBadge.textContent = String(notificationsUnreadCount);
+}
+
+function renderNotifications(list = []) {
+  if (!notificationsListEl) return;
+  if (!list.length) {
+    notificationsListEl.innerHTML = `<div class="meta">No notifications yet.</div>`;
+    return;
+  }
+  const frag = document.createDocumentFragment();
+  for (const item of list) {
+    const row = document.createElement("div");
+    row.className = `notifItem${item.read_at ? "" : " unread"}`;
+    if (item.type) row.dataset.type = item.type;
+    if (item.meta?.challengeId) row.dataset.challengeId = String(item.meta.challengeId);
+    if (item.meta?.from) row.dataset.from = String(item.meta.from);
+    row.dataset.id = String(item.id || "");
+    const message = item.message || "Notification";
+    const time = item.created_at ? formatDate(item.created_at) : "";
+    const statusLabel = item.read_at ? "Read" : "Unread";
+    row.innerHTML = `
+      <div class="notifRow">
+        <span class="notifTag ${item.read_at ? "read" : "unread"}">${statusLabel}</span>
+        <button class="notifDeleteBtn" type="button" data-id="${safeText(item.id)}" aria-label="Delete notification">×</button>
+      </div>
+      <div class="notifMessage">${safeText(message)}</div>
+      <div class="notifMeta">${time ? safeText(time) : ""}</div>
+    `;
+    frag.appendChild(row);
+  }
+  notificationsListEl.innerHTML = "";
+  notificationsListEl.appendChild(frag);
+}
+
+async function refreshNotificationsBadge() {
+  try {
+    const data = await fetchNotifications({ unreadOnly: true, limit: 1, silent: true });
+    updateNotificationsBadge(data?.unreadCount ?? 0);
+  } catch {
+    // ignore badge errors
+  }
+}
+
+async function loadNotifications({ markRead = false } = {}) {
+  if (!notificationsListEl) return;
+  setLoading(notificationsLoadingEl, true);
+  try {
+    const data = await fetchNotifications({ unreadOnly: false, limit: 50, silent: true });
+    const items = Array.isArray(data?.results) ? data.results : [];
+    renderNotifications(items);
+    updateNotificationsBadge(data?.unreadCount ?? 0);
+    if (markRead && data?.unreadCount) {
+      await markNotificationsRead();
+      updateNotificationsBadge(0);
+    }
+  } catch {
+    notificationsListEl.innerHTML = `<div class="meta">Failed to load notifications.</div>`;
+  } finally {
+    setLoading(notificationsLoadingEl, false);
+  }
+}
+
+function openNotificationsPanel() {
+  if (!notificationsPanel) return;
+  notificationsPanel.hidden = false;
+  notificationsOpen = true;
+  notificationsReadAfterClose = true;
+  loadNotifications({ markRead: false });
+}
+
+function closeNotificationsPanel() {
+  if (!notificationsPanel) return;
+  notificationsPanel.hidden = true;
+  notificationsOpen = false;
+  if (notificationsReadAfterClose) {
+    notificationsReadAfterClose = false;
+    markNotificationsRead().then(() => updateNotificationsBadge(0)).catch(() => {});
+  }
+}
+
+function startNotificationsPolling() {
+  refreshNotificationsBadge();
+  if (notificationsPollTimer) clearInterval(notificationsPollTimer);
+  notificationsPollTimer = setInterval(refreshNotificationsBadge, 30000);
+}
+
+function stopNotificationsPolling() {
+  if (notificationsPollTimer) {
+    clearInterval(notificationsPollTimer);
+    notificationsPollTimer = null;
+  }
+}
+
+function startNotificationsLive() {
+  if (notificationsEventSource) return;
+  if (!window.EventSource) {
+    startNotificationsPolling();
+    return;
+  }
+  try {
+    const source = new EventSource("/api/notifications/stream");
+    notificationsEventSource = source;
+    source.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data || "{}");
+        if (data && typeof data.unreadCount !== "undefined") {
+          updateNotificationsBadge(data.unreadCount);
+          if (notificationsOpen) {
+            loadNotifications({ markRead: false });
+          }
+        }
+      } catch {
+        // ignore bad payloads
+      }
+    };
+    source.onerror = () => {
+      source.close();
+      notificationsEventSource = null;
+      startNotificationsPolling();
+    };
+  } catch {
+    startNotificationsPolling();
+  }
+}
+
+function stopNotificationsLive() {
+  if (notificationsEventSource) {
+    notificationsEventSource.close();
+    notificationsEventSource = null;
+  }
+  stopNotificationsPolling();
 }
 
 function openSettings() {
@@ -2438,6 +2742,7 @@ function setActivePage(name) {
   if (socialPage) socialPage.hidden = name !== "social";
   if (profilePage) profilePage.hidden = name !== "profile";
   if (backlogPage) backlogPage.hidden = name !== "backlog";
+  if (friendsPage) friendsPage.hidden = name !== "friends";
   if (gamePage) gamePage.hidden = name !== "game";
   if (profilePanel) profilePanel.hidden = name !== "profile";
   if (name !== "backlog") setBacklogRemoveMode(false);
@@ -2459,6 +2764,9 @@ function setActivePage(name) {
     startSocialPolling();
   } else {
     stopSocialPolling();
+  }
+  if (name === "friends") {
+    refreshFriendsPage();
   }
   if (name === "groups") {
     refreshGroupsPage();
@@ -4374,6 +4682,7 @@ function renderLeaderboard(rows, me) {
   const frag = document.createDocumentFragment();
   rows.forEach((r, idx) => {
     const tr = document.createElement("tr");
+    tr.dataset.username = r.username || "";
 
     const delta = r.deltaVsYou;
     const cls = delta > 0 ? "delta-neg" : delta < 0 ? "delta-pos" : "delta-zero";
@@ -4391,9 +4700,6 @@ function renderLeaderboard(rows, me) {
       <td class="${cls}"><strong>${delta > 0 ? "+" : ""}${Math.round(delta)}</strong></td>
       <td>${r.unlocks}</td>
       <td>${r.nowPlayingHtml || r.nowPlayingText || ""}</td>
-      <td style="text-align:right;">
-        ${isMe ? "" : `<button class="smallBtn" data-remove="${safeText(r.username)}">Remove</button>`}
-      </td>
     `;
 
     frag.appendChild(tr);
@@ -4416,9 +4722,15 @@ function renderLeaderboard(rows, me) {
         const gameId = nowPlayingBtn.getAttribute("data-now-game-id");
         const gameTitleRaw = nowPlayingBtn.getAttribute("data-now-game-title") || "";
         const gameTitle = decodeURIComponent(gameTitleRaw);
+        const row = nowPlayingBtn.closest("tr");
+        const target = row?.dataset?.username || "";
         const { me } = getUsersIncludingMe();
         if (!me) {
           setStatus("Set your username first.");
+          return;
+        }
+        if (target && target.toLowerCase() !== me.toLowerCase()) {
+          openGameCompare({ gameId, title: gameTitle }, target);
           return;
         }
         selfGameReturnToProfile = true;
@@ -4439,25 +4751,6 @@ function renderLeaderboard(rows, me) {
         }
         openProfile(target);
         return;
-      }
-      const removeBtn = e.target.closest("button[data-remove]");
-      if (removeBtn) {
-        const u = removeBtn.getAttribute("data-remove");
-        (async () => {
-          try {
-            await removeFriendFromServer(u);
-            friends = friends.filter(x => x !== u);
-            renderChallengeFriendOptions(friends);
-            refreshLeaderboard();
-            if (activeActivityTab === "times") {
-              refreshRecentTimes();
-            } else {
-              refreshRecentAchievements();
-            }
-          } catch (err) {
-            setStatus(String(err?.message || "Unable to remove friend."));
-          }
-        })();
       }
     });
   }
@@ -5723,8 +6016,8 @@ async function openSelfGame(game) {
   }
 }
 
-async function openGameCompare(game) {
-  const target = clampUsername(currentProfileUser);
+async function openGameCompare(game, targetOverride = "") {
+  const target = clampUsername(targetOverride || currentProfileUser);
   if (!target) return;
 
   const { me } = getUsersIncludingMe();
@@ -6991,6 +7284,9 @@ if (tabButtons.length) {
 if (addFriendOpenBtn) {
   addFriendOpenBtn.addEventListener("click", openAddFriendModal);
 }
+if (friendsAddBtn) {
+  friendsAddBtn.addEventListener("click", openAddFriendModal);
+}
 if (addFriendCloseBtn) {
   addFriendCloseBtn.addEventListener("click", closeAddFriendModal);
 }
@@ -7000,6 +7296,38 @@ if (addFriendCancelBtn) {
 if (addFriendConfirmBtn) {
   addFriendConfirmBtn.addEventListener("click", () => {
     addFriendFromModal();
+  });
+}
+
+if (friendsListEl) {
+  friendsListEl.addEventListener("click", (e) => {
+    const removeBtn = e.target.closest("button[data-remove]");
+    if (removeBtn) {
+      const u = removeBtn.getAttribute("data-remove");
+      (async () => {
+        try {
+          await removeFriendFromServer(u);
+          friends = friends.filter(x => x !== u);
+          renderChallengeFriendOptions(friends);
+          renderFriendsList(friends);
+          refreshLeaderboard();
+          if (activeActivityTab === "times") {
+            refreshRecentTimes();
+          } else {
+            refreshRecentAchievements();
+          }
+        } catch (err) {
+          setStatus(String(err?.message || "Unable to remove friend."));
+        }
+      })();
+      return;
+    }
+    const profileBtn = e.target.closest("button[data-profile]");
+    if (profileBtn) {
+      const target = profileBtn.getAttribute("data-profile");
+      setActivePage("dashboard");
+      openProfile(target);
+    }
   });
 }
 
@@ -7141,12 +7469,72 @@ if (selfGameBackBtn) {
 if (settingsBtn) {
   settingsBtn.addEventListener("click", openSettings);
 }
+if (notificationsBtn) {
+  notificationsBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (notificationsPanel?.hidden) {
+      openNotificationsPanel();
+    } else {
+      closeNotificationsPanel();
+    }
+  });
+}
+if (notificationsCloseBtn) {
+  notificationsCloseBtn.addEventListener("click", () => {
+    closeNotificationsPanel();
+  });
+}
+if (notificationsListEl) {
+  notificationsListEl.addEventListener("click", (e) => {
+    const deleteBtn = e.target.closest(".notifDeleteBtn");
+    if (deleteBtn) {
+      const id = deleteBtn.getAttribute("data-id");
+      if (!id) return;
+      (async () => {
+        try {
+          await deleteNotification(id);
+          await loadNotifications({ markRead: false });
+        } catch {
+          setStatus("Failed to delete notification.");
+        }
+      })();
+      return;
+    }
+    const item = e.target.closest(".notifItem");
+    if (!item) return;
+    const type = item.dataset.type || "";
+    if (type === "challenge_pending") {
+      setActivePage("challenges");
+      stopChallengePolling();
+      refreshChallenges({ includeTotals: true });
+      challengesPollTimer = setInterval(() => refreshChallenges({ includeTotals: false }), 10000);
+      challengesTotalsTimer = setInterval(() => refreshChallenges({ includeTotals: true }), 60000);
+      openChallengePending();
+      closeNotificationsPanel();
+      return;
+    }
+    if (type === "friend_added") {
+      const from = item.dataset.from || "";
+      if (from) {
+        setActivePage("dashboard");
+        openProfile(from);
+        closeNotificationsPanel();
+      }
+    }
+  });
+}
 if (settingsCloseBtn) {
   settingsCloseBtn.addEventListener("click", closeSettings);
 }
 if (settingsCancelBtn) {
   settingsCancelBtn.addEventListener("click", closeSettings);
 }
+document.addEventListener("click", (e) => {
+  if (!notificationsPanel || notificationsPanel.hidden) return;
+  if (notificationsPanel.contains(e.target)) return;
+  if (notificationsBtn && notificationsBtn.contains(e.target)) return;
+  closeNotificationsPanel();
+});
 pageButtons.forEach(btn => {
   btn.addEventListener("click", () => {
     const page = btn.dataset.page;

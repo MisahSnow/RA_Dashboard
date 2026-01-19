@@ -79,6 +79,7 @@ const CONSOLE_LIST_TTL_MS = 24 * 60 * 60 * 1000;
 const presence = new Map(); // Map<username, Map<sessionId, lastSeen>>
 let consoleListCache = { builtAt: 0, list: null, inFlight: null };
 const gameListCache = new Map(); // Map<consoleId, { builtAt, list, inFlight }>
+const notificationStreams = new Map(); // Map<username, Set<res>>
 
 async function initDb() {
   if (!pool) return;
@@ -135,6 +136,21 @@ async function initDb() {
       created_at TIMESTAMPTZ DEFAULT NOW(),
       UNIQUE(group_id, invited_user)
     );
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS notifications (
+      id SERIAL PRIMARY KEY,
+      username TEXT NOT NULL,
+      type TEXT NOT NULL,
+      message TEXT NOT NULL,
+      meta JSONB,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      read_at TIMESTAMPTZ
+    );
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS notifications_user_read_idx
+      ON notifications (username, read_at);
   `);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS daily_points (
@@ -825,6 +841,57 @@ function completionAwardKind(raw) {
   return "";
 }
 
+async function createNotification({ username, type, message, meta = null }) {
+  if (!pool) return;
+  const normalized = normalizeUsername(username);
+  if (!normalized || !type || !message) return;
+  await pool.query(
+    `
+      INSERT INTO notifications (username, type, message, meta, created_at)
+      VALUES ($1, $2, $3, $4, NOW())
+    `,
+    [normalized, type, message, meta ? JSON.stringify(meta) : null]
+  );
+  await broadcastUnreadCount(normalized);
+}
+
+async function deleteChallengeNotifications(username, challengeId) {
+  if (!pool) return;
+  const normalized = normalizeUsername(username);
+  const id = Number(challengeId);
+  if (!normalized || !Number.isFinite(id)) return;
+  await pool.query(
+    `
+      DELETE FROM notifications
+      WHERE username = $1
+        AND type = 'challenge_pending'
+        AND (meta->>'challengeId')::int = $2
+    `,
+    [normalized, id]
+  );
+  await broadcastUnreadCount(normalized);
+}
+
+async function getUnreadNotificationCount(username) {
+  if (!pool) return 0;
+  const result = await pool.query(
+    "SELECT COUNT(*) FROM notifications WHERE username = $1 AND read_at IS NULL",
+    [username]
+  );
+  return Number(result.rows[0]?.count || 0);
+}
+
+async function broadcastUnreadCount(username) {
+  const normalized = normalizeUsername(username);
+  const set = notificationStreams.get(normalized);
+  if (!set || !set.size) return;
+  const count = await getUnreadNotificationCount(normalized);
+  const payload = `data: ${JSON.stringify({ unreadCount: count })}\n\n`;
+  for (const res of set) {
+    res.write(payload);
+  }
+}
+
 async function recordCompletionSocialPost({ username, gameId, gameTitle, imageIcon, awardKind }) {
   if (!pool) return;
   if (!username || !gameId || !awardKind) return;
@@ -1035,6 +1102,12 @@ app.post("/api/friends", requireAuth, async (req, res) => {
     "INSERT INTO friends (user_id, friend_username) VALUES ($1, $2) ON CONFLICT (user_id, friend_username) DO NOTHING",
     [userId, friend]
   );
+  await createNotification({
+    username: friend,
+    type: "friend_added",
+    message: `${req.session.user.username} added you as a friend.`,
+    meta: { from: req.session.user.username }
+  });
   res.json({ ok: true });
 });
 
@@ -1150,6 +1223,14 @@ app.post("/api/groups/:groupId/invite", requireAuth, async (req, res) => {
      DO UPDATE SET status = 'pending', invited_by_id = EXCLUDED.invited_by_id, created_at = NOW()`,
     [groupId, invited, userId]
   );
+  const groupRow = await pool.query("SELECT name FROM groups WHERE id = $1", [groupId]);
+  const groupName = groupRow.rows[0]?.name || "a group";
+  await createNotification({
+    username: invited,
+    type: "group_invite",
+    message: `${req.session.user.username} invited you to join ${groupName}.`,
+    meta: { groupId, groupName, invitedBy: req.session.user.username }
+  });
   res.json({ ok: true });
 });
 
@@ -1526,6 +1607,12 @@ app.post("/api/challenges", requireAuth, async (req, res) => {
       leaderboardLower
     ]
   );
+  await createNotification({
+    username: opponent,
+    type: "challenge_pending",
+    message: `${req.session.user.username} sent you a challenge.`,
+    meta: { from: req.session.user.username, challengeId: result.rows[0]?.id || null }
+  });
   res.json(result.rows[0]);
 });
 
@@ -1593,6 +1680,7 @@ app.post("/api/challenges/:id/accept", requireAuth, async (req, res) => {
   if (result.rows.length === 0) {
     return res.status(404).json({ error: "Challenge not found or not pending" });
   }
+  await deleteChallengeNotifications(me, id);
   res.json(result.rows[0]);
 });
 
@@ -1615,6 +1703,7 @@ app.post("/api/challenges/:id/decline", requireAuth, async (req, res) => {
   if (result.rows.length === 0) {
     return res.status(404).json({ error: "Challenge not found or not pending" });
   }
+  await deleteChallengeNotifications(me, id);
   res.json({ ok: true });
 });
 
@@ -1639,7 +1728,100 @@ app.post("/api/challenges/:id/cancel", requireAuth, async (req, res) => {
   if (result.rows.length === 0) {
     return res.status(404).json({ error: "Challenge not found or not active" });
   }
+  await deleteChallengeNotifications(me, id);
   res.json({ ok: true });
+});
+
+// Notifications
+app.get("/api/notifications", requireAuth, async (req, res) => {
+  if (!pool) return res.status(500).json({ error: "Database unavailable" });
+  const username = normalizeUsername(req.session.user.username);
+  const unreadOnly = String(req.query.unread || "").toLowerCase() === "true" || req.query.unread === "1";
+  const limitQ = typeof req.query.limit === "string" ? Number(req.query.limit) : 50;
+  const limit = Math.max(1, Math.min(100, Number.isFinite(limitQ) ? limitQ : 50));
+  const where = unreadOnly ? "AND read_at IS NULL" : "";
+  const rows = await pool.query(
+    `
+      SELECT id, type, message, meta, created_at, read_at
+      FROM notifications
+      WHERE username = $1 ${where}
+      ORDER BY created_at DESC
+      LIMIT $2
+    `,
+    [username, limit]
+  );
+  const countRes = await pool.query(
+    "SELECT COUNT(*) FROM notifications WHERE username = $1 AND read_at IS NULL",
+    [username]
+  );
+  res.json({
+    results: rows.rows,
+    unreadCount: Number(countRes.rows[0]?.count || 0)
+  });
+});
+
+app.post("/api/notifications/mark-read", requireAuth, async (req, res) => {
+  if (!pool) return res.status(500).json({ error: "Database unavailable" });
+  const username = normalizeUsername(req.session.user.username);
+  const idsRaw = Array.isArray(req.body?.ids) ? req.body.ids : [];
+  const ids = idsRaw.map(Number).filter(Number.isFinite);
+  if (ids.length) {
+    await pool.query(
+      `UPDATE notifications SET read_at = NOW() WHERE username = $1 AND id = ANY($2)`,
+      [username, ids]
+    );
+  } else {
+    await pool.query(
+      `UPDATE notifications SET read_at = NOW() WHERE username = $1 AND read_at IS NULL`,
+      [username]
+    );
+  }
+  await broadcastUnreadCount(username);
+  res.json({ ok: true });
+});
+
+app.delete("/api/notifications/:id", requireAuth, async (req, res) => {
+  if (!pool) return res.status(500).json({ error: "Database unavailable" });
+  const username = normalizeUsername(req.session.user.username);
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid notification id" });
+  await pool.query(
+    "DELETE FROM notifications WHERE username = $1 AND id = $2",
+    [username, id]
+  );
+  await broadcastUnreadCount(username);
+  res.json({ ok: true });
+});
+
+app.get("/api/notifications/stream", requireAuth, async (req, res) => {
+  if (!pool) return res.status(500).json({ error: "Database unavailable" });
+  const username = normalizeUsername(req.session.user.username);
+  res.set({
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    "Connection": "keep-alive"
+  });
+  res.flushHeaders();
+
+  const set = notificationStreams.get(username) || new Set();
+  set.add(res);
+  notificationStreams.set(username, set);
+
+  const count = await getUnreadNotificationCount(username);
+  res.write(`data: ${JSON.stringify({ unreadCount: count })}\n\n`);
+
+  const ping = setInterval(() => {
+    res.write("event: ping\ndata: {}\n\n");
+  }, 15000);
+
+  req.on("close", () => {
+    clearInterval(ping);
+    const existing = notificationStreams.get(username);
+    if (existing) {
+      existing.delete(res);
+      if (!existing.size) notificationStreams.delete(username);
+    }
+  });
 });
 
 app.get("/api/challenges-history", requireAuth, async (req, res) => {

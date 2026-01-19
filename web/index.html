@@ -22,13 +22,17 @@
       </div>
       <div class="topActions">
         <div class="refreshBlock">
-          <div class="refreshRow">
-            <button id="settingsBtn" class="smallBtn">Settings</button>
-            <button id="refreshBtn" class="smallBtn">Refresh</button>
-          </div>
-          <span id="refreshCountdown" class="note"></span>
+        <div class="refreshRow">
+          <button id="notificationsBtn" class="smallBtn notifBtn">
+            <span id="notificationsBadge" class="notifBadge" hidden>0</span>
+            Notifications
+          </button>
+          <button id="settingsBtn" class="smallBtn">Settings</button>
+          <button id="refreshBtn" class="smallBtn">Refresh</button>
         </div>
+        <span id="refreshCountdown" class="note"></span>
       </div>
+    </div>
     </div>
     <div class="pageTabs" role="tablist" aria-label="Pages">
       <button class="pageBtn active" data-page="dashboard" role="tab" aria-selected="true">Dashboard</button>
@@ -36,10 +40,19 @@
       <button class="pageBtn" data-page="challenges" role="tab" aria-selected="false">Challenges</button>
       <button class="pageBtn" data-page="groups" role="tab" aria-selected="false">Groups</button>
       <button class="pageBtn" data-page="social" role="tab" aria-selected="false">Social</button>
+      <button class="pageBtn friendsTab" data-page="friends" role="tab" aria-selected="false">My Friends</button>
       <button class="pageBtn backlogTab" data-page="backlog" role="tab" aria-selected="false">My Backlog</button>
       <button class="pageBtn profileTab" data-page="profile" role="tab" aria-selected="false">My Profile</button>
     </div>
     <div class="status" id="status"></div>
+    <div id="notificationsPanel" class="notifPanel" hidden>
+      <div class="notifHeader">
+        <h3 class="sectionTitle">Notifications</h3>
+        <button id="notificationsCloseBtn" class="smallBtn">Close</button>
+      </div>
+      <div id="notificationsLoading" class="loadingWheel" hidden aria-label="Loading"></div>
+      <div id="notificationsList" class="notifList"></div>
+    </div>
 
     <div id="settingsModal" class="modal" hidden>
       <div class="modalCard">
@@ -137,7 +150,6 @@
             <button class="smallBtn leaderboardTab" data-range="weekly" role="tab" aria-selected="false">Weekly</button>
             <button class="smallBtn leaderboardTab" data-range="monthly" role="tab" aria-selected="true">Monthly</button>
           </div>
-          <button id="addFriendOpenBtn" class="smallBtn primaryBtn">Add Friend</button>
           <div id="leaderboardLoading" class="loadingWheel" hidden aria-label="Loading"></div>
         </div>
       </div>
@@ -150,7 +162,6 @@
             <th>Gap vs You</th>
             <th>Unlocks</th>
             <th>Now Playing</th>
-            <th></th>
           </tr>
         </thead>
         <tbody></tbody>
@@ -376,6 +387,20 @@
         </div>
         <p id="backlogStatus" class="note"></p>
         <div id="backlogList" class="backlogList"></div>
+      </section>
+    </section>
+
+    <section id="friendsPage" class="page" hidden>
+      <section class="card">
+        <div class="sectionHead">
+          <h2 class="sectionTitle">My Friends</h2>
+          <div class="sectionControls">
+            <button id="friendsAddBtn" class="smallBtn primaryBtn">Add Friend</button>
+            <div id="friendsLoading" class="loadingWheel" hidden aria-label="Loading"></div>
+          </div>
+        </div>
+        <p id="friendsStatus" class="note"></p>
+        <div id="friendsList" class="friendsList"></div>
       </section>
     </section>
 
