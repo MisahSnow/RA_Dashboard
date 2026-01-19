@@ -1,4 +1,4 @@
-function safeText(v){ return (v === null || v === undefined) ? "" : String(v); }
+﻿function safeText(v){ return (v === null || v === undefined) ? "" : String(v); }
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -184,9 +184,13 @@ const chartTabButtons = document.querySelectorAll(".chartTab");
 const leaderboardPointsNoteEl = document.getElementById("leaderboardPointsNote");
 const leaderboardTitleEl = document.getElementById("leaderboardTitle");
 const leaderboardTabButtons = document.querySelectorAll(".leaderboardTab");
+const leaderboardScopeFriendsBtn = document.getElementById("leaderboardScopeFriends");
+const leaderboardScopeGroupBtn = document.getElementById("leaderboardScopeGroup");
+const leaderboardGroupSelect = document.getElementById("leaderboardGroupSelect");
 const pageButtons = document.querySelectorAll(".pageBtn");
 const dashboardPage = document.getElementById("dashboardPage");
 const challengesPage = document.getElementById("challengesPage");
+const groupsPage = document.getElementById("groupsPage");
 const profilePage = document.getElementById("profilePage");
 const findGamesPage = document.getElementById("findGamesPage");
 const backlogPage = document.getElementById("backlogPage");
@@ -229,6 +233,13 @@ const backlogListEl = document.getElementById("backlogList");
 const backlogStatusEl = document.getElementById("backlogStatus");
 const backlogLoadingEl = document.getElementById("backlogLoading");
 const backlogRemoveBtn = document.getElementById("backlogRemoveBtn");
+const groupsLoadingEl = document.getElementById("groupsLoading");
+const groupNameInput = document.getElementById("groupNameInput");
+const groupCreateBtn = document.getElementById("groupCreateBtn");
+const groupCreateStatusEl = document.getElementById("groupCreateStatus");
+const groupBrowseListEl = document.getElementById("groupBrowseList");
+const groupMyListEl = document.getElementById("groupMyList");
+const groupInvitesListEl = document.getElementById("groupInvitesList");
 const socialPage = document.getElementById("socialPage");
 const socialPostListEl = document.getElementById("socialPostList");
 const socialPostTypeSelect = document.getElementById("socialPostType");
@@ -491,6 +502,12 @@ let lastChartKey = "";
 let lastHourlyChartKey = "";
 let currentUser = "";
 let friends = [];
+let groups = [];
+let groupBrowse = [];
+let groupInvites = [];
+let leaderboardScope = "friends";
+let leaderboardGroupId = "";
+const groupMembersCache = new Map();
 let dailyHistoryCache = {};
 let hourlyHistoryCache = {};
 const challengeAvatarCache = new Map();
@@ -1639,6 +1656,45 @@ async function fetchDaily(username) {
   return fetchJson(`/api/daily/${encodeURIComponent(username)}`);
 }
 
+async function fetchGroups() {
+  return fetchServerJson("/api/groups");
+}
+
+async function fetchGroupBrowse() {
+  return fetchServerJson("/api/groups/browse");
+}
+
+async function fetchGroupInvites() {
+  return fetchServerJson("/api/groups/invites");
+}
+
+async function createGroup(name) {
+  return fetchServerJson("/api/groups", { method: "POST", body: { name } });
+}
+
+async function joinGroup(groupId) {
+  return fetchServerJson(`/api/groups/${encodeURIComponent(groupId)}/join`, { method: "POST" });
+}
+
+async function inviteToGroup(groupId, username) {
+  return fetchServerJson(`/api/groups/${encodeURIComponent(groupId)}/invite`, {
+    method: "POST",
+    body: { username }
+  });
+}
+
+async function acceptGroupInvite(inviteId) {
+  return fetchServerJson(`/api/groups/invites/${encodeURIComponent(inviteId)}/accept`, { method: "POST" });
+}
+
+async function declineGroupInvite(inviteId) {
+  return fetchServerJson(`/api/groups/invites/${encodeURIComponent(inviteId)}/decline`, { method: "POST" });
+}
+
+async function fetchGroupMembers(groupId) {
+  return fetchServerJson(`/api/groups/${encodeURIComponent(groupId)}/members`);
+}
+
 async function fetchDailyHistory(users, days = 7) {
   const list = users.map(normalizeUserKey).filter(Boolean);
   if (!list.length) return {};
@@ -1657,6 +1713,198 @@ async function fetchHourlyHistory(users, hours = 24) {
   params.set("hours", String(hours));
   const data = await fetchJson(`/api/hourly-history?${params.toString()}`);
   return data?.results || {};
+}
+
+function setLeaderboardScope(scope) {
+  leaderboardScope = scope === "group" ? "group" : "friends";
+  if (leaderboardScopeFriendsBtn) {
+    const active = leaderboardScope === "friends";
+    leaderboardScopeFriendsBtn.classList.toggle("active", active);
+    leaderboardScopeFriendsBtn.setAttribute("aria-selected", active ? "true" : "false");
+  }
+  if (leaderboardScopeGroupBtn) {
+    const active = leaderboardScope === "group";
+    leaderboardScopeGroupBtn.classList.toggle("active", active);
+    leaderboardScopeGroupBtn.setAttribute("aria-selected", active ? "true" : "false");
+  }
+  if (leaderboardScope === "group" && !leaderboardGroupId && groups.length) {
+    leaderboardGroupId = String(groups[0].id);
+    if (leaderboardGroupSelect) leaderboardGroupSelect.value = leaderboardGroupId;
+  }
+  refreshLeaderboard();
+}
+
+function renderLeaderboardGroupSelect() {
+  if (!leaderboardGroupSelect) return;
+  leaderboardGroupSelect.innerHTML = "";
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = groups.length ? "Select group" : "No groups yet";
+  leaderboardGroupSelect.appendChild(placeholder);
+  groups.forEach((g) => {
+    const opt = document.createElement("option");
+    opt.value = String(g.id);
+    opt.textContent = g.name;
+    leaderboardGroupSelect.appendChild(opt);
+  });
+  if (leaderboardGroupId) leaderboardGroupSelect.value = leaderboardGroupId;
+  leaderboardGroupSelect.disabled = !groups.length;
+  if (leaderboardScopeGroupBtn) leaderboardScopeGroupBtn.disabled = !groups.length;
+}
+
+function renderGroupList(targetEl, list, { mode = "browse" } = {}) {
+  if (!targetEl) return;
+  targetEl.innerHTML = "";
+  const items = Array.isArray(list) ? list : [];
+  if (!items.length) {
+    const msg =
+      mode === "browse" ? "No groups found yet." :
+      mode === "mine" ? "You are not in any groups yet." :
+      "No invites.";
+    targetEl.innerHTML = `<div class="meta">${msg}</div>`;
+    return;
+  }
+
+  const frag = document.createDocumentFragment();
+  items.forEach((g) => {
+    const row = document.createElement("div");
+    row.className = "groupRow";
+
+    const top = document.createElement("div");
+    top.className = "groupRowTop";
+    const title = document.createElement("div");
+    title.className = "groupRowTitle";
+    title.textContent = g.name || `Group ${g.id}`;
+    const meta = document.createElement("div");
+    meta.className = "groupRowMeta";
+    const count = Number(g.member_count ?? g.memberCount ?? 0);
+    meta.textContent = `${count} members`;
+    top.append(title, meta);
+    row.appendChild(top);
+
+    const actions = document.createElement("div");
+    actions.className = "groupRowActions";
+
+    if (mode === "browse") {
+      const isMember = g.is_member || g.isMember;
+      const btn = document.createElement("button");
+      btn.className = "smallBtn";
+      btn.textContent = isMember ? "Member" : "Join";
+      btn.disabled = !!isMember;
+      if (!isMember) {
+        btn.addEventListener("click", async () => {
+          await joinGroup(g.id);
+          await refreshGroupsPage();
+          setStatus(`Joined ${g.name}.`);
+        });
+      }
+      actions.appendChild(btn);
+    } else if (mode === "mine") {
+      const inviteWrap = document.createElement("div");
+      inviteWrap.className = "groupInviteRow";
+      const input = document.createElement("input");
+      input.type = "text";
+      input.placeholder = "Invite username";
+      input.autocomplete = "off";
+      const inviteBtn = document.createElement("button");
+      inviteBtn.className = "smallBtn";
+      inviteBtn.textContent = "Invite";
+      inviteBtn.addEventListener("click", async () => {
+        const target = clampUsername(input.value || "");
+        if (!target) return;
+        await inviteToGroup(g.id, target);
+        input.value = "";
+        setStatus(`Invite sent to ${target}.`);
+      });
+      inviteWrap.append(input, inviteBtn);
+
+      const useBtn = document.createElement("button");
+      useBtn.className = "smallBtn";
+      useBtn.textContent = "Use for Leaderboard";
+      useBtn.addEventListener("click", () => {
+        leaderboardGroupId = String(g.id);
+        renderLeaderboardGroupSelect();
+        setLeaderboardScope("group");
+      });
+
+      actions.appendChild(inviteWrap);
+      actions.appendChild(useBtn);
+    }
+
+    if (actions.childElementCount) row.appendChild(actions);
+    frag.appendChild(row);
+  });
+  targetEl.appendChild(frag);
+}
+
+function renderInvitesList(list) {
+  if (!groupInvitesListEl) return;
+  groupInvitesListEl.innerHTML = "";
+  const items = Array.isArray(list) ? list : [];
+  if (!items.length) {
+    groupInvitesListEl.innerHTML = `<div class="meta">No invites.</div>`;
+    return;
+  }
+  const frag = document.createDocumentFragment();
+  items.forEach((invite) => {
+    const row = document.createElement("div");
+    row.className = "groupRow";
+    const top = document.createElement("div");
+    top.className = "groupRowTop";
+    const title = document.createElement("div");
+    title.className = "groupRowTitle";
+    title.textContent = invite.group_name || `Group ${invite.group_id}`;
+    const meta = document.createElement("div");
+    meta.className = "groupRowMeta";
+    meta.textContent = invite.invited_by ? `Invited by ${invite.invited_by}` : "Invite";
+    top.append(title, meta);
+    row.appendChild(top);
+
+    const actions = document.createElement("div");
+    actions.className = "groupRowActions";
+    const acceptBtn = document.createElement("button");
+    acceptBtn.className = "smallBtn";
+    acceptBtn.textContent = "Accept";
+    acceptBtn.addEventListener("click", async () => {
+      await acceptGroupInvite(invite.id);
+      await refreshGroupsPage();
+    });
+    const declineBtn = document.createElement("button");
+    declineBtn.className = "smallBtn";
+    declineBtn.textContent = "Decline";
+    declineBtn.addEventListener("click", async () => {
+      await declineGroupInvite(invite.id);
+      await refreshGroupsPage();
+    });
+    actions.append(acceptBtn, declineBtn);
+    row.appendChild(actions);
+    frag.appendChild(row);
+  });
+  groupInvitesListEl.appendChild(frag);
+}
+
+async function refreshGroupsPage() {
+  if (!currentUser) return;
+  setLoading(groupsLoadingEl, true);
+  try {
+    const [mineRes, browseRes, invitesRes] = await Promise.all([
+      fetchGroups(),
+      fetchGroupBrowse(),
+      fetchGroupInvites()
+    ]);
+    groups = Array.isArray(mineRes?.results) ? mineRes.results : [];
+    groupBrowse = Array.isArray(browseRes?.results) ? browseRes.results : [];
+    groupInvites = Array.isArray(invitesRes?.results) ? invitesRes.results : [];
+    groupMembersCache.clear();
+    renderGroupList(groupBrowseListEl, groupBrowse, { mode: "browse" });
+    renderGroupList(groupMyListEl, groups, { mode: "mine" });
+    renderInvitesList(groupInvites);
+    renderLeaderboardGroupSelect();
+  } catch (e) {
+    setStatus(e?.message || "Failed to load groups.");
+  } finally {
+    setLoading(groupsLoadingEl, false);
+  }
 }
 
 async function fetchUserLevels(users) {
@@ -1978,6 +2226,7 @@ function getUserValidationError(err, username) {
 async function bootstrapAfterLogin() {
   startPresence();
   refreshLeaderboard();
+  await refreshGroupsPage();
   if (activeActivityTab === "times") {
     refreshRecentTimes();
   } else {
@@ -2185,6 +2434,7 @@ function setActivePage(name) {
   if (dashboardPage) dashboardPage.hidden = name !== "dashboard";
   if (findGamesPage) findGamesPage.hidden = name !== "find-games";
   if (challengesPage) challengesPage.hidden = name !== "challenges";
+  if (groupsPage) groupsPage.hidden = name !== "groups";
   if (socialPage) socialPage.hidden = name !== "social";
   if (profilePage) profilePage.hidden = name !== "profile";
   if (backlogPage) backlogPage.hidden = name !== "backlog";
@@ -2209,6 +2459,9 @@ function setActivePage(name) {
     startSocialPolling();
   } else {
     stopSocialPolling();
+  }
+  if (name === "groups") {
+    refreshGroupsPage();
   }
   if (name === "profile") {
     moveProfilePanel(profileHostProfile);
@@ -5744,11 +5997,38 @@ function getUsersIncludingMe() {
   return { me, users };
 }
 
+async function loadGroupMembersCached(groupId) {
+  const key = String(groupId || "");
+  if (!key) return [];
+  const cached = groupMembersCache.get(key);
+  if (cached?.users?.length) return cached.users;
+  const data = await fetchGroupMembers(key);
+  const results = Array.isArray(data?.results) ? data.results : [];
+  const users = results.map(r => clampUsername(r.username)).filter(Boolean);
+  groupMembersCache.set(key, { users, ts: Date.now() });
+  return users;
+}
+
+async function getLeaderboardUsers() {
+  const me = currentUser;
+  if (!me) return { me: "", users: [] };
+  if (leaderboardScope === "group" && leaderboardGroupId) {
+    const users = await loadGroupMembersCached(leaderboardGroupId);
+    const merged = Array.from(new Set([me, ...users].map(clampUsername).filter(Boolean)));
+    return { me, users: merged };
+  }
+  return getUsersIncludingMe();
+}
+
 async function refreshLeaderboard() {
   const ensured = ensureUsername({ prompt: false });
   if (!ensured) return;
-  const { me, users } = getUsersIncludingMe();
+  const { me, users } = await getLeaderboardUsers();
   if (!me) return;
+  if (!users.length) {
+    if (tbody) tbody.innerHTML = `<tr><td colspan="6"><div class="meta">No users to show.</div></td></tr>`;
+    return;
+  }
 
   const cached = cacheGet("leaderboard");
   if (cached?.rows?.length) {
@@ -6400,6 +6680,20 @@ compareTabButtons.forEach(btn => {
   btn.addEventListener("click", () => setActiveCompareTab(btn.dataset.tab));
 });
 
+if (leaderboardScopeFriendsBtn) {
+  leaderboardScopeFriendsBtn.addEventListener("click", () => setLeaderboardScope("friends"));
+}
+if (leaderboardScopeGroupBtn) {
+  leaderboardScopeGroupBtn.addEventListener("click", () => setLeaderboardScope("group"));
+}
+if (leaderboardGroupSelect) {
+  leaderboardGroupSelect.addEventListener("change", () => {
+    leaderboardGroupId = leaderboardGroupSelect.value || "";
+    if (leaderboardGroupId) setLeaderboardScope("group");
+    else setLeaderboardScope("friends");
+  });
+}
+
 if (profileShowMoreBtn) {
   profileShowMoreBtn.addEventListener("click", () => {
     if (profileExpanded) {
@@ -6706,6 +7000,32 @@ if (addFriendCancelBtn) {
 if (addFriendConfirmBtn) {
   addFriendConfirmBtn.addEventListener("click", () => {
     addFriendFromModal();
+  });
+}
+
+if (groupCreateBtn) {
+  groupCreateBtn.addEventListener("click", async () => {
+    const name = (groupNameInput?.value || "").trim();
+    if (!name) return;
+    try {
+      if (groupCreateStatusEl) groupCreateStatusEl.textContent = "Creating group...";
+      await createGroup(name);
+      if (groupNameInput) groupNameInput.value = "";
+      if (groupCreateStatusEl) groupCreateStatusEl.textContent = "Group created.";
+      await refreshGroupsPage();
+    } catch (e) {
+      if (groupCreateStatusEl) {
+        groupCreateStatusEl.textContent = String(e?.message || "Failed to create group.");
+      }
+    }
+  });
+}
+
+if (groupNameInput) {
+  groupNameInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && groupCreateBtn) {
+      groupCreateBtn.click();
+    }
   });
 }
 
@@ -7220,3 +7540,4 @@ if (usernameModalInput) {
     ensureUsername();
   }
 })();
+

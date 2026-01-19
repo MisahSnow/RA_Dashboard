@@ -34,6 +34,7 @@
       <button class="pageBtn active" data-page="dashboard" role="tab" aria-selected="true">Dashboard</button>
       <button class="pageBtn" data-page="find-games" role="tab" aria-selected="false">Find Games</button>
       <button class="pageBtn" data-page="challenges" role="tab" aria-selected="false">Challenges</button>
+      <button class="pageBtn" data-page="groups" role="tab" aria-selected="false">Groups</button>
       <button class="pageBtn" data-page="social" role="tab" aria-selected="false">Social</button>
       <button class="pageBtn backlogTab" data-page="backlog" role="tab" aria-selected="false">My Backlog</button>
       <button class="pageBtn profileTab" data-page="profile" role="tab" aria-selected="false">My Profile</button>
@@ -122,7 +123,14 @@
     <section id="dashboardPage" class="page active">
     <section class="card">
       <div class="sectionHead">
-        <h2 class="sectionTitle" id="leaderboardTitle">Monthly Leaderboard</h2>
+        <div class="sectionHeadLeft">
+          <h2 class="sectionTitle" id="leaderboardTitle">Monthly Leaderboard</h2>
+          <div class="leaderboardScope" role="tablist" aria-label="Leaderboard scope">
+            <button id="leaderboardScopeFriends" class="smallBtn active" role="tab" aria-selected="true">Friends</button>
+            <button id="leaderboardScopeGroup" class="smallBtn" role="tab" aria-selected="false">Group</button>
+            <select id="leaderboardGroupSelect" class="mutedSelect" aria-label="Group leaderboard"></select>
+          </div>
+        </div>
         <div class="sectionControls">
           <div class="leaderboardTabs" role="tablist" aria-label="Leaderboard ranges">
             <button class="smallBtn leaderboardTab" data-range="daily" role="tab" aria-selected="false">Daily</button>
@@ -417,6 +425,39 @@
               <h3 class="sectionTitle">Active Challenges</h3>
               <div id="challengeActive" class="challengeList"></div>
             </div>
+          </div>
+        </div>
+      </section>
+    </section>
+    <section id="groupsPage" class="page" hidden>
+      <section class="card">
+        <div class="sectionHead">
+          <h2 class="sectionTitle">Groups</h2>
+          <div id="groupsLoading" class="loadingWheel" hidden aria-label="Loading"></div>
+        </div>
+        <div class="groupsGrid">
+          <div class="groupPanel">
+            <h3 class="sectionTitle">Create Group</h3>
+            <div class="field">
+              <label for="groupNameInput">Group name</label>
+              <input id="groupNameInput" placeholder="Enter a group name" autocomplete="off" />
+            </div>
+            <button id="groupCreateBtn" class="smallBtn primaryBtn">Create Group</button>
+            <div id="groupCreateStatus" class="note"></div>
+          </div>
+          <div class="groupPanel">
+            <h3 class="sectionTitle">Join a Group</h3>
+            <div id="groupBrowseList" class="groupList"></div>
+          </div>
+        </div>
+        <div class="groupsGrid">
+          <div class="groupPanel">
+            <h3 class="sectionTitle">Your Groups</h3>
+            <div id="groupMyList" class="groupList"></div>
+          </div>
+          <div class="groupPanel">
+            <h3 class="sectionTitle">Invites</h3>
+            <div id="groupInvitesList" class="groupList"></div>
           </div>
         </div>
       </section>

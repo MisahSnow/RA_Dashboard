@@ -214,6 +214,13 @@ h1 {
   margin-bottom:12px;
 }
 
+.sectionHeadLeft{
+  display:flex;
+  flex-direction:column;
+  align-items:flex-start;
+  gap:6px;
+}
+
 .sectionHead.compact{
   margin-bottom: 8px;
 }
@@ -237,7 +244,26 @@ h1 {
   align-items: center;
 }
 
+.leaderboardScope{
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+#leaderboardGroupSelect{
+  min-width: 170px;
+  height: 28px;
+  padding: 2px 10px;
+}
+
 .leaderboardTab.active{
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(0, 245, 212, 0.35), 0 0 12px rgba(0, 245, 212, 0.2);
+}
+
+.leaderboardScope .smallBtn.active{
   border-color: var(--accent);
   color: var(--accent);
   box-shadow: 0 0 0 1px rgba(0, 245, 212, 0.35), 0 0 12px rgba(0, 245, 212, 0.2);
@@ -820,6 +846,66 @@ button:hover {
   min-width: 0;
   width: 100%;
   box-sizing: border-box;
+}
+
+.groupsGrid{
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.groupPanel{
+  border: 1px solid rgba(82, 65, 140, 0.6);
+  border-radius: var(--radius);
+  background: rgba(10, 8, 22, 0.7);
+  padding: 14px;
+}
+
+.groupList{
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.groupRow{
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(44, 36, 72, 0.8);
+  background: rgba(8, 6, 20, 0.8);
+}
+
+.groupRowTop{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.groupRowTitle{
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.groupRowMeta{
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+
+.groupRowActions{
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.groupInviteRow{
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
 }
 
 

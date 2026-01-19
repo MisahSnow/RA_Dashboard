@@ -1,4 +1,4 @@
-import express from "express";
+﻿import express from "express";
 import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
 import pg from "pg";
@@ -105,6 +105,35 @@ async function initDb() {
       friend_username TEXT NOT NULL,
       created_at TIMESTAMPTZ DEFAULT NOW(),
       UNIQUE(user_id, friend_username)
+    );
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS groups (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS group_members (
+      id SERIAL PRIMARY KEY,
+      group_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      role TEXT NOT NULL DEFAULT 'member',
+      joined_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(group_id, user_id)
+    );
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS group_invites (
+      id SERIAL PRIMARY KEY,
+      group_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+      invited_user TEXT NOT NULL,
+      invited_by_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(group_id, invited_user)
     );
   `);
   await pool.query(`
@@ -1017,6 +1046,162 @@ app.delete("/api/friends/:username", requireAuth, async (req, res) => {
   await pool.query(
     "DELETE FROM friends WHERE user_id = $1 AND friend_username = $2",
     [userId, friend]
+  );
+  res.json({ ok: true });
+});
+
+// Groups
+app.post("/api/groups", requireAuth, async (req, res) => {
+  if (!pool) return res.status(500).json({ error: "Database unavailable" });
+  const userId = req.session.user.id;
+  const name = String(req.body?.name || "").trim();
+  if (!name) return res.status(400).json({ error: "Missing group name" });
+
+  const result = await pool.query(
+    "INSERT INTO groups (name, owner_user_id) VALUES ($1, $2) RETURNING id, name, created_at",
+    [name, userId]
+  );
+  const group = result.rows[0];
+  await pool.query(
+    "INSERT INTO group_members (group_id, user_id, role) VALUES ($1, $2, 'owner') ON CONFLICT DO NOTHING",
+    [group.id, userId]
+  );
+  res.json({ group });
+});
+
+app.get("/api/groups", requireAuth, async (req, res) => {
+  if (!pool) return res.status(500).json({ error: "Database unavailable" });
+  const userId = req.session.user.id;
+  const result = await pool.query(
+    `SELECT g.id, g.name, g.created_at, gm.role,
+            (SELECT COUNT(*) FROM group_members gm2 WHERE gm2.group_id = g.id) AS member_count
+       FROM groups g
+       JOIN group_members gm ON gm.group_id = g.id
+      WHERE gm.user_id = $1
+      ORDER BY g.created_at DESC`,
+    [userId]
+  );
+  res.json({ results: result.rows });
+});
+
+app.get("/api/groups/browse", requireAuth, async (req, res) => {
+  if (!pool) return res.status(500).json({ error: "Database unavailable" });
+  const userId = req.session.user.id;
+  const result = await pool.query(
+    `SELECT g.id, g.name, g.created_at,
+            (SELECT COUNT(*) FROM group_members gm2 WHERE gm2.group_id = g.id) AS member_count,
+            EXISTS(
+              SELECT 1 FROM group_members gm3 WHERE gm3.group_id = g.id AND gm3.user_id = $1
+            ) AS is_member
+       FROM groups g
+      ORDER BY g.created_at DESC`,
+    [userId]
+  );
+  res.json({ results: result.rows });
+});
+
+app.post("/api/groups/:groupId/join", requireAuth, async (req, res) => {
+  if (!pool) return res.status(500).json({ error: "Database unavailable" });
+  const userId = req.session.user.id;
+  const groupId = Number(req.params.groupId);
+  if (!Number.isFinite(groupId)) return res.status(400).json({ error: "Invalid group id" });
+
+  await pool.query(
+    "INSERT INTO group_members (group_id, user_id, role) VALUES ($1, $2, 'member') ON CONFLICT DO NOTHING",
+    [groupId, userId]
+  );
+  res.json({ ok: true });
+});
+
+app.get("/api/groups/:groupId/members", requireAuth, async (req, res) => {
+  if (!pool) return res.status(500).json({ error: "Database unavailable" });
+  const groupId = Number(req.params.groupId);
+  if (!Number.isFinite(groupId)) return res.status(400).json({ error: "Invalid group id" });
+
+  const result = await pool.query(
+    `SELECT u.username, gm.role
+       FROM group_members gm
+       JOIN users u ON u.id = gm.user_id
+      WHERE gm.group_id = $1
+      ORDER BY u.username`,
+    [groupId]
+  );
+  res.json({ results: result.rows });
+});
+
+app.post("/api/groups/:groupId/invite", requireAuth, async (req, res) => {
+  if (!pool) return res.status(500).json({ error: "Database unavailable" });
+  const userId = req.session.user.id;
+  const groupId = Number(req.params.groupId);
+  if (!Number.isFinite(groupId)) return res.status(400).json({ error: "Invalid group id" });
+  const invited = normalizeUsername(req.body?.username);
+  if (!invited) return res.status(400).json({ error: "Missing username" });
+
+  const memberCheck = await pool.query(
+    "SELECT 1 FROM group_members WHERE group_id = $1 AND user_id = $2",
+    [groupId, userId]
+  );
+  if (!memberCheck.rows.length) return res.status(403).json({ error: "Not a group member" });
+
+  await pool.query(
+    `INSERT INTO group_invites (group_id, invited_user, invited_by_id)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (group_id, invited_user)
+     DO UPDATE SET status = 'pending', invited_by_id = EXCLUDED.invited_by_id, created_at = NOW()`,
+    [groupId, invited, userId]
+  );
+  res.json({ ok: true });
+});
+
+app.get("/api/groups/invites", requireAuth, async (req, res) => {
+  if (!pool) return res.status(500).json({ error: "Database unavailable" });
+  const username = normalizeUsername(req.session.user.username);
+  const result = await pool.query(
+    `SELECT gi.id, gi.group_id, gi.created_at, g.name AS group_name,
+            u.username AS invited_by
+       FROM group_invites gi
+       JOIN groups g ON g.id = gi.group_id
+       LEFT JOIN users u ON u.id = gi.invited_by_id
+      WHERE gi.invited_user = $1 AND gi.status = 'pending'
+      ORDER BY gi.created_at DESC`,
+    [username]
+  );
+  res.json({ results: result.rows });
+});
+
+app.post("/api/groups/invites/:inviteId/accept", requireAuth, async (req, res) => {
+  if (!pool) return res.status(500).json({ error: "Database unavailable" });
+  const inviteId = Number(req.params.inviteId);
+  if (!Number.isFinite(inviteId)) return res.status(400).json({ error: "Invalid invite id" });
+  const userId = req.session.user.id;
+  const username = normalizeUsername(req.session.user.username);
+
+  const inviteRes = await pool.query(
+    "SELECT group_id FROM group_invites WHERE id = $1 AND invited_user = $2 AND status = 'pending'",
+    [inviteId, username]
+  );
+  if (!inviteRes.rows.length) return res.status(404).json({ error: "Invite not found" });
+  const groupId = inviteRes.rows[0].group_id;
+
+  await pool.query(
+    "INSERT INTO group_members (group_id, user_id, role) VALUES ($1, $2, 'member') ON CONFLICT DO NOTHING",
+    [groupId, userId]
+  );
+  await pool.query(
+    "UPDATE group_invites SET status = 'accepted' WHERE id = $1",
+    [inviteId]
+  );
+  res.json({ ok: true, groupId });
+});
+
+app.post("/api/groups/invites/:inviteId/decline", requireAuth, async (req, res) => {
+  if (!pool) return res.status(500).json({ error: "Database unavailable" });
+  const inviteId = Number(req.params.inviteId);
+  if (!Number.isFinite(inviteId)) return res.status(400).json({ error: "Invalid invite id" });
+  const username = normalizeUsername(req.session.user.username);
+  await pool.query(
+    "UPDATE group_invites SET status = 'declined' WHERE id = $1 AND invited_user = $2",
+    [inviteId, username]
   );
   res.json({ ok: true });
 });
@@ -2846,3 +3031,4 @@ if (pool) {
 } else {
   startServer();
 }
+
