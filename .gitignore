@@ -1,3 +1,6 @@
 run-server.bat
 .env
 node_modules/
+web/editor.html
+web/editor.css
+web/editor.js

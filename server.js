@@ -43,19 +43,23 @@ const pool = DATABASE_URL
   ? new Pool({ connectionString: DATABASE_URL, ssl: useSsl ? { rejectUnauthorized: false } : false })
   : null;
 
+const sessionOptions = {
+  secret: SESSION_SECRET,
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    maxAge: 30 * 24 * 60 * 60 * 1000
+  }
+};
+
 if (pool) {
   const PgSession = connectPgSimple(session);
-  app.use(session({
-    store: new PgSession({ pool, createTableIfMissing: true }),
-    secret: SESSION_SECRET,
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production"
-    }
-  }));
+  sessionOptions.store = new PgSession({ pool, createTableIfMissing: true });
 }
+
+app.use(session(sessionOptions));
 
 
 // --- tiny in-memory cache (avoid 429s) ---
@@ -3343,8 +3347,38 @@ app.get("/api/now-playing/:username", async (req, res) => {
 
 // --- static site ---
 const webPath = path.join(__dirname, "web");
+const indexPath = path.join(webPath, "index.html");
+const stylePath = path.join(webPath, "style.css");
+const editorPath = path.join(webPath, "editor.html");
+
+app.get("/api/editor/content", (_req, res) => {
+  try {
+    const html = fs.readFileSync(indexPath, "utf8");
+    const css = fs.readFileSync(stylePath, "utf8");
+    res.json({ html, css });
+  } catch (err) {
+    res.status(500).json({ error: err?.message || "Failed to load editor content" });
+  }
+});
+
+app.post("/api/editor/save", (req, res) => {
+  try {
+    const html = req.body?.html;
+    const css = req.body?.css;
+    if (typeof html !== "string" || typeof css !== "string") {
+      return res.status(400).json({ error: "Invalid editor payload" });
+    }
+    fs.writeFileSync(indexPath, html, "utf8");
+    fs.writeFileSync(stylePath, css, "utf8");
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err?.message || "Failed to save editor content" });
+  }
+});
+
 app.use(express.static(webPath));
-app.get("/", (_req, res) => res.sendFile(path.join(webPath, "index.html")));
+app.get("/", (_req, res) => res.sendFile(indexPath));
+app.get("/editor", (_req, res) => res.sendFile(editorPath));
 
 const startServer = () => {
   app.listen(PORT, () => {

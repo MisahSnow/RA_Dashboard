@@ -1,4 +1,4 @@
-﻿@import url("https://fonts.googleapis.com/css2?family=Oxanium:wght@400;600&family=Orbitron:wght@500;700&family=Press+Start+2P&family=Space+Grotesk:wght@500;700&family=JetBrains+Mono:wght@400;600&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Oxanium:wght@400;600&family=Orbitron:wght@500;700&family=Press+Start+2P&family=Space+Grotesk:wght@500;700&family=JetBrains+Mono:wght@400;600&display=swap");
 
 :root {
   --bg-1: #0a0418;
@@ -147,7 +147,7 @@ body::after{
 
 .panelHeader{
   display:flex;
-  align-items:flex-end;
+  align-items:flex-start;
   justify-content:space-between;
   gap:16px;
   flex-wrap:wrap;
@@ -158,7 +158,7 @@ body::after{
   display:flex;
   flex-direction:column;
   gap:2px;
-  margin-top: 20px;
+  margin-top: 0;
 }
 
 
@@ -300,8 +300,8 @@ h1 {
 .topActions{
   display:flex;
   justify-content:flex-end;
-  align-items:flex-end;
-  transform: translateY(-15px);
+  align-items:flex-start;
+  transform: none;
 }
 
 .controls {
@@ -3333,3 +3333,4 @@ tbody tr:nth-child(even){
     grid-template-columns: 1fr;
   }
 }
+

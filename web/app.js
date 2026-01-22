@@ -177,7 +177,6 @@ const notificationsLoadingEl = document.getElementById("notificationsLoading");
 const notificationsListEl = document.getElementById("notificationsList");
 const tbody = document.querySelector("#leaderboard tbody");
 const statusEl = document.getElementById("status");
-const refreshCountdownEl = document.getElementById("refreshCountdown");
 const onlineUsersEl = document.getElementById("onlineUsers");
 const onlineHintEl = document.getElementById("onlineHint");
 const apiQueueCounterEl = document.getElementById("apiQueueCounter");
@@ -2466,9 +2465,6 @@ function formatCountdown(ms) {
 
 function setNextRefresh(delayMs = AUTO_REFRESH_MS) {
   nextRefreshAt = Date.now() + delayMs;
-  if (refreshCountdownEl) {
-    refreshCountdownEl.textContent = `Auto refresh in ${formatCountdown(delayMs)}`;
-  }
 }
 
 function startRefreshCountdown() {
@@ -2486,9 +2482,6 @@ function startRefreshCountdown() {
         setNextRefresh();
         return;
       }
-    if (refreshCountdownEl) {
-      refreshCountdownEl.textContent = `Auto refresh in ${formatCountdown(remaining)}`;
-    }
   }, 1000);
 }
 
