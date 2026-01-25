@@ -209,6 +209,12 @@ const notificationsPanel = document.getElementById("notificationsPanel");
 const notificationsCloseBtn = document.getElementById("notificationsCloseBtn");
 const notificationsLoadingEl = document.getElementById("notificationsLoading");
 const notificationsListEl = document.getElementById("notificationsList");
+const profileMenuWrap = document.getElementById("profileMenuWrap");
+const profileMenuBtn = document.getElementById("profileMenuBtn");
+const profileMenuAvatar = document.getElementById("profileMenuAvatar");
+const profileMenuProfileBtn = document.getElementById("profileMenuProfileBtn");
+const profileMenuBacklogBtn = document.getElementById("profileMenuBacklogBtn");
+const profileMenuSettingsBtn = document.getElementById("profileMenuSettingsBtn");
 const tbody = document.querySelector("#leaderboard tbody");
 const statusEl = document.getElementById("status");
 const onlineUsersEl = document.getElementById("onlineUsers");
@@ -685,6 +691,7 @@ function setCurrentUser(username) {
     usernameModal.hidden = true;
   }
   updateSocialComposerState();
+  updateProfileMenuAvatar();
   if (socialPage && !socialPage.hidden) {
     loadSocialPostsFromServer({ silent: true });
   }
@@ -1079,8 +1086,6 @@ function renderSocialPosts(posts = socialPosts, targetEl = socialPostListEl, { s
       });
     }
   });
-  applyChallengeAvatars();
-  hydrateUserAvatars(avatarUsers);
   const renderKey = JSON.stringify({
     filter,
     limit,
@@ -1396,6 +1401,8 @@ function renderSocialPosts(posts = socialPosts, targetEl = socialPostListEl, { s
     frag.append(card);
   });
   targetEl.append(frag);
+  applyChallengeAvatars();
+  hydrateUserAvatars(avatarUsers);
 }
 
 async function loadSocialPostsFromServer({ silent = false } = {}) {
@@ -1559,12 +1566,65 @@ function getCachedAvatarUrl(username) {
   return entry.url;
 }
 
+function getCachedAvatarStamp(username) {
+  const key = normalizeUserKey(username);
+  if (!key) return 0;
+  const cache = loadSocialAvatarCache();
+  const entry = cache.items[key];
+  if (!entry || !Number.isFinite(entry.ts)) return 0;
+  if (Date.now() - entry.ts > SOCIAL_AVATAR_CACHE_TTL_MS) return 0;
+  return entry.ts;
+}
+
 function setCachedAvatarUrl(username, url) {
   const key = normalizeUserKey(username);
   if (!key) return;
   const cache = loadSocialAvatarCache();
   cache.items[key] = { url: String(url || ""), ts: Date.now() };
   saveSocialAvatarCache();
+}
+
+function buildAvatarUrl(username, rawUrl) {
+  const url = iconUrl(rawUrl);
+  const stamp = getCachedAvatarStamp(username);
+  if (!stamp) return url;
+  return url.includes("?") ? `${url}&v=${stamp}` : `${url}?v=${stamp}`;
+}
+
+function updateProfileMenuAvatar() {
+  if (!profileMenuAvatar) return;
+  if (!currentUser) {
+    profileMenuAvatar.removeAttribute("src");
+    profileMenuAvatar.classList.add("placeholder");
+    return;
+  }
+  const cachedUrl = getCachedAvatarUrl(currentUser);
+  if (cachedUrl) {
+    profileMenuAvatar.src = buildAvatarUrl(currentUser, cachedUrl);
+    profileMenuAvatar.classList.remove("placeholder");
+    return;
+  }
+  profileMenuAvatar.removeAttribute("src");
+  profileMenuAvatar.classList.add("placeholder");
+  fetchUserSummary(currentUser, { silent: true })
+    .then((data) => {
+      const url = data?.userPic || "";
+      if (!url) return;
+      setCachedAvatarUrl(currentUser, url);
+      profileMenuAvatar.src = buildAvatarUrl(currentUser, url);
+      profileMenuAvatar.classList.remove("placeholder");
+    })
+    .catch(() => {});
+}
+
+function closeProfileMenu() {
+  if (!profileMenuWrap) return;
+  profileMenuWrap.classList.remove("open");
+  profileMenuWrap.classList.add("closing");
+  profileMenuBtn?.setAttribute("aria-expanded", "false");
+  setTimeout(() => {
+    profileMenuWrap.classList.remove("closing");
+  }, 180);
 }
 
 function applyCachedSocialAvatars(usernames) {
@@ -2689,8 +2749,9 @@ function applyChallengeAvatars() {
     const url = getChallengeAvatar(username);
     if (!url) return;
     if (node.tagName === "IMG") {
-      if (node.getAttribute("src")) return;
-      node.setAttribute("src", iconUrl(url));
+      const nextSrc = buildAvatarUrl(username, url);
+      if (node.getAttribute("src") === nextSrc) return;
+      node.setAttribute("src", nextSrc);
       node.classList.remove("placeholder");
       return;
     }
@@ -2699,7 +2760,7 @@ function applyChallengeAvatars() {
     img.loading = "lazy";
     img.alt = "";
     img.setAttribute("data-avatar-user", username);
-    img.src = iconUrl(url);
+    img.src = buildAvatarUrl(username, url);
     node.replaceWith(img);
   });
 }
@@ -5819,8 +5880,9 @@ function renderLeaderboard(rows, me) {
     const cls = delta > 0 ? "delta-neg" : delta < 0 ? "delta-pos" : "delta-zero";
     const isMe = (r.username && me) ? r.username.toLowerCase() === me.toLowerCase() : false;
     const levelValue = Number.isFinite(Number(r.level)) ? Number(r.level) : 1;
-    const avatar = r.avatarUrl
-      ? `<img class="leaderboardAvatar" src="${iconUrl(r.avatarUrl)}" alt="" loading="lazy" />`
+    const cachedAvatar = r.avatarUrl || getCachedAvatarUrl(r.username);
+    const avatar = cachedAvatar
+      ? `<img class="leaderboardAvatar" src="${buildAvatarUrl(r.username, cachedAvatar)}" alt="" loading="lazy" />`
       : `<span class="leaderboardAvatar placeholder" aria-hidden="true"></span>`;
     tr.innerHTML = `
       <td><button class="linkBtn" type="button" data-profile="${safeText(r.username)}">${avatar}<span class="leaderboardIdentity"><span class="nameRank">${idx + 1}.</span><span class="leaderboardName"><span class="leaderboardLevel">Level ${levelValue}</span><strong>${safeText(r.username)}</strong></span>${isMe ? '<span class="note">(you)</span>' : ""}</span></button></td>
@@ -7659,7 +7721,9 @@ async function refreshLeaderboard() {
       const avatarPairs = await Promise.all(users.map((u) => summaryLimiter(async () => {
         try {
           const data = await fetchUserSummary(u, { silent: true });
-          return [u, data?.userPic || null];
+          const url = data?.userPic || null;
+          if (url) setCachedAvatarUrl(u, url);
+          return [u, url];
         } catch {
           return [u, null];
         }
@@ -8722,6 +8786,49 @@ if (selfGameBackBtn) {
 if (settingsBtn) {
   settingsBtn.addEventListener("click", openSettings);
 }
+
+if (profileMenuBtn) {
+  profileMenuBtn.addEventListener("click", (e) => {
+    if (!currentUser) {
+      ensureUsername();
+      return;
+    }
+    const open = !profileMenuWrap?.classList.contains("open");
+    profileMenuWrap?.classList.toggle("open", open);
+    profileMenuBtn.setAttribute("aria-expanded", open ? "true" : "false");
+    e.stopPropagation();
+  });
+}
+
+if (profileMenuProfileBtn) {
+  profileMenuProfileBtn.addEventListener("click", () => {
+    if (!currentUser) return;
+    closeProfileMenu();
+    openProfile(currentUser);
+  });
+}
+
+if (profileMenuBacklogBtn) {
+  profileMenuBacklogBtn.addEventListener("click", () => {
+    if (!currentUser) return;
+    closeProfileMenu();
+    setBacklogViewUser(currentUser);
+    setActivePage("backlog");
+  });
+}
+
+if (profileMenuSettingsBtn) {
+  profileMenuSettingsBtn.addEventListener("click", () => {
+    closeProfileMenu();
+    openSettings();
+  });
+}
+
+document.addEventListener("click", (e) => {
+  if (!profileMenuWrap || profileMenuWrap.hidden) return;
+  if (profileMenuWrap.contains(e.target)) return;
+  closeProfileMenu();
+});
 if (notificationsBtn) {
   notificationsBtn.addEventListener("click", (e) => {
     e.stopPropagation();
