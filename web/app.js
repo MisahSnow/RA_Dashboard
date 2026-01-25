@@ -168,6 +168,7 @@ const LS_DEBUG_UI = "ra.debugUi";
 const LS_LEADERBOARD_RANGE = "ra.leaderboardRange";
 const LS_PROFILE_COUNTS_PREFIX = "ra.profileCounts";
 const LS_FIND_GAMES_CONSOLE = "ra.findGamesConsole";
+const LS_FIND_GAMES_PLAYERS = "ra.findGamesPlayers";
 const LS_BACKLOG_PREFIX = "ra.backlog";
 const friendSummaryCache = new Map();
 const friendPresenceCache = new Map();
@@ -602,18 +603,24 @@ let findSuggestedGames = [];
 let findSuggestedSelectedGameId = "";
 let findGamesConsolesCache = [];
 const findGamesPlayersCache = new Map();
+const findGamesPlayersCacheTs = new Map();
 const findGamesPlayersRequested = new Set();
 const findGamesPlayersControllers = new Map();
 const findGamesPlayersLimiter = createLimiter(3);
 let findGamesPlayersBatch = 0;
 let findGamesPlayersBatchController = null;
 let findGamesPlayersBatchKey = "";
+let findGamesPlayersBatchResolvedKey = "";
 const FIND_GAMES_INITIAL_VISIBLE = 200;
 const FIND_GAMES_SHOW_MORE_STEP = 100;
 let findGamesVisibleCount = FIND_GAMES_INITIAL_VISIBLE;
 const FIND_GAMES_PLAYERS_FETCH_LIMIT = Infinity;
+const FIND_GAMES_PLAYERS_BATCH_CONCURRENCY = 6;
+const FIND_GAMES_PLAYERS_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const FIND_GAMES_PLAYERS_CACHE_MAX = 6000;
 let findGamesResortTimer = null;
 let findGamesBatchSorting = false;
+let findGamesPlayersPersistTimer = null;
 let backlogItems = [];
 let backlogViewUser = "";
 const backlogProgressCache = new Map();
@@ -1321,6 +1328,56 @@ function addSocialComment(postId, text) {
 
 loadState();
 updateSocialComposerState();
+
+function loadFindGamesPlayersCache() {
+  try {
+    const raw = localStorage.getItem(LS_FIND_GAMES_PLAYERS);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    const items = parsed?.items || {};
+    const now = Date.now();
+    for (const [id, entry] of Object.entries(items)) {
+      const players = Number(entry?.p);
+      const ts = Number(entry?.t);
+      if (!Number.isFinite(players) || !Number.isFinite(ts)) continue;
+      if ((now - ts) > FIND_GAMES_PLAYERS_CACHE_TTL_MS) continue;
+      const key = String(id);
+      findGamesPlayersCache.set(key, players);
+      findGamesPlayersCacheTs.set(key, ts);
+    }
+  } catch {
+    // ignore cache failures
+  }
+}
+
+function persistFindGamesPlayersCache() {
+  try {
+    const entries = [];
+    for (const [id, players] of findGamesPlayersCache.entries()) {
+      const ts = Number(findGamesPlayersCacheTs.get(id)) || Date.now();
+      entries.push({ id: String(id), p: players, t: ts });
+    }
+    entries.sort((a, b) => b.t - a.t);
+    const limited = entries.slice(0, FIND_GAMES_PLAYERS_CACHE_MAX);
+    const items = {};
+    for (const entry of limited) {
+      items[entry.id] = { p: entry.p, t: entry.t };
+    }
+    localStorage.setItem(LS_FIND_GAMES_PLAYERS, JSON.stringify({ v: 1, items }));
+  } catch {
+    // ignore cache failures
+  }
+}
+
+function scheduleFindGamesPlayersPersist() {
+  if (findGamesPlayersPersistTimer) return;
+  findGamesPlayersPersistTimer = setTimeout(() => {
+    findGamesPlayersPersistTimer = null;
+    persistFindGamesPlayersCache();
+  }, 500);
+}
+
+loadFindGamesPlayersCache();
 
 function cacheSet(key, data) {
   try {
@@ -4103,6 +4160,14 @@ function updateFindGamesTilePlayers(gameId, players) {
   }
 }
 
+function setFindGamesPlayersCacheValue(gameId, players, { updateTile = true } = {}) {
+  const key = String(gameId);
+  findGamesPlayersCache.set(key, players);
+  findGamesPlayersCacheTs.set(key, Date.now());
+  if (updateTile) updateFindGamesTilePlayers(key, players);
+  scheduleFindGamesPlayersPersist();
+}
+
 function scheduleFindGamesResort() {
   if (findGamesResortTimer) return;
   findGamesResortTimer = setTimeout(() => {
@@ -4127,6 +4192,7 @@ function cancelFindGamesPlayersRequests() {
     findGamesPlayersBatchController = null;
   }
   findGamesPlayersBatchKey = "";
+  findGamesPlayersBatchResolvedKey = "";
 }
 
 function queueFindGamesPlayersRefresh(gameId, { force = false } = {}) {
@@ -4144,10 +4210,9 @@ function queueFindGamesPlayersRefresh(gameId, { force = false } = {}) {
       const data = await fetchGamePlayersRefresh(key, controller.signal);
       if (batch !== findGamesPlayersBatch) return;
       const players = Number(data?.numDistinctPlayers ?? data?.players ?? 0);
-      if (Number.isFinite(players) && players > 0) {
-        findGamesPlayersCache.set(key, players);
-        updateFindGamesTilePlayers(key, players);
-      }
+        if (Number.isFinite(players) && players > 0) {
+          setFindGamesPlayersCacheValue(key, players);
+        }
     } catch (err) {
       if (err?.name === "AbortError") return;
       // ignore failures; will retry on next search
@@ -4161,7 +4226,8 @@ function queueFindGamesPlayersRefresh(gameId, { force = false } = {}) {
 function requestFindGamesPlayersBatch(gameIds) {
   const ids = Array.isArray(gameIds) ? gameIds.filter(Boolean) : [];
   if (!ids.length) return;
-  const key = ids.join(",");
+  const key = buildPlayersBatchKey(ids);
+  if (!findGamesPlayersBatchController && key === findGamesPlayersBatchKey) return;
   if (findGamesPlayersBatchController) {
     if (key === findGamesPlayersBatchKey) return;
     findGamesPlayersBatchController.abort();
@@ -4180,7 +4246,9 @@ function requestFindGamesPlayersBatch(gameIds) {
     try {
       const seen = new Set();
       let didUpdate = false;
-      for (const chunk of chunks) {
+      const batchLimiter = createLimiter(FIND_GAMES_PLAYERS_BATCH_CONCURRENCY);
+      await Promise.all(chunks.map(chunk => batchLimiter(async () => {
+        if (controller.signal.aborted) return;
         const data = await fetchGamePlayersBatch(chunk, controller.signal);
         if (batch !== findGamesPlayersBatch) return;
         const results = Array.isArray(data?.results) ? data.results : [];
@@ -4190,16 +4258,15 @@ function requestFindGamesPlayersBatch(gameIds) {
           seen.add(gid);
           const players = Number(row?.numDistinctPlayers ?? row?.players ?? 0);
           if (Number.isFinite(players) && players > 0) {
-            findGamesPlayersCache.set(gid, players);
-            updateFindGamesTilePlayers(gid, players);
+            setFindGamesPlayersCacheValue(gid, players);
             didUpdate = true;
           }
           if (row?.stale || !Number.isFinite(players) || players <= 0) {
             queueFindGamesPlayersRefresh(gid, { force: true });
           }
         }
-        if (controller.signal.aborted) return;
-      }
+      })));
+      if (controller.signal.aborted) return;
       for (const gid of ids) {
         if (controller.signal.aborted) return;
         if (!seen.has(gid)) {
@@ -4213,6 +4280,10 @@ function requestFindGamesPlayersBatch(gameIds) {
       if (err?.name === "AbortError") return;
     } finally {
       findGamesBatchSorting = false;
+      findGamesPlayersBatchResolvedKey = key;
+      if (findGamesPlayersBatchController === controller) {
+        findGamesPlayersBatchController = null;
+      }
     }
   })();
 }
@@ -4222,6 +4293,25 @@ function getFindGamesPlayersValue(game) {
   const raw = cached ?? game?.numDistinctPlayers ?? game?.numPlayers;
   const value = Number(raw);
   return Number.isFinite(value) ? value : -1;
+}
+
+function buildPlayersBatchKey(ids) {
+  const ordered = ids
+    .map(id => String(id))
+    .filter(Boolean)
+    .sort((a, b) => Number(a) - Number(b));
+  return ordered.join(",");
+}
+
+function hasFreshPlayersCacheForIds(ids) {
+  const now = Date.now();
+  for (const id of ids) {
+    const key = String(id);
+    if (!findGamesPlayersCache.has(key)) return false;
+    const ts = Number(findGamesPlayersCacheTs.get(key));
+    if (!Number.isFinite(ts) || (now - ts) > FIND_GAMES_PLAYERS_CACHE_TTL_MS) return false;
+  }
+  return true;
 }
 
 function sortFindGamesList(games) {
@@ -4259,18 +4349,22 @@ function renderFindGamesList(games) {
       .filter(row => row.score !== null)
       .map(row => row.game);
   }
-  filtered = sortFindGamesList(filtered);
   if (!filtered.length) {
     const label = query ? "No games match your search." : "No games found for this letter.";
     findGamesListEl.innerHTML = `<div class="meta">${label}</div>`;
     if (findGamesShowMoreBtn) findGamesShowMoreBtn.hidden = true;
     return;
   }
+  const shouldHydratePlayers = !!query || (!query && !!findGamesLetter);
+  const isPlayersSort = findGamesSort === "players";
+  if (isPlayersSort && shouldHydratePlayers) {
+    const ids = filtered.map(g => String(g.gameId ?? ""));
+    requestFindGamesPlayersBatch(ids);
+  }
+  filtered = sortFindGamesList(filtered);
   const visibleGames = filtered.slice(0, findGamesVisibleCount);
   const frag = document.createDocumentFragment();
   const inBacklog = new Set(backlogItems.map(item => String(item.gameId)));
-  const shouldHydratePlayers = !!query || (!query && !!findGamesLetter);
-  const isPlayersSort = findGamesSort === "players";
   const hydrateSource = isPlayersSort ? filtered : visibleGames;
   const hydrateList = shouldHydratePlayers
     ? hydrateSource.slice(0, FIND_GAMES_PLAYERS_FETCH_LIMIT).map(g => String(g.gameId ?? ""))
