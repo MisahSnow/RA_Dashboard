@@ -93,6 +93,7 @@ let consoleListCache = { builtAt: 0, list: null, inFlight: null };
 const gameListCache = new Map(); // Map<consoleId, { builtAt, list, inFlight }>
 let allGameListCache = { builtAt: 0, list: null, inFlight: null };
 const gameMetaRefreshInFlight = new Map(); // Map<gameId, Promise>
+const gameGenreCacheKey = (gameId) => `game-genre:${gameId}`;
 const notificationStreams = new Map(); // Map<username, Set<res>>
 
 // Create tables and columns if they don't exist yet.
@@ -313,12 +314,14 @@ async function initDb() {
     CREATE TABLE IF NOT EXISTS game_metadata (
       game_id INTEGER PRIMARY KEY,
       num_distinct_players INTEGER,
+      genre TEXT,
       updated_at TIMESTAMPTZ DEFAULT NOW()
     );
   `);
   await pool.query(`
     ALTER TABLE game_metadata
       ADD COLUMN IF NOT EXISTS num_distinct_players INTEGER,
+      ADD COLUMN IF NOT EXISTS genre TEXT,
       ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()
   `);
 }
@@ -861,20 +864,23 @@ async function getGameListForAllConsoles(apiKey) {
 async function readGameMeta(gameId) {
   if (!pool) return null;
   const result = await pool.query(
-    `SELECT num_distinct_players, updated_at FROM game_metadata WHERE game_id = $1`,
+    `SELECT num_distinct_players, genre, updated_at FROM game_metadata WHERE game_id = $1`,
     [gameId]
   );
   return result.rows[0] || null;
 }
 
-async function upsertGameMeta(gameId, numDistinctPlayers) {
+async function upsertGameMeta(gameId, numDistinctPlayers, genre) {
   if (!pool) return;
   await pool.query(
-    `INSERT INTO game_metadata (game_id, num_distinct_players, updated_at)
-     VALUES ($1, $2, NOW())
+    `INSERT INTO game_metadata (game_id, num_distinct_players, genre, updated_at)
+     VALUES ($1, $2, $3, NOW())
      ON CONFLICT (game_id)
-     DO UPDATE SET num_distinct_players = EXCLUDED.num_distinct_players, updated_at = NOW()`,
-    [gameId, numDistinctPlayers]
+     DO UPDATE SET
+       num_distinct_players = COALESCE(EXCLUDED.num_distinct_players, game_metadata.num_distinct_players),
+       genre = COALESCE(EXCLUDED.genre, game_metadata.genre),
+       updated_at = NOW()`,
+    [gameId, numDistinctPlayers, genre]
   );
 }
 
@@ -885,12 +891,20 @@ async function refreshGameMeta(gameId, apiKey) {
     const data = await raGetGameInfo(gameId, apiKey);
     const rawPlayers = data?.NumDistinctPlayers ?? data?.numDistinctPlayers;
     const players = Number(rawPlayers);
-    if (Number.isFinite(players)) {
-      await upsertGameMeta(gameId, players);
-      cacheSet(`game-players:${gameId}`, players, GAME_META_TTL_MS);
-      return players;
+    const rawGenre = data?.Genre ?? data?.genre ?? "";
+    const genre = String(rawGenre || "").trim();
+    const safePlayers = Number.isFinite(players) ? players : null;
+    const safeGenre = genre ? genre : null;
+    if (safePlayers !== null || safeGenre !== null) {
+      await upsertGameMeta(gameId, safePlayers, safeGenre);
+      if (safePlayers !== null) {
+        cacheSet(`game-players:${gameId}`, safePlayers, GAME_META_TTL_MS);
+      }
+      if (safeGenre !== null) {
+        cacheSet(gameGenreCacheKey(gameId), safeGenre, GAME_META_TTL_MS);
+      }
     }
-    return null;
+    return { numDistinctPlayers: safePlayers, genre: safeGenre };
   })().finally(() => {
     gameMetaRefreshInFlight.delete(key);
   });
@@ -3271,8 +3285,8 @@ app.get("/api/game-players-refresh", async (req, res) => {
       return res.status(400).json({ error: "Missing gameId" });
     }
 
-    const players = await refreshGameMeta(gameId, apiKey);
-    res.json({ gameId, numDistinctPlayers: players });
+    const meta = await refreshGameMeta(gameId, apiKey);
+    res.json({ gameId, numDistinctPlayers: meta?.numDistinctPlayers ?? null });
   } catch (err) {
     const status = err?.status || 500;
     res.status(status).json({ error: err?.message || "Failed to refresh game players" });
@@ -3322,6 +3336,102 @@ app.get("/api/game-players-batch", async (req, res) => {
   } catch (err) {
     const status = err?.status || 500;
     res.status(status).json({ error: err?.message || "Failed to fetch game players batch" });
+  }
+});
+
+app.get("/api/game-genre", async (req, res) => {
+  try {
+    const apiKey = String(req.headers["x-ra-api-key"] || RA_API_KEY || "").trim();
+    if (!apiKey) return res.status(400).json({ error: "Missing RA API key" });
+
+    const gameId = Number(req.query.gameId || 0);
+    if (!Number.isFinite(gameId) || gameId <= 0) {
+      return res.status(400).json({ error: "Missing gameId" });
+    }
+
+    const cacheKey = gameGenreCacheKey(gameId);
+    const cached = cacheGet(cacheKey);
+    if (cached !== null && cached !== undefined) {
+      return res.json({ gameId, genre: cached, cached: true });
+    }
+
+    const meta = await readGameMeta(gameId);
+    if (meta?.genre) {
+      const updatedAt = meta.updated_at ? new Date(meta.updated_at).getTime() : 0;
+      const ageMs = updatedAt ? Date.now() - updatedAt : Number.POSITIVE_INFINITY;
+      cacheSet(cacheKey, meta.genre, GAME_META_TTL_MS);
+      const stale = !Number.isFinite(ageMs) || ageMs >= GAME_META_TTL_MS;
+      return res.json({ gameId, genre: meta.genre, cached: true, stale });
+    }
+
+    res.json({ gameId, genre: null, cached: false, stale: true });
+  } catch (err) {
+    const status = err?.status || 500;
+    res.status(status).json({ error: err?.message || "Failed to fetch game genre" });
+  }
+});
+
+app.get("/api/game-genre-refresh", async (req, res) => {
+  try {
+    const apiKey = String(req.headers["x-ra-api-key"] || RA_API_KEY || "").trim();
+    if (!apiKey) return res.status(400).json({ error: "Missing RA API key" });
+
+    const gameId = Number(req.query.gameId || 0);
+    if (!Number.isFinite(gameId) || gameId <= 0) {
+      return res.status(400).json({ error: "Missing gameId" });
+    }
+
+    const meta = await refreshGameMeta(gameId, apiKey);
+    res.json({ gameId, genre: meta?.genre ?? null });
+  } catch (err) {
+    const status = err?.status || 500;
+    res.status(status).json({ error: err?.message || "Failed to refresh game genre" });
+  }
+});
+
+app.get("/api/game-genres-batch", async (req, res) => {
+  try {
+    const raw = String(req.query.ids || "").trim();
+    if (!raw) return res.json({ results: [] });
+    const ids = raw
+      .split(",")
+      .map(id => Number(id))
+      .filter(id => Number.isFinite(id) && id > 0);
+    if (!ids.length) return res.json({ results: [] });
+    if (ids.length > 100) return res.status(400).json({ error: "Too many ids" });
+
+    if (!pool) {
+      return res.json({
+        results: ids.map(gameId => ({ gameId, genre: null, stale: true }))
+      });
+    }
+
+    const result = await pool.query(
+      `SELECT game_id, genre, updated_at
+       FROM game_metadata
+       WHERE game_id = ANY($1::int[])`,
+      [ids]
+    );
+    const rows = result.rows || [];
+    const byId = new Map();
+    for (const row of rows) {
+      const updatedAt = row.updated_at ? new Date(row.updated_at).getTime() : 0;
+      const ageMs = updatedAt ? Date.now() - updatedAt : Number.POSITIVE_INFINITY;
+      const stale = !Number.isFinite(ageMs) || ageMs >= GAME_META_TTL_MS;
+      byId.set(Number(row.game_id), {
+        gameId: Number(row.game_id),
+        genre: row.genre || null,
+        stale
+      });
+    }
+    const results = ids.map(gameId => {
+      if (byId.has(gameId)) return byId.get(gameId);
+      return { gameId, genre: null, stale: true };
+    });
+    res.json({ results });
+  } catch (err) {
+    const status = err?.status || 500;
+    res.status(status).json({ error: err?.message || "Failed to fetch game genres batch" });
   }
 });
 

@@ -169,6 +169,7 @@ const LS_LEADERBOARD_RANGE = "ra.leaderboardRange";
 const LS_PROFILE_COUNTS_PREFIX = "ra.profileCounts";
 const LS_FIND_GAMES_CONSOLE = "ra.findGamesConsole";
 const LS_FIND_GAMES_PLAYERS = "ra.findGamesPlayers";
+const LS_FIND_GAMES_GENRES = "ra.findGamesGenres";
 const LS_BACKLOG_PREFIX = "ra.backlog";
 const friendSummaryCache = new Map();
 const friendPresenceCache = new Map();
@@ -253,6 +254,7 @@ const gameLetterBarEl = document.getElementById("gameLetterBar");
 const findGamesConsoleSelect = document.getElementById("findGamesConsole");
 const findGamesSearchInput = document.getElementById("findGamesSearch");
 const findGamesSortSelect = document.getElementById("findGamesSort");
+const findGamesGenreSelect = document.getElementById("findGamesGenre");
 const findGamesShowMoreBtn = document.getElementById("findGamesShowMoreBtn");
 const imageModal = document.getElementById("imageModal");
 const imageModalImg = document.getElementById("imageModalImg");
@@ -597,6 +599,7 @@ let findGamesInitialized = false;
 let findGamesConsoleId = "";
 let findGamesQuery = "";
 let findGamesSort = "name";
+let findGamesGenre = "all";
 let findGamesTab = "search";
 let findSuggestedLoadedFor = "";
 let findSuggestedGames = [];
@@ -621,6 +624,17 @@ const FIND_GAMES_PLAYERS_CACHE_MAX = 6000;
 let findGamesResortTimer = null;
 let findGamesBatchSorting = false;
 let findGamesPlayersPersistTimer = null;
+const findGamesGenresCache = new Map();
+const findGamesGenresCacheTs = new Map();
+const findGamesGenresRequested = new Set();
+const findGamesGenresControllers = new Map();
+const findGamesGenresLimiter = createLimiter(3);
+let findGamesGenresBatchController = null;
+let findGamesGenresBatchKey = "";
+const FIND_GAMES_GENRES_BATCH_CONCURRENCY = 6;
+const FIND_GAMES_GENRES_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const FIND_GAMES_GENRES_CACHE_MAX = 6000;
+let findGamesGenresPersistTimer = null;
 let backlogItems = [];
 let backlogViewUser = "";
 const backlogProgressCache = new Map();
@@ -1350,6 +1364,27 @@ function loadFindGamesPlayersCache() {
   }
 }
 
+function loadFindGamesGenresCache() {
+  try {
+    const raw = localStorage.getItem(LS_FIND_GAMES_GENRES);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    const items = parsed?.items || {};
+    const now = Date.now();
+    for (const [id, entry] of Object.entries(items)) {
+      const genre = String(entry?.g || "").trim();
+      const ts = Number(entry?.t);
+      if (!genre || !Number.isFinite(ts)) continue;
+      if ((now - ts) > FIND_GAMES_GENRES_CACHE_TTL_MS) continue;
+      const key = String(id);
+      findGamesGenresCache.set(key, genre);
+      findGamesGenresCacheTs.set(key, ts);
+    }
+  } catch {
+    // ignore cache failures
+  }
+}
+
 function persistFindGamesPlayersCache() {
   try {
     const entries = [];
@@ -1369,6 +1404,25 @@ function persistFindGamesPlayersCache() {
   }
 }
 
+function persistFindGamesGenresCache() {
+  try {
+    const entries = [];
+    for (const [id, genre] of findGamesGenresCache.entries()) {
+      const ts = Number(findGamesGenresCacheTs.get(id)) || Date.now();
+      entries.push({ id: String(id), g: genre, t: ts });
+    }
+    entries.sort((a, b) => b.t - a.t);
+    const limited = entries.slice(0, FIND_GAMES_GENRES_CACHE_MAX);
+    const items = {};
+    for (const entry of limited) {
+      items[entry.id] = { g: entry.g, t: entry.t };
+    }
+    localStorage.setItem(LS_FIND_GAMES_GENRES, JSON.stringify({ v: 1, items }));
+  } catch {
+    // ignore cache failures
+  }
+}
+
 function scheduleFindGamesPlayersPersist() {
   if (findGamesPlayersPersistTimer) return;
   findGamesPlayersPersistTimer = setTimeout(() => {
@@ -1377,7 +1431,16 @@ function scheduleFindGamesPlayersPersist() {
   }, 500);
 }
 
+function scheduleFindGamesGenresPersist() {
+  if (findGamesGenresPersistTimer) return;
+  findGamesGenresPersistTimer = setTimeout(() => {
+    findGamesGenresPersistTimer = null;
+    persistFindGamesGenresCache();
+  }, 500);
+}
+
 loadFindGamesPlayersCache();
+loadFindGamesGenresCache();
 
 function cacheSet(key, data) {
   try {
@@ -2485,6 +2548,19 @@ async function fetchGamePlayersBatch(gameIds, signal) {
   return fetchJson(`/api/game-players-batch?ids=${encodeURIComponent(ids)}`, { signal, immediate: true });
 }
 
+async function fetchGameGenre(gameId, signal) {
+  return fetchJson(`/api/game-genre?gameId=${encodeURIComponent(gameId)}`, { signal, immediate: true });
+}
+
+async function fetchGameGenreRefresh(gameId, signal) {
+  return fetchJson(`/api/game-genre-refresh?gameId=${encodeURIComponent(gameId)}`, { signal });
+}
+
+async function fetchGameGenresBatch(gameIds, signal) {
+  const ids = Array.isArray(gameIds) ? gameIds.join(",") : "";
+  return fetchJson(`/api/game-genres-batch?ids=${encodeURIComponent(ids)}`, { signal, immediate: true });
+}
+
 async function fetchConsoles() {
   return fetchJson("/api/consoles");
 }
@@ -3240,7 +3316,7 @@ function ensureFindGamesReady() {
   if (findGamesSearchInput) {
     findGamesSearchInput.addEventListener("input", () => {
       findGamesQuery = findGamesSearchInput.value || "";
-      cancelFindGamesPlayersRequests();
+      cancelFindGamesMetaRequests();
       resetFindGamesVisibleCount();
       refreshFindGamesSearch();
     });
@@ -3249,7 +3325,14 @@ function ensureFindGamesReady() {
     findGamesSortSelect.value = findGamesSort;
     findGamesSortSelect.addEventListener("change", () => {
       findGamesSort = String(findGamesSortSelect.value || "name");
-      cancelFindGamesPlayersRequests();
+      cancelFindGamesMetaRequests();
+      resetFindGamesVisibleCount();
+      refreshFindGamesSearch();
+    });
+  }
+  if (findGamesGenreSelect) {
+    findGamesGenreSelect.addEventListener("change", () => {
+      findGamesGenre = String(findGamesGenreSelect.value || "all");
       resetFindGamesVisibleCount();
       refreshFindGamesSearch();
     });
@@ -4096,7 +4179,7 @@ function setFindGamesConsole(consoleId) {
   findGamesSelectedGameId = "";
   findGamesCache.clear();
   findGamesQuery = "";
-  cancelFindGamesPlayersRequests();
+  cancelFindGamesMetaRequests();
   resetFindGamesVisibleCount();
   if (findGamesSearchInput) findGamesSearchInput.value = "";
   if (findGamesAchievementsEl) {
@@ -4142,7 +4225,7 @@ function setFindGamesLetter(letter) {
   if (!letter) return;
   findGamesLetter = letter;
   updateFindGamesLetterButtons();
-  cancelFindGamesPlayersRequests();
+  cancelFindGamesMetaRequests();
   resetFindGamesVisibleCount();
   loadFindGamesLetter(letter);
 }
@@ -4168,6 +4251,13 @@ function setFindGamesPlayersCacheValue(gameId, players, { updateTile = true } = 
   scheduleFindGamesPlayersPersist();
 }
 
+function setFindGamesGenresCacheValue(gameId, genre) {
+  const key = String(gameId);
+  findGamesGenresCache.set(key, genre);
+  findGamesGenresCacheTs.set(key, Date.now());
+  scheduleFindGamesGenresPersist();
+}
+
 function scheduleFindGamesResort() {
   if (findGamesResortTimer) return;
   findGamesResortTimer = setTimeout(() => {
@@ -4178,6 +4268,11 @@ function scheduleFindGamesResort() {
 
 function resetFindGamesVisibleCount() {
   findGamesVisibleCount = FIND_GAMES_INITIAL_VISIBLE;
+}
+
+function cancelFindGamesMetaRequests() {
+  cancelFindGamesPlayersRequests();
+  cancelFindGamesGenresRequests();
 }
 
 function cancelFindGamesPlayersRequests() {
@@ -4193,6 +4288,19 @@ function cancelFindGamesPlayersRequests() {
   }
   findGamesPlayersBatchKey = "";
   findGamesPlayersBatchResolvedKey = "";
+}
+
+function cancelFindGamesGenresRequests() {
+  for (const controller of findGamesGenresControllers.values()) {
+    controller.abort();
+  }
+  findGamesGenresControllers.clear();
+  findGamesGenresRequested.clear();
+  if (findGamesGenresBatchController) {
+    findGamesGenresBatchController.abort();
+    findGamesGenresBatchController = null;
+  }
+  findGamesGenresBatchKey = "";
 }
 
 function queueFindGamesPlayersRefresh(gameId, { force = false } = {}) {
@@ -4288,6 +4396,111 @@ function requestFindGamesPlayersBatch(gameIds) {
   })();
 }
 
+function normalizeGenreValue(value) {
+  const raw = String(value || "").trim();
+  return raw || "Unknown";
+}
+
+function getFindGamesGenreValue(game) {
+  const key = String(game?.gameId ?? "");
+  if (!key) return "Unknown";
+  const cached = findGamesGenresCache.get(key);
+  return normalizeGenreValue(cached);
+}
+
+function updateFindGamesGenreOptions(genres) {
+  if (!findGamesGenreSelect) return;
+  const list = Array.from(new Set(genres.map(normalizeGenreValue)));
+  list.sort((a, b) => a.localeCompare(b));
+  const options = ["All genres", ...list];
+  const values = ["all", ...list];
+  const current = values.includes(findGamesGenre) ? findGamesGenre : "all";
+  findGamesGenre = current;
+  findGamesGenreSelect.innerHTML = "";
+  for (let i = 0; i < options.length; i += 1) {
+    const option = document.createElement("option");
+    option.value = values[i];
+    option.textContent = options[i];
+    findGamesGenreSelect.appendChild(option);
+  }
+  findGamesGenreSelect.value = current;
+}
+
+function queueFindGamesGenreRefresh(gameId, { force = false } = {}) {
+  const key = String(gameId || "");
+  if (!key) return;
+  if (!force && findGamesGenresCache.has(key)) return;
+  if (findGamesGenresRequested.has(key)) return;
+  findGamesGenresRequested.add(key);
+  const controller = new AbortController();
+  findGamesGenresControllers.set(key, controller);
+  findGamesGenresLimiter(async () => {
+    try {
+      if (controller.signal.aborted) return;
+      const data = await fetchGameGenreRefresh(key, controller.signal);
+      const genre = normalizeGenreValue(data?.genre);
+      if (genre && genre !== "Unknown") {
+        setFindGamesGenresCacheValue(key, genre);
+      }
+    } catch (err) {
+      if (err?.name === "AbortError") return;
+    } finally {
+      findGamesGenresRequested.delete(key);
+      findGamesGenresControllers.delete(key);
+    }
+  });
+}
+
+function requestFindGamesGenresBatch(gameIds) {
+  const ids = Array.isArray(gameIds) ? gameIds.filter(Boolean) : [];
+  if (!ids.length) return;
+  const key = buildPlayersBatchKey(ids);
+  if (findGamesGenresBatchController) {
+    if (key === findGamesGenresBatchKey) return;
+    findGamesGenresBatchController.abort();
+  }
+  const controller = new AbortController();
+  findGamesGenresBatchController = controller;
+  findGamesGenresBatchKey = key;
+  const chunkSize = 100;
+  const chunks = [];
+  for (let i = 0; i < ids.length; i += chunkSize) {
+    chunks.push(ids.slice(i, i + chunkSize));
+  }
+  (async () => {
+    try {
+      const batchLimiter = createLimiter(FIND_GAMES_GENRES_BATCH_CONCURRENCY);
+      let didUpdate = false;
+      await Promise.all(chunks.map(chunk => batchLimiter(async () => {
+        if (controller.signal.aborted) return;
+        const data = await fetchGameGenresBatch(chunk, controller.signal);
+        const results = Array.isArray(data?.results) ? data.results : [];
+        for (const row of results) {
+          const gid = String(row?.gameId ?? "");
+          if (!gid) continue;
+          const genre = normalizeGenreValue(row?.genre);
+          if (genre && genre !== "Unknown") {
+            setFindGamesGenresCacheValue(gid, genre);
+            didUpdate = true;
+          }
+          if (row?.stale || !row?.genre) {
+            queueFindGamesGenreRefresh(gid, { force: true });
+          }
+        }
+      })));
+      if (!controller.signal.aborted && didUpdate && findGamesSort === "genre") {
+        scheduleFindGamesResort();
+      }
+    } catch (err) {
+      if (err?.name === "AbortError") return;
+    } finally {
+      if (findGamesGenresBatchController === controller) {
+        findGamesGenresBatchController = null;
+      }
+    }
+  })();
+}
+
 function getFindGamesPlayersValue(game) {
   const cached = findGamesPlayersCache.get(String(game?.gameId ?? ""));
   const raw = cached ?? game?.numDistinctPlayers ?? game?.numPlayers;
@@ -4348,6 +4561,15 @@ function renderFindGamesList(games) {
       .map(g => ({ game: g, score: scoreFindGame(g.title, query) }))
       .filter(row => row.score !== null)
       .map(row => row.game);
+  }
+  if (findGamesGenreSelect) {
+    const ids = filtered.map(g => String(g.gameId ?? ""));
+    requestFindGamesGenresBatch(ids);
+    const genres = filtered.map(g => getFindGamesGenreValue(g));
+    updateFindGamesGenreOptions(genres);
+    if (findGamesGenre !== "all") {
+      filtered = filtered.filter(g => getFindGamesGenreValue(g) === findGamesGenre);
+    }
   }
   if (!filtered.length) {
     const label = query ? "No games match your search." : "No games found for this letter.";
