@@ -27,5 +27,6 @@ This repository is a single Node/Express server (`server.js`) with a vanilla JS 
   - `scripts/recompute-levels.cjs` recalculates user levels from RA totals; requires `RA_API_KEY` and `DATABASE_URL`.
 - Git hygiene:
   - `commit-and-push.bat` is ignored via `.gitignore`.
+.
 
 If you add new local DB endpoints, consider whether they should bypass the client queue. If you add RA-backed endpoints, keep them queued and cached to avoid rate limits. 
