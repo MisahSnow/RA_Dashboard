@@ -3307,6 +3307,12 @@ tbody tr:nth-child(even){
   font-size: 14px;
 }
 
+.socialPostCaption a {
+  color: var(--accent-2);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .socialReactions{
   display: flex;
   align-items: center;

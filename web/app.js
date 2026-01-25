@@ -1015,6 +1015,22 @@ function filterSocialPosts(posts, filter) {
   });
 }
 
+function escapeHtml(text) {
+  return String(text || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function linkifyText(text) {
+  const escaped = escapeHtml(text);
+  return escaped.replace(/https?:\/\/[^\s<]+/g, (url) => {
+    return `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`;
+  });
+}
+
 function extractYouTubeId(text) {
   const raw = String(text || "");
   const urls = raw.match(/https?:\/\/\S+/g);
@@ -1182,7 +1198,7 @@ function renderSocialPosts(posts = socialPosts, targetEl = socialPostListEl, { s
     if (!isAuto && !isAchievementPost && post?.caption) {
       const caption = document.createElement("p");
       caption.className = "socialPostCaption";
-      caption.textContent = post.caption;
+      caption.innerHTML = linkifyText(post.caption);
       card.append(caption);
     }
     const videoId = extractYouTubeId(post?.caption);
