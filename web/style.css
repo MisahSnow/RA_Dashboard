@@ -1,5 +1,6 @@
-@import url("https://fonts.googleapis.com/css2?family=Oxanium:wght@400;600&family=Orbitron:wght@500;700&family=Press+Start+2P&family=Space+Grotesk:wght@500;700&family=JetBrains+Mono:wght@400;600&display=swap");
+﻿@import url("https://fonts.googleapis.com/css2?family=Oxanium:wght@400;600&family=Orbitron:wght@500;700&family=Press+Start+2P&family=Space+Grotesk:wght@500;700&family=JetBrains+Mono:wght@400;600&display=swap");
 
+/* Global theme variables and base styles */
 :root {
   --bg-1: #0a0418;
   --bg-2: #160b33;
@@ -93,6 +94,7 @@ body::after{
 
 .wrap { max-width: 1440px; width: 100%; margin: 0 auto; flex: 1; position: relative; }
 
+/* Responsive adjustments */
 @media (max-width: 1920px) and (min-width: 1100px) {
   .wrap {
     transform: scale(0.85);
@@ -101,6 +103,7 @@ body::after{
   }
 }
 
+/* Layout shell */
 .layout{
   display:flex;
   gap:16px;
@@ -136,7 +139,8 @@ body::after{
 }
 
 @media (max-width: 980px){
-  .layout{
+  /* Layout shell */
+.layout{
     flex-direction:column;
   }
   .presenceBar{
@@ -145,6 +149,7 @@ body::after{
   }
 }
 
+/* Header area */
 .panelHeader{
   display:flex;
   align-items:flex-start;
@@ -764,6 +769,7 @@ h1 {
 label { color: var(--ink-muted); font-size: 12px; }
 label.tiny{ font-size:11px; color:#8fa0bd; }
 
+/* Form controls */
 input, button, select, textarea {
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
@@ -840,6 +846,7 @@ button:hover {
   display:none;
 }
 
+/* Modal overlays */
 .modal{
   position: fixed;
   inset: 0;
@@ -1677,6 +1684,11 @@ tbody tr:nth-child(even){
   background:#090f1e;
 }
 
+.tileImgWrap{
+  position: relative;
+  width: 100%;
+}
+
 .completionBadge{
   position:absolute;
   top:8px;
@@ -1715,6 +1727,24 @@ tbody tr:nth-child(even){
   font-size:12px;
   color: var(--ink-muted);
   white-space: pre-line;
+}
+
+.consoleMeta{
+  font-weight: 700;
+}
+
+.findGamesGrid .playersMeta{
+  position: absolute;
+  right: 6px;
+  bottom: 11px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink);
+  background: rgba(9, 15, 30, 0.85);
+  border: 1px solid rgba(59, 47, 95, 0.6);
+  border-radius: 999px;
+  padding: 2px 6px;
+  pointer-events: none;
 }
 
 .progressLine{
@@ -2798,6 +2828,7 @@ tbody tr:nth-child(even){
   box-shadow: 0 0 0 1px rgba(0, 245, 212, 0.35), 0 0 12px rgba(0, 245, 212, 0.2);
 }
 
+/* Social page layout */
 .socialLayout {
   display: grid;
   grid-template-columns: minmax(0, 2.2fr) minmax(240px, 0.9fr);
@@ -3329,8 +3360,10 @@ tbody tr:nth-child(even){
 }
 
 @media (max-width: 980px) {
-  .socialLayout {
+  /* Social page layout */
+.socialLayout {
     grid-template-columns: 1fr;
   }
 }
+
 

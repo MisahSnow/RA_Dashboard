@@ -1,9 +1,11 @@
-﻿function safeText(v){ return (v === null || v === undefined) ? "" : String(v); }
+﻿// RetroRivals client logic: UI state, API calls, and rendering helpers.
+function safeText(v){ return (v === null || v === undefined) ? "" : String(v); }
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+// Client-side request queues to avoid flooding the API.
 const CLIENT_REQUEST_INTERVAL_MS = 10;
 const CLIENT_MAX_CONCURRENT = 4;
 const clientRequestQueue = [];
@@ -26,8 +28,22 @@ function updateQueueCounter() {
   }
 }
 
+function createAbortError() {
+  try {
+    return new DOMException("Aborted", "AbortError");
+  } catch {
+    const err = new Error("Aborted");
+    err.name = "AbortError";
+    return err;
+  }
+}
+
 function enqueueClientFetch(url, options) {
   return new Promise((resolve, reject) => {
+    if (options?.signal?.aborted) {
+      reject(createAbortError());
+      return;
+    }
     clientRequestQueue.push({ url, options, resolve, reject, page: activePageName });
     updateQueueCounter();
     logApiQueueEvent(url, options);
@@ -37,6 +53,10 @@ function enqueueClientFetch(url, options) {
 
 function enqueueFastFetch(url, options) {
   return new Promise((resolve, reject) => {
+    if (options?.signal?.aborted) {
+      reject(createAbortError());
+      return;
+    }
     fastRequestQueue.push({ url, options, resolve, reject, page: activePageName });
     updateQueueCounter();
     logApiQueueEvent(url, options);
@@ -74,6 +94,10 @@ function processClientQueue() {
   clientQueueActive += 1;
   lastClientRequestAt = Date.now();
   (async () => {
+    if (job.options?.signal?.aborted) {
+      job.reject(createAbortError());
+      return;
+    }
     const res = await fetch(job.url, job.options);
     logApiQueueEvent(job.url, job.options, res.status);
     if (res.status === 429 && (job.retries || 0) < 3) {
@@ -111,6 +135,10 @@ function processFastQueue() {
   fastQueueActive += 1;
   lastFastRequestAt = Date.now();
   (async () => {
+    if (job.options?.signal?.aborted) {
+      job.reject(createAbortError());
+      return;
+    }
     const res = await fetch(job.url, job.options);
     logApiQueueEvent(job.url, job.options, res.status);
     const shouldRetry = (res.status === 429 || res.status === 423 || res.status === 503 || res.status === 504);
@@ -131,6 +159,7 @@ function processFastQueue() {
   processFastQueue();
 }
 
+// LocalStorage keys for user settings and cached data.
 const LS_API_KEY = "ra.apiKey";
 const LS_USE_API_KEY = "ra.useApiKey";
 const LS_CACHE_PREFIX = "ra.cache.";
@@ -151,6 +180,7 @@ let leaderboardRange = ["daily", "weekly", "monthly"].includes(storedLeaderboard
   : "monthly";
 let activeChart = "daily";
 
+// Core UI elements (settings, tabs, lists, modals).
 const meInput = document.getElementById("meInput");
 const apiKeyInput = document.getElementById("apiKeyInput");
 const friendInput = document.getElementById("friendInput");
@@ -221,6 +251,8 @@ const findGamesLoadingEl = document.getElementById("findGamesLoading");
 const gameLetterBarEl = document.getElementById("gameLetterBar");
 const findGamesConsoleSelect = document.getElementById("findGamesConsole");
 const findGamesSearchInput = document.getElementById("findGamesSearch");
+const findGamesSortSelect = document.getElementById("findGamesSort");
+const findGamesShowMoreBtn = document.getElementById("findGamesShowMoreBtn");
 const imageModal = document.getElementById("imageModal");
 const imageModalImg = document.getElementById("imageModalImg");
 const imageModalCloseBtn = document.getElementById("imageModalCloseBtn");
@@ -280,6 +312,7 @@ const socialTrendingTooltip = document.getElementById("socialTrendingTooltip");
 const socialFiltersEl = document.querySelector(".socialFilters");
 const socialFilterButtons = document.querySelectorAll(".socialFilters .filterPill");
 
+// Debug UI: queue counters and logging.
 if (apiQueueCounterEl) {
   apiQueueCounterEl.textContent = "API Calls in Queue: 0";
 }
@@ -363,6 +396,7 @@ function applyDebugUiState() {
   }
 }
 
+// Settings modal and toggles.
 const settingsBtn = document.getElementById("settingsBtn");
 const settingsModal = document.getElementById("settingsModal");
 const settingsSaveBtn = document.getElementById("settingsSaveBtn");
@@ -371,6 +405,7 @@ const settingsCancelBtn = document.getElementById("settingsCancelBtn");
 const useApiKeyToggle = document.getElementById("useApiKeyToggle");
 const debugUiToggle = document.getElementById("debugUiToggle");
 
+// Dashboard lists and loading states.
 const recentAchievementsEl = document.getElementById("recentAchievements");
 const recentTimesEl = document.getElementById("recentTimes");
 const recentGamesEl = document.getElementById("recentGames");
@@ -383,6 +418,7 @@ const compareLoadingEl = document.getElementById("compareLoading");
 const recentAchievementsLoadingEl = document.getElementById("recentAchievementsLoading");
 const recentTimesLoadingEl = document.getElementById("recentTimesLoading");
 
+// Profile and comparison panels.
 const profilePanel = document.getElementById("profilePanel");
 const profileTitleNameEl = document.getElementById("profileTitleName");
 const profileSummaryEl = document.getElementById("profileSummary");
@@ -409,6 +445,7 @@ const selfGameMetaEl = document.getElementById("selfGameMeta");
 const selfGameAchievementsEl = document.getElementById("selfGameAchievements");
 const selfGameBackBtn = document.getElementById("selfGameBackBtn");
 
+// Challenge UI elements and modals.
 const challengesLoadingEl = document.getElementById("challengesLoading");
 const challengeOpponentInput = document.getElementById("challengeOpponent");
 const challengeTypeSelect = document.getElementById("challengeType");
@@ -438,12 +475,14 @@ const scoreAttackTabButtons = document.querySelectorAll(".scoreAttackTabBtn");
 const scoreAttackGamesSearch = document.getElementById("scoreAttackGamesSearch");
 const scoreAttackBoardsSearch = document.getElementById("scoreAttackBoardsSearch");
 
+// Shared tab widgets.
 const compareTabButtons = document.querySelectorAll(".compareTabBtn");
 const compareTabPanels = document.querySelectorAll(".compareTabPanel");
 
 const tabButtons = document.querySelectorAll(".tabBtn");
 const tabPanels = document.querySelectorAll(".tabPanel");
 
+// Profile state and pagination.
 let currentProfileUser = "";
 let profileLoadToken = 0;
 let activeProfileLoadToken = 0;
@@ -556,11 +595,25 @@ const findGamesCache = new Map();
 let findGamesInitialized = false;
 let findGamesConsoleId = "";
 let findGamesQuery = "";
+let findGamesSort = "name";
 let findGamesTab = "search";
 let findSuggestedLoadedFor = "";
 let findSuggestedGames = [];
 let findSuggestedSelectedGameId = "";
 let findGamesConsolesCache = [];
+const findGamesPlayersCache = new Map();
+const findGamesPlayersRequested = new Set();
+const findGamesPlayersControllers = new Map();
+const findGamesPlayersLimiter = createLimiter(3);
+let findGamesPlayersBatch = 0;
+let findGamesPlayersBatchController = null;
+let findGamesPlayersBatchKey = "";
+const FIND_GAMES_INITIAL_VISIBLE = 200;
+const FIND_GAMES_SHOW_MORE_STEP = 100;
+let findGamesVisibleCount = FIND_GAMES_INITIAL_VISIBLE;
+const FIND_GAMES_PLAYERS_FETCH_LIMIT = Infinity;
+let findGamesResortTimer = null;
+let findGamesBatchSorting = false;
 let backlogItems = [];
 let backlogViewUser = "";
 const backlogProgressCache = new Map();
@@ -713,6 +766,7 @@ async function ensureSocialGameSuggestions() {
   }
 }
 
+// --- Rendering helpers ---
 function renderSocialGameResults(query) {
   if (!socialGameResultsEl) return;
   const q = (query || "").trim().toLowerCase();
@@ -1786,11 +1840,13 @@ function startPresence() {
 
 window.addEventListener("pagehide", sendPresenceRemove);
 
-async function fetchJson(url, { silent = false } = {}) {
+async function fetchJson(url, { silent = false, signal = null, immediate = false } = {}) {
   const apiKey = (apiKeyInput?.value || "").trim();
   const useApiKey = !!useApiKeyToggle?.checked;
   const headers = (useApiKey && apiKey) ? { "x-ra-api-key": apiKey } : {};
-  const res = await enqueueClientFetch(url, { headers });
+  const options = { headers };
+  if (signal) options.signal = signal;
+  const res = immediate ? await fetch(url, options) : await enqueueClientFetch(url, options);
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(text || `Request failed: ${res.status}`);
@@ -1942,6 +1998,7 @@ async function renderSocialTrendingGames() {
   socialTrendingPlayers = playersByGame;
 }
 
+// --- API helpers (client <-> server) ---
 async function fetchDaily(username) {
   return fetchJson(`/api/daily/${encodeURIComponent(username)}`);
 }
@@ -2358,6 +2415,19 @@ async function fetchGameAchievementsBasic(gameId) {
   return fetchJson(`/api/game-achievements-basic/${encodeURIComponent(gameId)}`);
 }
 
+async function fetchGamePlayers(gameId, signal) {
+  return fetchJson(`/api/game-players?gameId=${encodeURIComponent(gameId)}`, { signal, immediate: true });
+}
+
+async function fetchGamePlayersRefresh(gameId, signal) {
+  return fetchJson(`/api/game-players-refresh?gameId=${encodeURIComponent(gameId)}`, { signal });
+}
+
+async function fetchGamePlayersBatch(gameIds, signal) {
+  const ids = Array.isArray(gameIds) ? gameIds.join(",") : "";
+  return fetchJson(`/api/game-players-batch?ids=${encodeURIComponent(ids)}`, { signal, immediate: true });
+}
+
 async function fetchConsoles() {
   return fetchJson("/api/consoles");
 }
@@ -2442,6 +2512,7 @@ async function removeFriendFromServer(username) {
   });
 }
 
+// Lightweight UI helpers.
 function setStatus(msg) {
   const text = msg || "";
   const lowered = text.toLowerCase();
@@ -2456,6 +2527,7 @@ function setLoading(el, isLoading) {
   el.hidden = !isLoading;
 }
 
+// Formatting helpers.
 function formatCountdown(ms) {
   const total = Math.max(0, Math.ceil(ms / 1000));
   const m = Math.floor(total / 60);
@@ -2463,6 +2535,7 @@ function formatCountdown(ms) {
   return `${m}:${s}`;
 }
 
+// Auto-refresh countdown display.
 function setNextRefresh(delayMs = AUTO_REFRESH_MS) {
   nextRefreshAt = Date.now() + delayMs;
 }
@@ -2787,7 +2860,7 @@ function renderNotifications(list = []) {
     row.innerHTML = `
       <div class="notifRow">
         <span class="notifTag ${item.read_at ? "read" : "unread"}">${statusLabel}</span>
-        <button class="notifDeleteBtn" type="button" data-id="${safeText(item.id)}" aria-label="Delete notification">×</button>
+        <button class="notifDeleteBtn" type="button" data-id="${safeText(item.id)}" aria-label="Delete notification">�</button>
       </div>
       <div class="notifMessage">${safeText(message)}</div>
       <div class="notifMeta">${time ? safeText(time) : ""}</div>
@@ -3110,6 +3183,23 @@ function ensureFindGamesReady() {
   if (findGamesSearchInput) {
     findGamesSearchInput.addEventListener("input", () => {
       findGamesQuery = findGamesSearchInput.value || "";
+      cancelFindGamesPlayersRequests();
+      resetFindGamesVisibleCount();
+      refreshFindGamesSearch();
+    });
+  }
+  if (findGamesSortSelect) {
+    findGamesSortSelect.value = findGamesSort;
+    findGamesSortSelect.addEventListener("change", () => {
+      findGamesSort = String(findGamesSortSelect.value || "name");
+      cancelFindGamesPlayersRequests();
+      resetFindGamesVisibleCount();
+      refreshFindGamesSearch();
+    });
+  }
+  if (findGamesShowMoreBtn) {
+    findGamesShowMoreBtn.addEventListener("click", () => {
+      findGamesVisibleCount += FIND_GAMES_SHOW_MORE_STEP;
       refreshFindGamesSearch();
     });
   }
@@ -3547,7 +3637,7 @@ function setFindGamesTab(name) {
 function seriesInfoFromTitle(title) {
   const raw = String(title || "").trim();
   if (!raw) return null;
-  const base = raw.split(/\s*[:\-–—]\s*/)[0];
+  const base = raw.split(/\s*[:\-��]\s*/)[0];
   const cleaned = base.replace(/\s*[\(\[].*?[\)\]]\s*/g, "").trim();
   if (!cleaned) return null;
   const stripped = cleaned.replace(/\s+(?:\d+|[ivxlcdm]+)$/i, "").trim();
@@ -3845,11 +3935,19 @@ function renderSuggestedGames(games) {
     const pts = Number(g.points ?? 0);
     pointsLine.textContent = Number.isFinite(pts) ? `${pts} points` : "";
 
+    const playersLine = document.createElement("div");
+    playersLine.className = "tileMeta";
+    const players = Number(g.numDistinctPlayers ?? g.numPlayers ?? 0);
+    playersLine.textContent = Number.isFinite(players) && players > 0
+      ? `${players} player${players === 1 ? "" : "s"}`
+      : "";
+
     tile.appendChild(img);
     tile.appendChild(title);
     if (consoleLine.textContent) tile.appendChild(consoleLine);
     if (achievementsLine.textContent) tile.appendChild(achievementsLine);
     if (pointsLine.textContent) tile.appendChild(pointsLine);
+    if (playersLine.textContent) tile.appendChild(playersLine);
     const actions = document.createElement("div");
     actions.className = "tileActions";
     const addBtn = document.createElement("button");
@@ -3900,6 +3998,10 @@ async function loadFindGamesConsoles() {
     findGamesConsolesCache = list;
     const stored = localStorage.getItem(LS_FIND_GAMES_CONSOLE) || "";
     findGamesConsoleSelect.innerHTML = "";
+    const allOption = document.createElement("option");
+    allOption.value = "all";
+    allOption.textContent = "All";
+    findGamesConsoleSelect.appendChild(allOption);
     const groups = sortConsolesByMaker(list);
     for (const [maker, items] of groups) {
       const optgroup = document.createElement("optgroup");
@@ -3912,9 +4014,11 @@ async function loadFindGamesConsoles() {
       }
       findGamesConsoleSelect.appendChild(optgroup);
     }
-    const initial = list.some(c => String(c.id ?? c.consoleId) === stored)
+    const initial = stored === "all"
       ? stored
-      : String(list[0].id ?? list[0].consoleId ?? "");
+      : (list.some(c => String(c.id ?? c.consoleId) === stored)
+        ? stored
+        : String(list[0].id ?? list[0].consoleId ?? ""));
     if (initial) {
       findGamesConsoleSelect.value = initial;
       setFindGamesConsole(initial);
@@ -3935,6 +4039,8 @@ function setFindGamesConsole(consoleId) {
   findGamesSelectedGameId = "";
   findGamesCache.clear();
   findGamesQuery = "";
+  cancelFindGamesPlayersRequests();
+  resetFindGamesVisibleCount();
   if (findGamesSearchInput) findGamesSearchInput.value = "";
   if (findGamesAchievementsEl) {
     findGamesAchievementsEl.innerHTML = `<div class="meta">Select a game to see achievements.</div>`;
@@ -3946,7 +4052,7 @@ function setFindGamesConsole(consoleId) {
 
 function buildFindGamesLetters() {
   if (!gameLetterBarEl) return;
-  const letters = ["0-9"];
+  const letters = ["all", "0-9"];
   for (let code = 65; code <= 90; code += 1) {
     letters.push(String.fromCharCode(code));
   }
@@ -3955,7 +4061,7 @@ function buildFindGamesLetters() {
     const btn = document.createElement("button");
     btn.className = "smallBtn letterBtn";
     btn.type = "button";
-    btn.textContent = letter;
+    btn.textContent = letter === "all" ? "All" : letter;
     btn.setAttribute("role", "tab");
     btn.setAttribute("aria-selected", letter === findGamesLetter ? "true" : "false");
     btn.dataset.letter = letter;
@@ -3979,7 +4085,167 @@ function setFindGamesLetter(letter) {
   if (!letter) return;
   findGamesLetter = letter;
   updateFindGamesLetterButtons();
+  cancelFindGamesPlayersRequests();
+  resetFindGamesVisibleCount();
   loadFindGamesLetter(letter);
+}
+
+function updateFindGamesTilePlayers(gameId, players) {
+  if (!findGamesListEl) return;
+  const tile = findGamesListEl.querySelector(`[data-game-id="${gameId}"]`);
+  if (!tile) return;
+  const playersLine = tile.querySelector(".playersMeta");
+  if (!playersLine) return;
+  playersLine.textContent = `${players} player${players === 1 ? "" : "s"}`;
+  playersLine.hidden = false;
+  if (findGamesSort === "players" && !findGamesBatchSorting) {
+    scheduleFindGamesResort();
+  }
+}
+
+function scheduleFindGamesResort() {
+  if (findGamesResortTimer) return;
+  findGamesResortTimer = setTimeout(() => {
+    findGamesResortTimer = null;
+    refreshFindGamesSearch();
+  }, 120);
+}
+
+function resetFindGamesVisibleCount() {
+  findGamesVisibleCount = FIND_GAMES_INITIAL_VISIBLE;
+}
+
+function cancelFindGamesPlayersRequests() {
+  findGamesPlayersBatch += 1;
+  for (const controller of findGamesPlayersControllers.values()) {
+    controller.abort();
+  }
+  findGamesPlayersControllers.clear();
+  findGamesPlayersRequested.clear();
+  if (findGamesPlayersBatchController) {
+    findGamesPlayersBatchController.abort();
+    findGamesPlayersBatchController = null;
+  }
+  findGamesPlayersBatchKey = "";
+}
+
+function queueFindGamesPlayersRefresh(gameId, { force = false } = {}) {
+  const key = String(gameId || "");
+  if (!key) return;
+  if (!force && findGamesPlayersCache.has(key)) return;
+  if (findGamesPlayersRequested.has(key)) return;
+  findGamesPlayersRequested.add(key);
+  const controller = new AbortController();
+  const batch = findGamesPlayersBatch;
+  findGamesPlayersControllers.set(key, controller);
+  findGamesPlayersLimiter(async () => {
+    try {
+      if (controller.signal.aborted) return;
+      const data = await fetchGamePlayersRefresh(key, controller.signal);
+      if (batch !== findGamesPlayersBatch) return;
+      const players = Number(data?.numDistinctPlayers ?? data?.players ?? 0);
+      if (Number.isFinite(players) && players > 0) {
+        findGamesPlayersCache.set(key, players);
+        updateFindGamesTilePlayers(key, players);
+      }
+    } catch (err) {
+      if (err?.name === "AbortError") return;
+      // ignore failures; will retry on next search
+    } finally {
+      findGamesPlayersRequested.delete(key);
+      findGamesPlayersControllers.delete(key);
+    }
+  });
+}
+
+function requestFindGamesPlayersBatch(gameIds) {
+  const ids = Array.isArray(gameIds) ? gameIds.filter(Boolean) : [];
+  if (!ids.length) return;
+  const key = ids.join(",");
+  if (findGamesPlayersBatchController) {
+    if (key === findGamesPlayersBatchKey) return;
+    findGamesPlayersBatchController.abort();
+  }
+  const controller = new AbortController();
+  findGamesPlayersBatchController = controller;
+  findGamesPlayersBatchKey = key;
+  findGamesBatchSorting = findGamesSort === "players";
+  const batch = findGamesPlayersBatch;
+  const chunkSize = 100;
+  const chunks = [];
+  for (let i = 0; i < ids.length; i += chunkSize) {
+    chunks.push(ids.slice(i, i + chunkSize));
+  }
+  (async () => {
+    try {
+      const seen = new Set();
+      let didUpdate = false;
+      for (const chunk of chunks) {
+        const data = await fetchGamePlayersBatch(chunk, controller.signal);
+        if (batch !== findGamesPlayersBatch) return;
+        const results = Array.isArray(data?.results) ? data.results : [];
+        for (const row of results) {
+          const gid = String(row?.gameId ?? "");
+          if (!gid) continue;
+          seen.add(gid);
+          const players = Number(row?.numDistinctPlayers ?? row?.players ?? 0);
+          if (Number.isFinite(players) && players > 0) {
+            findGamesPlayersCache.set(gid, players);
+            updateFindGamesTilePlayers(gid, players);
+            didUpdate = true;
+          }
+          if (row?.stale || !Number.isFinite(players) || players <= 0) {
+            queueFindGamesPlayersRefresh(gid, { force: true });
+          }
+        }
+        if (controller.signal.aborted) return;
+      }
+      for (const gid of ids) {
+        if (controller.signal.aborted) return;
+        if (!seen.has(gid)) {
+          queueFindGamesPlayersRefresh(gid, { force: true });
+        }
+      }
+      if (findGamesSort === "players" && didUpdate) {
+        scheduleFindGamesResort();
+      }
+    } catch (err) {
+      if (err?.name === "AbortError") return;
+    } finally {
+      findGamesBatchSorting = false;
+    }
+  })();
+}
+
+function getFindGamesPlayersValue(game) {
+  const cached = findGamesPlayersCache.get(String(game?.gameId ?? ""));
+  const raw = cached ?? game?.numDistinctPlayers ?? game?.numPlayers;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : -1;
+}
+
+function sortFindGamesList(games) {
+  const sorted = games.slice();
+  if (findGamesSort === "players") {
+    sorted.sort((a, b) => {
+      const av = getFindGamesPlayersValue(a);
+      const bv = getFindGamesPlayersValue(b);
+      if (bv !== av) return bv - av;
+      return String(a?.title || "").localeCompare(String(b?.title || ""));
+    });
+    return sorted;
+  }
+  if (findGamesSort === "points") {
+    sorted.sort((a, b) => {
+      const av = Number(a?.points ?? 0);
+      const bv = Number(b?.points ?? 0);
+      if (Number.isFinite(bv) && Number.isFinite(av) && bv !== av) return bv - av;
+      return String(a?.title || "").localeCompare(String(b?.title || ""));
+    });
+    return sorted;
+  }
+  sorted.sort((a, b) => String(a?.title || "").localeCompare(String(b?.title || "")));
+  return sorted;
 }
 
 function renderFindGamesList(games) {
@@ -3991,25 +4257,33 @@ function renderFindGamesList(games) {
     filtered = games
       .map(g => ({ game: g, score: scoreFindGame(g.title, query) }))
       .filter(row => row.score !== null)
-      .sort((a, b) => {
-        if (a.score !== b.score) return a.score - b.score;
-        return String(a.game.title || "").localeCompare(String(b.game.title || ""));
-      })
       .map(row => row.game);
   }
+  filtered = sortFindGamesList(filtered);
   if (!filtered.length) {
     const label = query ? "No games match your search." : "No games found for this letter.";
     findGamesListEl.innerHTML = `<div class="meta">${label}</div>`;
+    if (findGamesShowMoreBtn) findGamesShowMoreBtn.hidden = true;
     return;
   }
+  const visibleGames = filtered.slice(0, findGamesVisibleCount);
   const frag = document.createDocumentFragment();
   const inBacklog = new Set(backlogItems.map(item => String(item.gameId)));
-  for (const game of filtered) {
+  const shouldHydratePlayers = !!query || (!query && !!findGamesLetter);
+  const isPlayersSort = findGamesSort === "players";
+  const hydrateSource = isPlayersSort ? filtered : visibleGames;
+  const hydrateList = shouldHydratePlayers
+    ? hydrateSource.slice(0, FIND_GAMES_PLAYERS_FETCH_LIMIT).map(g => String(g.gameId ?? ""))
+    : [];
+  const hydrateTargets = new Set(hydrateList);
+  for (const game of visibleGames) {
+    const gameId = String(game.gameId ?? "");
+    const shouldHydrate = shouldHydratePlayers && hydrateTargets.has(gameId);
     const tile = document.createElement("div");
     tile.className = "tile clickable";
     tile.setAttribute("role", "button");
     tile.tabIndex = 0;
-    tile.dataset.gameId = String(game.gameId ?? "");
+    tile.dataset.gameId = gameId;
     tile.dataset.title = game.title || "";
     tile.dataset.console = game.consoleName || "";
     tile.dataset.image = game.imageIcon || "";
@@ -4019,6 +4293,8 @@ function renderFindGamesList(games) {
       tile.classList.add("selected");
     }
 
+    const imgWrap = document.createElement("div");
+    imgWrap.className = "tileImgWrap";
     const img = document.createElement("img");
     img.src = iconUrl(game.imageIcon);
     img.alt = safeText(game.title || "game");
@@ -4027,6 +4303,19 @@ function renderFindGamesList(games) {
     const title = document.createElement("div");
     title.className = "tileTitle";
     title.textContent = game.title || `Game ${safeText(game.gameId)}`;
+
+    const consoleLine = document.createElement("div");
+    consoleLine.className = "tileMeta consoleMeta";
+    consoleLine.textContent = game.consoleName || "";
+
+    const playersLine = document.createElement("div");
+    playersLine.className = "tileMeta playersMeta";
+    const cachedPlayers = findGamesPlayersCache.get(gameId);
+    const rawPlayers = cachedPlayers ?? game.numDistinctPlayers ?? game.numPlayers;
+    const players = Number(rawPlayers);
+    playersLine.textContent = Number.isFinite(players) && players > 0
+      ? `${players} player${players === 1 ? "" : "s"}`
+      : "";
 
     const meta = document.createElement("div");
     meta.className = "tileMeta";
@@ -4037,8 +4326,16 @@ function renderFindGamesList(games) {
     if (Number.isFinite(pts)) parts.push(`${pts} points`);
     meta.textContent = parts.join("\n");
 
-    tile.appendChild(img);
+    imgWrap.appendChild(img);
+    if (playersLine.textContent || shouldHydrate) {
+      playersLine.hidden = !playersLine.textContent;
+      imgWrap.appendChild(playersLine);
+    }
+    tile.appendChild(imgWrap);
     tile.appendChild(title);
+    if (findGamesConsoleId === "all" && consoleLine.textContent) {
+      tile.appendChild(consoleLine);
+    }
     tile.appendChild(meta);
     const actions = document.createElement("div");
     actions.className = "tileActions";
@@ -4053,6 +4350,17 @@ function renderFindGamesList(games) {
     frag.appendChild(tile);
   }
   findGamesListEl.appendChild(frag);
+  if (findGamesShowMoreBtn) {
+    const remaining = filtered.length - visibleGames.length;
+    findGamesShowMoreBtn.hidden = remaining <= 0;
+    if (remaining > 0) {
+      const nextCount = Math.min(FIND_GAMES_SHOW_MORE_STEP, remaining);
+      findGamesShowMoreBtn.textContent = `Show more (${nextCount})`;
+    }
+  }
+  if (shouldHydratePlayers) {
+    requestFindGamesPlayersBatch(hydrateList);
+  }
 }
 
 function renderFindGameAchievements(payload, targetEl = findGamesAchievementsEl) {
@@ -4082,7 +4390,7 @@ function renderFindGameAchievements(payload, targetEl = findGamesAchievementsEl)
   const headerMeta = document.createElement("div");
   headerMeta.className = "meta";
   headerMeta.textContent = consoleName
-    ? `${safeText(consoleName)} • ${achievements.length} achievements`
+    ? `${safeText(consoleName)} � ${achievements.length} achievements`
     : `${achievements.length} achievements`;
   header.appendChild(headerTitle);
   header.appendChild(headerMeta);
@@ -7746,6 +8054,7 @@ if (groupNameInput) {
   });
 }
 
+// --- Event wiring ---
 refreshBtn.addEventListener("click", () => {
   (async () => {
     refreshLeaderboard();
@@ -8378,4 +8687,7 @@ if (usernameModalInput) {
     ensureUsername();
   }
 })();
+
+
+
 

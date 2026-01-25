@@ -1,8 +1,10 @@
+// Recompute user levels from RetroAchievements total points.
 const dotenv = require("dotenv");
 const { Pool } = require("pg");
 
 dotenv.config();
 
+// Required environment config.
 const RA_API_KEY = process.env.RA_API_KEY || "";
 const DATABASE_URL = process.env.DATABASE_URL || "";
 
@@ -15,12 +17,14 @@ if (!DATABASE_URL) {
   process.exit(1);
 }
 
+// Level curve used by the app.
 function computeLevelFromPoints(pointsRaw) {
   const points = Number(pointsRaw);
   if (!Number.isFinite(points) || points <= 0) return 1;
   return Math.max(1, Math.floor(Math.sqrt(points / 10) * 3));
 }
 
+// Fetch a user summary from the RetroAchievements API.
 async function raGetUserSummary(username) {
   const url = new URL("https://retroachievements.org/API/API_GetUserSummary.php");
   url.searchParams.set("u", username);
@@ -33,6 +37,7 @@ async function raGetUserSummary(username) {
   return res.json();
 }
 
+// Main workflow: load users, recompute, update DB.
 async function run() {
   const pool = new Pool({
     connectionString: DATABASE_URL,

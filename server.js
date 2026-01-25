@@ -1,4 +1,6 @@
-﻿import express from "express";
+// RetroRivals server: serves the static web app and exposes API endpoints
+// for RetroAchievements data, social features, and group/friends features.
+import express from "express";
 import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
 import pg from "pg";
@@ -10,7 +12,7 @@ import dotenv from "dotenv";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Load .env from the same folder as server.js (NOT the working directory)
+// Load .env from the same folder as server.js (NOT the working directory).
 const envPath = path.join(__dirname, ".env");
 if (fs.existsSync(envPath)) {
   dotenv.config({ path: envPath });
@@ -18,10 +20,12 @@ if (fs.existsSync(envPath)) {
   console.warn("WARNING: .env not found next to server.js");
 }
 
+// Express app setup.
 const app = express();
 app.set("trust proxy", 1);
 app.use(express.json({ limit: "3mb" }));
 
+// Core config pulled from environment variables.
 const PORT = Number(process.env.PORT || 5179);
 const RA_API_KEY = process.env.RA_API_KEY;
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -37,12 +41,15 @@ if (!DATABASE_URL) {
   console.warn("WARNING: DATABASE_URL is not set. User accounts will not persist.");
 }
 
+// Database connection (optional). When missing, the app still runs but
+// user accounts and sessions won't persist across restarts.
 const { Pool } = pg;
 const useSsl = process.env.DATABASE_SSL === "true";
 const pool = DATABASE_URL
   ? new Pool({ connectionString: DATABASE_URL, ssl: useSsl ? { rejectUnauthorized: false } : false })
   : null;
 
+// Session config. If no database is present, the default memory store is used.
 const sessionOptions = {
   secret: SESSION_SECRET,
   resave: false,
@@ -79,12 +86,16 @@ function cacheSet(key, value, ttlMs) {
 const DEFAULT_CACHE_TTL_MS = 180 * 1000; // 3 minutes
 const PRESENCE_TTL_MS = 15 * 1000;
 const GAME_INDEX_TTL_MS = 12 * 60 * 60 * 1000;
+const GAME_META_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const CONSOLE_LIST_TTL_MS = 24 * 60 * 60 * 1000;
 const presence = new Map(); // Map<username, Map<sessionId, lastSeen>>
 let consoleListCache = { builtAt: 0, list: null, inFlight: null };
 const gameListCache = new Map(); // Map<consoleId, { builtAt, list, inFlight }>
+let allGameListCache = { builtAt: 0, list: null, inFlight: null };
+const gameMetaRefreshInFlight = new Map(); // Map<gameId, Promise>
 const notificationStreams = new Map(); // Map<username, Set<res>>
 
+// Create tables and columns if they don't exist yet.
 async function initDb() {
   if (!pool) return;
   await pool.query(`
@@ -298,9 +309,21 @@ async function initDb() {
       UNIQUE(username, game_id, award_kind)
     );
   `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS game_metadata (
+      game_id INTEGER PRIMARY KEY,
+      num_distinct_players INTEGER,
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+  await pool.query(`
+    ALTER TABLE game_metadata
+      ADD COLUMN IF NOT EXISTS num_distinct_players INTEGER,
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()
+  `);
 }
 
-// simple concurrency limiter
+// Simple concurrency limiter to avoid flooding RA endpoints.
 function createLimiter(max) {
   let active = 0;
   const queue = [];
@@ -323,6 +346,7 @@ const limitLb = createLimiter(1); // only 1 leaderboard request at a time
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
+// RetroAchievements API throttling (slow queue).
 const RA_REQUEST_INTERVAL_MS = 150;
 const RA_MAX_CONCURRENT = 1;
 const raQueue = [];
@@ -330,6 +354,7 @@ let raQueueActive = 0;
 let raQueueTimer = null;
 let lastRaRequestAt = 0;
 
+// Fast queue for lightweight RA requests.
 const RA_FAST_MAX_CONCURRENT = 10;
 const raFastQueue = [];
 let raFastActive = 0;
@@ -571,6 +596,7 @@ async function computePointsBetween(username, fromDate, toDate, includeSoftcore,
     }
   }
 
+// --- RetroAchievements API wrappers ---
 async function raGetAchievementsEarnedBetween(username, fromDate, toDate, apiKey) {
   if (!apiKey) throw new Error("Missing RA API key.");
 
@@ -789,6 +815,11 @@ async function getGameListForConsole(consoleId, apiKey) {
         title: g?.Title ?? g?.title ?? g?.GameTitle ?? g?.gameTitle ?? "",
         imageIcon: g?.ImageIcon ?? g?.imageIcon,
         numAchievements: g?.NumAchievements ?? g?.numAchievements ?? 0,
+        numDistinctPlayers: (() => {
+          const raw = g?.NumDistinctPlayers ?? g?.numDistinctPlayers ?? g?.Players ?? g?.players;
+          const parsed = Number(raw);
+          return Number.isFinite(parsed) ? parsed : null;
+        })(),
         points: g?.Points ?? g?.points ?? 0,
         consoleId: g?.ConsoleID ?? g?.consoleId ?? g?.ConsoleId ?? g?.consoleId,
         consoleName: g?.ConsoleName ?? g?.consoleName ?? g?.Console ?? g?.console ?? ""
@@ -802,6 +833,69 @@ async function getGameListForConsole(consoleId, apiKey) {
   });
   gameListCache.set(key, { builtAt: now, list: cached?.list || null, inFlight });
   return inFlight;
+}
+
+async function getGameListForAllConsoles(apiKey) {
+  const now = Date.now();
+  if (allGameListCache.list && (now - allGameListCache.builtAt) < GAME_INDEX_TTL_MS) {
+    return allGameListCache.list;
+  }
+  if (allGameListCache.inFlight) return allGameListCache.inFlight;
+  allGameListCache.inFlight = (async () => {
+    const consoles = await getConsoleList(apiKey);
+    const combined = [];
+    for (const consoleInfo of consoles) {
+      const consoleId = consoleInfo?.id ?? consoleInfo?.consoleId;
+      if (!consoleId) continue;
+      const list = await getGameListForConsole(consoleId, apiKey);
+      combined.push(...list);
+    }
+    allGameListCache = { builtAt: Date.now(), list: combined, inFlight: null };
+    return combined;
+  })().finally(() => {
+    allGameListCache.inFlight = null;
+  });
+  return allGameListCache.inFlight;
+}
+
+async function readGameMeta(gameId) {
+  if (!pool) return null;
+  const result = await pool.query(
+    `SELECT num_distinct_players, updated_at FROM game_metadata WHERE game_id = $1`,
+    [gameId]
+  );
+  return result.rows[0] || null;
+}
+
+async function upsertGameMeta(gameId, numDistinctPlayers) {
+  if (!pool) return;
+  await pool.query(
+    `INSERT INTO game_metadata (game_id, num_distinct_players, updated_at)
+     VALUES ($1, $2, NOW())
+     ON CONFLICT (game_id)
+     DO UPDATE SET num_distinct_players = EXCLUDED.num_distinct_players, updated_at = NOW()`,
+    [gameId, numDistinctPlayers]
+  );
+}
+
+async function refreshGameMeta(gameId, apiKey) {
+  const key = String(gameId);
+  if (gameMetaRefreshInFlight.has(key)) return gameMetaRefreshInFlight.get(key);
+  const task = (async () => {
+    const data = await raGetGameInfo(gameId, apiKey);
+    const rawPlayers = data?.NumDistinctPlayers ?? data?.numDistinctPlayers;
+    const players = Number(rawPlayers);
+    if (Number.isFinite(players)) {
+      await upsertGameMeta(gameId, players);
+      cacheSet(`game-players:${gameId}`, players, GAME_META_TTL_MS);
+      return players;
+    }
+    return null;
+  })().finally(() => {
+    gameMetaRefreshInFlight.delete(key);
+  });
+  gameMetaRefreshInFlight.set(key, task);
+  return task;
 }
 
 // --- API routes ---
@@ -946,6 +1040,7 @@ async function recordCompletionSocialPost({ username, gameId, gameTitle, imageIc
   );
 }
 
+// Simple session-based auth guard.
 function requireAuth(req, res, next) {
   if (!req.session || !req.session.user) {
     return res.status(401).json({ error: "Not authenticated" });
@@ -1062,6 +1157,7 @@ function withChallengeWinner(row) {
   return { ...row, winner, lead };
 }
 
+// --- Auth endpoints ---
 app.get("/api/auth/me", (req, res) => {
   const user = req.session?.user;
   if (!user) return res.json({ username: "" });
@@ -1088,6 +1184,7 @@ app.post("/api/auth/logout", (req, res) => {
   res.json({ ok: true });
 });
 
+// --- Friends ---
 app.get("/api/friends", requireAuth, async (req, res) => {
   if (!pool) return res.status(500).json({ error: "Database unavailable" });
   const userId = req.session.user.id;
@@ -1177,6 +1274,7 @@ app.delete("/api/friends/:username", requireAuth, async (req, res) => {
 });
 
 // Groups
+// --- Groups ---
 app.post("/api/groups", requireAuth, async (req, res) => {
   if (!pool) return res.status(500).json({ error: "Database unavailable" });
   const userId = req.session.user.id;
@@ -1341,6 +1439,7 @@ app.post("/api/groups/invites/:inviteId/decline", requireAuth, async (req, res) 
 });
 
 // Challenges
+// --- Challenges ---
 app.get("/api/challenges", requireAuth, async (req, res) => {
   if (!pool) return res.status(500).json({ error: "Database unavailable" });
   const me = normalizeUsername(req.session.user.username);
@@ -1786,6 +1885,7 @@ app.post("/api/challenges/:id/cancel", requireAuth, async (req, res) => {
 });
 
 // Notifications
+// --- Notifications ---
 app.get("/api/notifications", requireAuth, async (req, res) => {
   if (!pool) return res.status(500).json({ error: "Database unavailable" });
   const username = normalizeUsername(req.session.user.username);
@@ -2647,6 +2747,7 @@ app.get("/api/user-completion-progress/:username", async (req, res) => {
 });
 
 // Social posts (friends-only read)
+// --- Social ---
 app.get("/api/social/posts", requireAuth, async (req, res) => {
   try {
     if (!pool) return res.json({ count: 0, results: [] });
@@ -2936,6 +3037,7 @@ app.post("/api/social/posts/:id/reaction", requireAuth, async (req, res) => {
 });
 
 // Backlog for a user (public read)
+// --- Backlog ---
 app.get("/api/backlog/:username", async (req, res) => {
   try {
     if (!pool) return res.json({ username: "", count: 0, results: [] });
@@ -3096,11 +3198,16 @@ app.get("/api/game-list", async (req, res) => {
     const apiKey = String(req.headers["x-ra-api-key"] || RA_API_KEY || "").trim();
     if (!apiKey) return res.status(400).json({ error: "Missing RA API key" });
 
-    const consoleId = Number(req.query.consoleId || 0);
-    if (!Number.isFinite(consoleId) || consoleId <= 0) {
+    const rawConsoleId = String(req.query.consoleId || "").trim();
+    if (!rawConsoleId) return res.status(400).json({ error: "Missing consoleId" });
+    const isAllConsoles = rawConsoleId.toLowerCase() === "all";
+    const consoleId = isAllConsoles ? "all" : Number(rawConsoleId);
+    if (!isAllConsoles && (!Number.isFinite(consoleId) || consoleId <= 0)) {
       return res.status(400).json({ error: "Missing consoleId" });
     }
-    const list = await getGameListForConsole(consoleId, apiKey);
+    const list = isAllConsoles
+      ? await getGameListForAllConsoles(apiKey)
+      : await getGameListForConsole(consoleId, apiKey);
     const rawLetter = String(req.query.letter || "0-9").trim();
     const isAll = rawLetter === "" || rawLetter.toLowerCase() === "all";
     const letter = isAll ? "all" : normalizeGameLetter(rawLetter);
@@ -3116,6 +3223,105 @@ app.get("/api/game-list", async (req, res) => {
   } catch (err) {
     const status = err?.status || 500;
     res.status(status).json({ error: err?.message || "Failed to fetch game list" });
+  }
+});
+
+app.get("/api/game-players", async (req, res) => {
+  try {
+    const apiKey = String(req.headers["x-ra-api-key"] || RA_API_KEY || "").trim();
+    if (!apiKey) return res.status(400).json({ error: "Missing RA API key" });
+
+    const gameId = Number(req.query.gameId || 0);
+    if (!Number.isFinite(gameId) || gameId <= 0) {
+      return res.status(400).json({ error: "Missing gameId" });
+    }
+
+    const cacheKey = `game-players:${gameId}`;
+    const cached = cacheGet(cacheKey);
+    if (cached !== null && cached !== undefined) {
+      return res.json({ gameId, numDistinctPlayers: cached, cached: true });
+    }
+
+    const meta = await readGameMeta(gameId);
+    if (meta?.num_distinct_players !== null && meta?.num_distinct_players !== undefined) {
+      const updatedAt = meta.updated_at ? new Date(meta.updated_at).getTime() : 0;
+      const ageMs = updatedAt ? Date.now() - updatedAt : Number.POSITIVE_INFINITY;
+      const players = Number(meta.num_distinct_players);
+      if (Number.isFinite(players)) {
+        cacheSet(cacheKey, players, GAME_META_TTL_MS);
+        const stale = !Number.isFinite(ageMs) || ageMs >= GAME_META_TTL_MS;
+        return res.json({ gameId, numDistinctPlayers: players, cached: true, stale });
+      }
+    }
+
+    res.json({ gameId, numDistinctPlayers: null, cached: false, stale: true });
+  } catch (err) {
+    const status = err?.status || 500;
+    res.status(status).json({ error: err?.message || "Failed to fetch game players" });
+  }
+});
+
+app.get("/api/game-players-refresh", async (req, res) => {
+  try {
+    const apiKey = String(req.headers["x-ra-api-key"] || RA_API_KEY || "").trim();
+    if (!apiKey) return res.status(400).json({ error: "Missing RA API key" });
+
+    const gameId = Number(req.query.gameId || 0);
+    if (!Number.isFinite(gameId) || gameId <= 0) {
+      return res.status(400).json({ error: "Missing gameId" });
+    }
+
+    const players = await refreshGameMeta(gameId, apiKey);
+    res.json({ gameId, numDistinctPlayers: players });
+  } catch (err) {
+    const status = err?.status || 500;
+    res.status(status).json({ error: err?.message || "Failed to refresh game players" });
+  }
+});
+
+app.get("/api/game-players-batch", async (req, res) => {
+  try {
+    const raw = String(req.query.ids || "").trim();
+    if (!raw) return res.json({ results: [] });
+    const ids = raw
+      .split(",")
+      .map(id => Number(id))
+      .filter(id => Number.isFinite(id) && id > 0);
+    if (!ids.length) return res.json({ results: [] });
+    if (ids.length > 100) return res.status(400).json({ error: "Too many ids" });
+
+    if (!pool) {
+      return res.json({
+        results: ids.map(gameId => ({ gameId, numDistinctPlayers: null, stale: true }))
+      });
+    }
+
+    const result = await pool.query(
+      `SELECT game_id, num_distinct_players, updated_at
+       FROM game_metadata
+       WHERE game_id = ANY($1::int[])`,
+      [ids]
+    );
+    const rows = result.rows || [];
+    const byId = new Map();
+    for (const row of rows) {
+      const updatedAt = row.updated_at ? new Date(row.updated_at).getTime() : 0;
+      const ageMs = updatedAt ? Date.now() - updatedAt : Number.POSITIVE_INFINITY;
+      const stale = !Number.isFinite(ageMs) || ageMs >= GAME_META_TTL_MS;
+      byId.set(Number(row.game_id), {
+        gameId: Number(row.game_id),
+        numDistinctPlayers: row.num_distinct_players,
+        stale
+      });
+    }
+    const results = ids.map(gameId => {
+      if (byId.has(gameId)) return byId.get(gameId);
+      return { gameId, numDistinctPlayers: null, stale: true };
+    });
+    res.json({ results });
+  } catch (err) {
+    const status = err?.status || 500;
+    res.status(status).json({ error: err?.message || "Failed to fetch game players batch" });
   }
 });
 
@@ -3397,4 +3603,5 @@ if (pool) {
 } else {
   startServer();
 }
+
 
