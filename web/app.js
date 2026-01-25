@@ -1062,14 +1062,38 @@ function extractYouTubeId(text) {
 
 function renderSocialPosts(posts = socialPosts, targetEl = socialPostListEl, { showComments = true, showActions = true, limit = null, filter = "all" } = {}) {
   if (!targetEl) return;
-  targetEl.innerHTML = "";
   const list = filterSocialPosts(Array.isArray(posts) ? posts : [], filter);
   if (!list.length) {
     targetEl.innerHTML = `<div class="meta">No screenshots yet. Be the first to post.</div>`;
     return;
   }
-  const frag = document.createDocumentFragment();
   const slice = Number.isFinite(limit) ? list.slice(0, Math.max(0, limit)) : list;
+  const renderKey = JSON.stringify({
+    filter,
+    limit,
+    showComments,
+    showActions,
+    items: slice.map((post) => ({
+      id: post?.id || "",
+      user: post?.user || "",
+      createdAt: post?.createdAt || post?.created_at || "",
+      updatedAt: post?.updatedAt || post?.updated_at || "",
+      postType: post?.postType || "",
+      isAuto: !!post?.isAuto,
+      caption: post?.caption || "",
+      game: post?.game || "",
+      imageKey: post?.imageUrl || (post?.imageData ? `data:${String(post.imageData).length}` : ""),
+      likes: Number(post?.reactions?.likes || 0),
+      dislikes: Number(post?.reactions?.dislikes || 0),
+      userReaction: post?.reactions?.userReaction || "",
+      commentsLen: Array.isArray(post?.comments) ? post.comments.length : 0
+    }))
+  });
+  if (targetEl.dataset.renderKey === renderKey) return;
+  targetEl.dataset.renderKey = renderKey;
+
+  targetEl.innerHTML = "";
+  const frag = document.createDocumentFragment();
   slice.forEach((post) => {
     const card = document.createElement("article");
     card.className = "socialPost";
