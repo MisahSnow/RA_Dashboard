@@ -980,6 +980,53 @@ async function createNotification({ username, type, message, meta = null }) {
   await broadcastUnreadCount(normalized);
 }
 
+async function notifyFriendsOfSocialPost({
+  authorUsername,
+  displayName,
+  postId,
+  postType,
+  gameTitle,
+  isAuto = false
+}) {
+  if (!pool) return;
+  const author = normalizeUsername(authorUsername);
+  if (!author || !postId) return;
+  const name = String(displayName || authorUsername || author || "").trim() || author;
+  const friendsRes = await pool.query(
+    `
+      SELECT DISTINCT u.username AS username
+      FROM friends f
+      JOIN users u ON f.user_id = u.id
+      WHERE LOWER(f.friend_username) = LOWER($1)
+    `,
+    [author]
+  );
+  const recipients = friendsRes.rows
+    .map(r => normalizeUsername(r.username))
+    .filter(u => u && u.toLowerCase() !== author.toLowerCase());
+  if (!recipients.length) return;
+
+  let message = `${name} posted to social.`;
+  if (postType === "achievement" && gameTitle) {
+    message = `${name} earned an achievement in ${gameTitle}.`;
+  } else if (postType === "screenshot") {
+    message = `${name} posted a screenshot.`;
+  } else if (postType === "completion" && gameTitle) {
+    message = `${name} completed ${gameTitle}.`;
+  } else if (isAuto && gameTitle) {
+    message = `${name} completed ${gameTitle}.`;
+  }
+
+  for (const recipient of recipients) {
+    await createNotification({
+      username: recipient,
+      type: "social_post",
+      message,
+      meta: { from: name, postId, postType: postType || "text" }
+    });
+  }
+}
+
 async function deleteChallengeNotifications(username, challengeId) {
   if (!pool) return;
   const normalized = normalizeUsername(username);
@@ -1044,14 +1091,26 @@ async function recordCompletionSocialPost({ username, gameId, gameTitle, imageIc
 
   if (!insertEvent.rows.length) return;
 
-  await pool.query(
+  const insertPost = await pool.query(
     `
       INSERT INTO social_posts
         (user_id, username, game_title, caption, image_data, image_url, is_auto, post_type, created_at)
       VALUES ($1, $2, $3, $4, '', $5, true, 'completion', NOW())
+      RETURNING id
     `,
     [userId, displayName, gameTitle || null, caption, imageUrl || null]
   );
+  const postId = insertPost.rows[0]?.id;
+  if (postId) {
+    await notifyFriendsOfSocialPost({
+      authorUsername: displayName,
+      displayName,
+      postId,
+      postType: "completion",
+      gameTitle,
+      isAuto: true
+    });
+  }
 }
 
 // Simple session-based auth guard.
@@ -2931,6 +2990,14 @@ app.post("/api/social/posts", requireAuth, async (req, res) => {
       achievementDescription: achievementDescription || null,
       createdAt: insertRes.rows[0].created_at,
       comments: []
+    });
+
+    await notifyFriendsOfSocialPost({
+      authorUsername: username,
+      displayName: username,
+      postId: insertRes.rows[0].id,
+      postType,
+      gameTitle
     });
   } catch (err) {
     const status = err?.status || 500;

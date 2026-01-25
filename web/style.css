@@ -3201,12 +3201,32 @@ tbody tr:nth-child(even){
   padding: 10px 12px;
 }
 
+.socialPostTopRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.socialPostTopRow .meta {
+  text-align: right;
+  min-width: 110px;
+}
+
 .socialPostHeader {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
   gap: 12px;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(44, 36, 72, 0.8);
+}
+
+.socialPostAuthorWrap {
+  position: relative;
+  top: -4px;
 }
 
 .socialPostActions{
@@ -3237,6 +3257,8 @@ tbody tr:nth-child(even){
   letter-spacing: 1px;
   color: var(--accent-2);
 }
+
+ 
 
 .socialPost.autoPost .socialPostHeader {
   margin-bottom: 6px;
@@ -3290,9 +3312,36 @@ tbody tr:nth-child(even){
 
 .socialPostAuthor {
   font-family: "Press Start 2P", var(--font-head);
-  font-size: 11px;
+  font-size: 16.5px;
   color: var(--accent);
   text-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+}
+
+.socialPostAuthorWrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.socialAvatar {
+  width: 56px;
+  height: 56px;
+  border-radius: 12px;
+  border: 1px solid #2b3650;
+  background: #090f1e;
+  object-fit: cover;
+}
+
+.socialCommentAuthorWrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.socialCommentAuthorWrap .socialAvatar {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
 }
 
 .socialPostMeta {

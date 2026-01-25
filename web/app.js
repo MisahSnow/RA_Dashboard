@@ -1068,6 +1068,17 @@ function renderSocialPosts(posts = socialPosts, targetEl = socialPostListEl, { s
     return;
   }
   const slice = Number.isFinite(limit) ? list.slice(0, Math.max(0, limit)) : list;
+  const avatarUsers = new Set();
+  slice.forEach((post) => {
+    if (post?.user) avatarUsers.add(post.user);
+    if (Array.isArray(post?.comments)) {
+      post.comments.forEach((comment) => {
+        if (comment?.user) avatarUsers.add(comment.user);
+      });
+    }
+  });
+  applyChallengeAvatars();
+  hydrateUserAvatars(avatarUsers);
   const renderKey = JSON.stringify({
     filter,
     limit,
@@ -1122,13 +1133,24 @@ function renderSocialPosts(posts = socialPosts, targetEl = socialPostListEl, { s
       if (!autoGameTitle) autoGameTitle = "a game";
     }
 
-    const header = document.createElement("div");
-    header.className = "socialPostHeader";
+    const topRow = document.createElement("div");
+    topRow.className = "socialPostTopRow";
+    const authorWrap = document.createElement("div");
+    authorWrap.className = "socialPostAuthorWrap";
+    if (post?.user) {
+      const avatar = document.createElement("img");
+      avatar.className = "socialAvatar placeholder";
+      avatar.loading = "lazy";
+      avatar.alt = "";
+      avatar.setAttribute("data-avatar-user", post.user);
+      authorWrap.append(avatar);
+    }
     const author = document.createElement("button");
     author.type = "button";
     author.className = "linkBtn socialPostAuthor";
     author.textContent = post?.user || "Unknown";
     if (post?.user) author.dataset.profile = post.user;
+    authorWrap.append(author);
     const time = document.createElement("div");
     time.className = "meta";
     time.textContent = formatDate(post?.createdAt);
@@ -1143,25 +1165,27 @@ function renderSocialPosts(posts = socialPosts, targetEl = socialPostListEl, { s
       removeBtn.dataset.deletePostId = String(post.id);
       actions.appendChild(removeBtn);
     }
+    const header = document.createElement("div");
+    header.className = "socialPostHeader";
+
+    let headerTitle = "";
     if (post?.postType === "achievement" && !post?.isAuto) {
       header.classList.add("isAchievement");
-      const title = document.createElement("div");
-      title.className = "socialHeaderTitle";
-      title.textContent = "Achievement";
-      header.append(author, title, time);
-      if (showActions) header.append(actions);
+      headerTitle = "Achievement";
     } else if (isAuto) {
       header.classList.add("isAchievement");
+      headerTitle = `Game ${autoLabel}`;
+    }
+    if (headerTitle) {
       const title = document.createElement("div");
       title.className = "socialHeaderTitle";
-      title.textContent = `Game ${autoLabel}`;
-      header.append(author, title, time);
-      if (showActions) header.append(actions);
-    } else {
-      header.append(author, time);
-      if (showActions) header.append(actions);
+      title.textContent = headerTitle;
+      header.append(title);
     }
-    card.append(header);
+
+    topRow.append(authorWrap, time);
+    if (showActions) topRow.append(actions);
+    card.append(topRow, header);
 
     const isAchievementPost = !isAuto && post?.postType === "achievement";
 
@@ -1318,15 +1342,26 @@ function renderSocialPosts(posts = socialPosts, targetEl = socialPostListEl, { s
 
           const commentHeader = document.createElement("div");
           commentHeader.className = "socialCommentHeader";
+          const commentAuthorWrap = document.createElement("div");
+          commentAuthorWrap.className = "socialCommentAuthorWrap";
+          if (comment?.user) {
+            const commentAvatar = document.createElement("img");
+            commentAvatar.className = "socialAvatar placeholder";
+            commentAvatar.loading = "lazy";
+            commentAvatar.alt = "";
+            commentAvatar.setAttribute("data-avatar-user", comment.user);
+            commentAuthorWrap.append(commentAvatar);
+          }
           const commentAuthor = document.createElement("button");
           commentAuthor.type = "button";
           commentAuthor.className = "linkBtn socialCommentAuthor";
           commentAuthor.textContent = comment?.user || "Unknown";
           if (comment?.user) commentAuthor.dataset.profile = comment.user;
+          commentAuthorWrap.append(commentAuthor);
           const commentTime = document.createElement("div");
           commentTime.className = "meta";
           commentTime.textContent = formatDate(comment?.createdAt);
-          commentHeader.append(commentAuthor, commentTime);
+          commentHeader.append(commentAuthorWrap, commentTime);
 
           const commentBody = document.createElement("div");
           commentBody.className = "socialCommentBody";
@@ -2565,6 +2600,23 @@ function applyChallengeAvatars() {
     img.setAttribute("data-avatar-user", username);
     img.src = iconUrl(url);
     node.replaceWith(img);
+  });
+}
+
+function hydrateUserAvatars(usernames) {
+  const targets = Array.from(usernames || []).filter(name => !challengeAvatarCache.has(normalizeUserKey(name)));
+  if (!targets.length) return;
+  Promise.all(targets.map((name) => summaryLimiter(async () => {
+    try {
+      const data = await fetchUserSummary(name, { silent: true });
+      challengeAvatarCache.set(normalizeUserKey(name), data?.userPic || "");
+    } catch {
+      challengeAvatarCache.set(normalizeUserKey(name), "");
+    }
+  }))).then(() => {
+    applyChallengeAvatars();
+  }).catch(() => {
+    // ignore avatar hydrate errors
   });
 }
 async function fetchRecentAchievements(username, minutes, limit) {
