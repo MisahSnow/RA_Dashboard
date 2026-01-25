@@ -1,4 +1,5 @@
 run-server.bat
+commit-and-push.bat
 .env
 node_modules/
 web/editor.html
