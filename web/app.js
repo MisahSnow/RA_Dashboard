@@ -578,6 +578,7 @@ let groupBrowse = [];
 let groupInvites = [];
 let leaderboardScope = "friends";
 let leaderboardGroupId = "";
+let friendsMenuLoading = false;
 const groupMembersCache = new Map();
 let dailyHistoryCache = {};
 let hourlyHistoryCache = {};
@@ -1702,6 +1703,20 @@ function renderFriendsMenu() {
   friendsMenuList.appendChild(frag);
 }
 
+async function ensureFriendsLoaded({ force = false } = {}) {
+  if (!currentUser) return;
+  if (!force && Array.isArray(friends) && friends.length) return;
+  if (friendsMenuLoading) return;
+  friendsMenuLoading = true;
+  try {
+    const list = await loadFriendsFromServer({ immediate: true });
+    friends = list;
+    renderFriendsMenu();
+  } finally {
+    friendsMenuLoading = false;
+  }
+}
+
 function closeProfileMenu() {
   if (!profileMenuWrap) return;
   profileMenuWrap.classList.remove("open");
@@ -2356,18 +2371,19 @@ async function fetchJson(url, { silent = false, signal = null, immediate = false
   return res.json();
 }
 
-async function fetchServerJson(url, { method = "GET", body = null, silent = false } = {}) {
+async function fetchServerJson(url, { method = "GET", body = null, silent = false, immediate = false } = {}) {
   const headers = {};
   const apiKey = (apiKeyInput?.value || "").trim();
   const useApiKey = !!useApiKeyToggle?.checked;
   if (useApiKey && apiKey) headers["x-ra-api-key"] = apiKey;
   if (body !== null) headers["Content-Type"] = "application/json";
-  const res = await enqueueClientFetch(url, {
+  const options = {
     method,
     headers,
     body: body !== null ? JSON.stringify(body) : undefined,
     credentials: "same-origin"
-  });
+  };
+  const res = immediate ? await fetch(url, options) : await enqueueClientFetch(url, options);
   if (!res.ok) {
     let message = "";
     try {
@@ -3015,9 +3031,9 @@ async function setSocialReaction(postId, reaction) {
   });
 }
 
-async function loadFriendsFromServer() {
+async function loadFriendsFromServer({ immediate = false } = {}) {
   try {
-    const data = await fetchServerJson("/api/friends", { silent: true });
+    const data = await fetchServerJson("/api/friends", { silent: true, immediate });
     const list = Array.isArray(data?.results) ? data.results : [];
     return list.map(clampUsername).filter(Boolean);
   } catch {
@@ -3207,8 +3223,9 @@ async function loginAndStart(username, { errorEl, loadingEl, closeModal } = {}) 
   try {
     const loggedIn = await loginUser(username);
     setCurrentUser(loggedIn);
-    friends = await loadFriendsFromServer();
+    friends = await loadFriendsFromServer({ immediate: true });
     renderChallengeFriendOptions(friends);
+    renderFriendsMenu();
     saveState();
   } catch (e) {
     const message = String(e?.message || "Login failed.");
@@ -3254,6 +3271,7 @@ async function addFriendFromModal() {
     friends = Array.from(new Set([...friends, u]));
     renderChallengeFriendOptions(friends);
     if (activePageName === "friends") renderFriendsList(friends);
+    renderFriendsMenu();
     friendInput.value = "";
     closeAddFriendModal();
   } catch (e) {
@@ -6686,7 +6704,7 @@ function renderProfileSummary(summary) {
   }
 
   const username = currentProfileUser || summary.username || "Player";
-  const avatarUrl = summary.userPic ? iconUrl(summary.userPic) : "";
+  const avatarUrl = summary.userPic ? buildAvatarUrl(username, summary.userPic) : "";
   const rank = Number.isFinite(Number(summary.rank)) ? `#${Number(summary.rank).toLocaleString()}` : "--";
   const totalPoints = Number.isFinite(Number(summary.totalPoints))
     ? Number(summary.totalPoints).toLocaleString()
@@ -6726,6 +6744,9 @@ function renderProfileSummary(summary) {
 
   const avatarWrap = document.createElement("div");
   avatarWrap.className = "profileHeroAvatarWrap";
+  if (summary.userPic) {
+    setCachedAvatarUrl(username, summary.userPic);
+  }
   if (avatarUrl) {
     const img = document.createElement("img");
     img.className = "profileHeroAvatar";
@@ -8748,6 +8769,7 @@ if (friendsListEl) {
           friends = friends.filter(x => x !== u);
           renderChallengeFriendOptions(friends);
           renderFriendsList(friends);
+          renderFriendsMenu();
           refreshLeaderboard();
           if (activeActivityTab === "times") {
             refreshRecentTimes();
@@ -8975,6 +8997,7 @@ if (friendsMenuBtn) {
   };
   friendsMenuBtn.addEventListener("mouseenter", () => {
     cancelClose();
+    ensureFriendsLoaded();
     friendsMenuWrap?.classList.add("open");
     friendsMenuBtn.setAttribute("aria-expanded", "true");
   });
@@ -9541,7 +9564,7 @@ if (usernameModalInput) {
   if (me) {
     setCurrentUser(me);
     fetchUserSummary(me).catch(() => {});
-    friends = await loadFriendsFromServer();
+    await ensureFriendsLoaded({ force: true });
     await bootstrapAfterLogin();
   } else {
     ensureUsername();
