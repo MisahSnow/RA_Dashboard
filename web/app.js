@@ -170,11 +170,13 @@ const LS_PROFILE_COUNTS_PREFIX = "ra.profileCounts";
 const LS_FIND_GAMES_CONSOLE = "ra.findGamesConsole";
 const LS_FIND_GAMES_PLAYERS = "ra.findGamesPlayers";
 const LS_FIND_GAMES_GENRES = "ra.findGamesGenres";
+const LS_SOCIAL_AVATARS = "ra.socialAvatars";
 const LS_BACKLOG_PREFIX = "ra.backlog";
 const friendSummaryCache = new Map();
 const friendPresenceCache = new Map();
 const PROFILE_COUNTS_CACHE_TTL_MS = 2 * 60 * 1000;
 const RECENT_CACHE_TTL_MS = 2 * 60 * 1000;
+const SOCIAL_AVATAR_CACHE_TTL_MS = 3 * 60 * 60 * 1000;
 const LS_RECENT_GAMES_PREFIX = "ra.recentGames";
 const storedLeaderboardRange = localStorage.getItem(LS_LEADERBOARD_RANGE);
 let leaderboardRange = ["daily", "weekly", "monthly"].includes(storedLeaderboardRange)
@@ -1403,6 +1405,16 @@ async function loadSocialPostsFromServer({ silent = false } = {}) {
     const data = await fetchSocialPosts(SOCIAL_MAX_POSTS);
     const results = Array.isArray(data?.results) ? data.results : [];
     socialPosts = results;
+    const avatarUsers = new Set();
+    results.forEach((post) => {
+      if (post?.user) avatarUsers.add(post.user);
+      if (Array.isArray(post?.comments)) {
+        post.comments.forEach((comment) => {
+          if (comment?.user) avatarUsers.add(comment.user);
+        });
+      }
+    });
+    applyCachedSocialAvatars(avatarUsers);
     renderSocialPosts(socialPosts, socialPostListEl, { filter: socialFilter });
     renderSocialSidebarActivity();
     renderSocialTrendingGames();
@@ -1503,6 +1515,95 @@ function loadFindGamesGenresCache() {
   } catch {
     // ignore cache failures
   }
+}
+
+let socialAvatarCache = null;
+
+function loadSocialAvatarCache() {
+  if (socialAvatarCache) return socialAvatarCache;
+  try {
+    const raw = localStorage.getItem(LS_SOCIAL_AVATARS);
+    if (!raw) {
+      socialAvatarCache = { v: 1, items: {} };
+      return socialAvatarCache;
+    }
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") throw new Error("invalid cache");
+    socialAvatarCache = {
+      v: 1,
+      items: parsed.items && typeof parsed.items === "object" ? parsed.items : {}
+    };
+    return socialAvatarCache;
+  } catch {
+    socialAvatarCache = { v: 1, items: {} };
+    return socialAvatarCache;
+  }
+}
+
+function saveSocialAvatarCache() {
+  if (!socialAvatarCache) return;
+  try {
+    localStorage.setItem(LS_SOCIAL_AVATARS, JSON.stringify(socialAvatarCache));
+  } catch {
+    // ignore cache errors
+  }
+}
+
+function getCachedAvatarUrl(username) {
+  const key = normalizeUserKey(username);
+  if (!key) return "";
+  const cache = loadSocialAvatarCache();
+  const entry = cache.items[key];
+  if (!entry || !entry.url || !Number.isFinite(entry.ts)) return "";
+  if (Date.now() - entry.ts > SOCIAL_AVATAR_CACHE_TTL_MS) return "";
+  return entry.url;
+}
+
+function setCachedAvatarUrl(username, url) {
+  const key = normalizeUserKey(username);
+  if (!key) return;
+  const cache = loadSocialAvatarCache();
+  cache.items[key] = { url: String(url || ""), ts: Date.now() };
+  saveSocialAvatarCache();
+}
+
+function applyCachedSocialAvatars(usernames) {
+  const targets = Array.from(usernames || []);
+  if (!targets.length) return;
+  for (const name of targets) {
+    const cachedUrl = getCachedAvatarUrl(name);
+    if (!cachedUrl) continue;
+    challengeAvatarCache.set(normalizeUserKey(name), cachedUrl);
+  }
+  applyChallengeAvatars();
+}
+
+function fetchMissingSocialAvatars(usernames) {
+  const targets = Array.from(usernames || []);
+  if (!targets.length) return;
+  const remaining = [];
+  for (const name of targets) {
+    const key = normalizeUserKey(name);
+    if (!key) continue;
+    const existing = challengeAvatarCache.get(key) || "";
+    if (existing) continue;
+    remaining.push(name);
+  }
+  if (!remaining.length) return;
+  Promise.all(remaining.map((name) => summaryLimiter(async () => {
+    try {
+      const data = await fetchUserSummary(name, { silent: true });
+      const url = data?.userPic || "";
+      challengeAvatarCache.set(normalizeUserKey(name), url);
+      if (url) setCachedAvatarUrl(name, url);
+    } catch {
+      challengeAvatarCache.set(normalizeUserKey(name), "");
+    }
+  }))).then(() => {
+    applyChallengeAvatars();
+  }).catch(() => {
+    // ignore avatar hydrate errors
+  });
 }
 
 function persistFindGamesPlayersCache() {
@@ -2604,20 +2705,8 @@ function applyChallengeAvatars() {
 }
 
 function hydrateUserAvatars(usernames) {
-  const targets = Array.from(usernames || []).filter(name => !challengeAvatarCache.has(normalizeUserKey(name)));
-  if (!targets.length) return;
-  Promise.all(targets.map((name) => summaryLimiter(async () => {
-    try {
-      const data = await fetchUserSummary(name, { silent: true });
-      challengeAvatarCache.set(normalizeUserKey(name), data?.userPic || "");
-    } catch {
-      challengeAvatarCache.set(normalizeUserKey(name), "");
-    }
-  }))).then(() => {
-    applyChallengeAvatars();
-  }).catch(() => {
-    // ignore avatar hydrate errors
-  });
+  applyCachedSocialAvatars(usernames);
+  fetchMissingSocialAvatars(usernames);
 }
 async function fetchRecentAchievements(username, minutes, limit) {
   const u = encodeURIComponent(username);
