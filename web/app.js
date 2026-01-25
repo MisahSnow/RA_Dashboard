@@ -1011,8 +1011,37 @@ function filterSocialPosts(posts, filter) {
     if (filter === "posts") {
       return type === "text" || type === "screenshot";
     }
-    return true;
+  return true;
   });
+}
+
+function extractYouTubeId(text) {
+  const raw = String(text || "");
+  const urls = raw.match(/https?:\/\/\S+/g);
+  if (!urls) return "";
+  for (const candidate of urls) {
+    try {
+      const url = new URL(candidate);
+      const host = url.hostname.replace(/^www\./, "");
+      if (host === "youtu.be") {
+        const id = url.pathname.slice(1).split("/")[0];
+        if (id && /^[A-Za-z0-9_-]{6,}$/.test(id)) return id;
+      }
+      if (host === "youtube.com" || host === "m.youtube.com") {
+        if (url.pathname === "/watch") {
+          const id = url.searchParams.get("v") || "";
+          if (id && /^[A-Za-z0-9_-]{6,}$/.test(id)) return id;
+        }
+        if (url.pathname.startsWith("/shorts/") || url.pathname.startsWith("/embed/") || url.pathname.startsWith("/live/")) {
+          const id = url.pathname.split("/")[2] || "";
+          if (id && /^[A-Za-z0-9_-]{6,}$/.test(id)) return id;
+        }
+      }
+    } catch {
+      // ignore invalid URLs
+    }
+  }
+  return "";
 }
 
 function renderSocialPosts(posts = socialPosts, targetEl = socialPostListEl, { showComments = true, showActions = true, limit = null, filter = "all" } = {}) {
@@ -1155,6 +1184,18 @@ function renderSocialPosts(posts = socialPosts, targetEl = socialPostListEl, { s
       caption.className = "socialPostCaption";
       caption.textContent = post.caption;
       card.append(caption);
+    }
+    const videoId = extractYouTubeId(post?.caption);
+    if (videoId) {
+      const embed = document.createElement("div");
+      embed.className = "socialEmbed";
+      const iframe = document.createElement("iframe");
+      iframe.src = `https://www.youtube.com/embed/${videoId}`;
+      iframe.title = "YouTube video";
+      iframe.allow = "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share";
+      iframe.allowFullscreen = true;
+      embed.append(iframe);
+      card.append(embed);
     }
 
     const reactions = document.createElement("div");
