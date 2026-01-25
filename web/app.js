@@ -1496,10 +1496,13 @@ async function loadProfileSocialPosts({ reset = false } = {}) {
     });
     if (loadToken !== profileLoadToken || clampUsername(currentProfileUser) !== targetAtRequest) return;
     const results = Array.isArray(data?.results) ? data.results : [];
+    const filtered = results.filter((post) =>
+      normalizeUserKey(post?.user) === normalizeUserKey(targetAtRequest)
+    );
     if (profileSocialOffset === 0) {
-      profileSocialPosts = results.slice();
-    } else if (results.length) {
-      profileSocialPosts = profileSocialPosts.concat(results);
+      profileSocialPosts = filtered.slice();
+    } else if (filtered.length) {
+      profileSocialPosts = profileSocialPosts.concat(filtered);
     }
     profileSocialOffset = profileSocialPosts.length;
     profileSocialHasMore = !!data?.hasMore;
