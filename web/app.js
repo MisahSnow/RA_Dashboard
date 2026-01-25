@@ -209,6 +209,11 @@ const notificationsPanel = document.getElementById("notificationsPanel");
 const notificationsCloseBtn = document.getElementById("notificationsCloseBtn");
 const notificationsLoadingEl = document.getElementById("notificationsLoading");
 const notificationsListEl = document.getElementById("notificationsList");
+const friendsMenuWrap = document.getElementById("friendsMenuWrap");
+const friendsMenuBtn = document.getElementById("friendsMenuBtn");
+const friendsMenu = document.getElementById("friendsMenu");
+const friendsMenuList = document.getElementById("friendsMenuList");
+const friendsMenuAddBtn = document.getElementById("friendsMenuAddBtn");
 const profileMenuWrap = document.getElementById("profileMenuWrap");
 const profileMenuBtn = document.getElementById("profileMenuBtn");
 const profileMenuAvatar = document.getElementById("profileMenuAvatar");
@@ -534,7 +539,7 @@ let recentTimesVisible = RECENT_DEFAULT_ROWS;
 let refreshCountdownTimer = null;
 let nextRefreshAt = null;
 
-const AUTO_REFRESH_MS = 120000;
+const AUTO_REFRESH_MS = 60000;
 const ACHIEVEMENTS_DEFAULT_HOURS = 72;
 const ACHIEVEMENTS_STEP_HOURS = 24;
 const ACHIEVEMENTS_MAX_HOURS = 720;
@@ -670,6 +675,8 @@ let notificationsUnreadCount = 0;
 let notificationsEventSource = null;
 let notificationsOpen = false;
 let notificationsReadAfterClose = false;
+let notificationsHoverTimer = null;
+let friendsMenuHoverTimer = null;
 let socialFilter = "all";
 let socialGameSuggestions = [];
 let socialGameSelected = null;
@@ -692,6 +699,7 @@ function setCurrentUser(username) {
   }
   updateSocialComposerState();
   updateProfileMenuAvatar();
+  renderFriendsMenu();
   if (socialPage && !socialPage.hidden) {
     loadSocialPostsFromServer({ silent: true });
   }
@@ -1615,6 +1623,29 @@ function updateProfileMenuAvatar() {
       profileMenuAvatar.classList.remove("placeholder");
     })
     .catch(() => {});
+}
+
+function renderFriendsMenu() {
+  if (!friendsMenuList) return;
+  friendsMenuList.innerHTML = "";
+  if (!currentUser) {
+    friendsMenuList.innerHTML = `<div class="meta">Set your username to see friends.</div>`;
+    return;
+  }
+  if (!Array.isArray(friends) || !friends.length) {
+    friendsMenuList.innerHTML = `<div class="meta">No friends yet.</div>`;
+    return;
+  }
+  const frag = document.createDocumentFragment();
+  friends.forEach((name) => {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "friendsMenuItem";
+    row.textContent = name;
+    row.setAttribute("data-profile", name);
+    frag.appendChild(row);
+  });
+  friendsMenuList.appendChild(frag);
 }
 
 function closeProfileMenu() {
@@ -3214,6 +3245,7 @@ async function refreshFriendsPage() {
   try {
     friends = await loadFriendsFromServer();
     renderFriendsList(friends);
+    renderFriendsMenu();
     await hydrateFriendSummaries(friends);
     await hydrateFriendPresence(friends);
     renderFriendsList(friends);
@@ -8674,17 +8706,19 @@ if (groupNameInput) {
 }
 
 // --- Event wiring ---
-refreshBtn.addEventListener("click", () => {
-  (async () => {
-    refreshLeaderboard();
-    if (activeActivityTab === "times") {
-      refreshRecentTimes();
-    } else {
-      refreshRecentAchievements();
-    }
-    resetRefreshCountdown();
-  })();
-});
+if (refreshBtn) {
+  refreshBtn.addEventListener("click", () => {
+    (async () => {
+      refreshLeaderboard();
+      if (activeActivityTab === "times") {
+        refreshRecentTimes();
+      } else {
+        refreshRecentAchievements();
+      }
+      resetRefreshCountdown();
+    })();
+  });
+}
 
 
 if (profileCloseBtn) {
@@ -8824,20 +8858,83 @@ if (profileMenuSettingsBtn) {
   });
 }
 
+if (friendsMenuBtn) {
+  const cancelClose = () => {
+    if (friendsMenuHoverTimer) {
+      clearTimeout(friendsMenuHoverTimer);
+      friendsMenuHoverTimer = null;
+    }
+  };
+  const scheduleClose = () => {
+    cancelClose();
+    friendsMenuHoverTimer = setTimeout(() => {
+      friendsMenuWrap?.classList.remove("open");
+      friendsMenuBtn.setAttribute("aria-expanded", "false");
+    }, 180);
+  };
+  friendsMenuBtn.addEventListener("mouseenter", () => {
+    cancelClose();
+    friendsMenuWrap?.classList.add("open");
+    friendsMenuBtn.setAttribute("aria-expanded", "true");
+  });
+  friendsMenuBtn.addEventListener("mouseleave", scheduleClose);
+  friendsMenuBtn.addEventListener("click", () => {
+    friendsMenuWrap?.classList.remove("open");
+    friendsMenuBtn.setAttribute("aria-expanded", "false");
+    setActivePage("friends");
+  });
+  if (friendsMenu) {
+    friendsMenu.addEventListener("mouseenter", cancelClose);
+    friendsMenu.addEventListener("mouseleave", scheduleClose);
+  }
+}
+
+if (friendsMenuAddBtn) {
+  friendsMenuAddBtn.addEventListener("click", () => {
+    friendsMenuWrap?.classList.remove("open");
+    friendsMenuBtn?.setAttribute("aria-expanded", "false");
+    openAddFriendModal();
+  });
+}
+
+if (friendsMenuList) {
+  friendsMenuList.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-profile]");
+    if (!btn) return;
+    const target = btn.getAttribute("data-profile");
+    friendsMenuWrap?.classList.remove("open");
+    friendsMenuBtn?.setAttribute("aria-expanded", "false");
+    openProfile(target);
+  });
+}
+
 document.addEventListener("click", (e) => {
   if (!profileMenuWrap || profileMenuWrap.hidden) return;
   if (profileMenuWrap.contains(e.target)) return;
   closeProfileMenu();
 });
 if (notificationsBtn) {
-  notificationsBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    if (notificationsPanel?.hidden) {
-      openNotificationsPanel();
-    } else {
-      closeNotificationsPanel();
+  const cancelClose = () => {
+    if (notificationsHoverTimer) {
+      clearTimeout(notificationsHoverTimer);
+      notificationsHoverTimer = null;
     }
+  };
+  const scheduleClose = () => {
+    cancelClose();
+    notificationsHoverTimer = setTimeout(() => {
+      closeNotificationsPanel();
+    }, 180);
+  };
+  notificationsBtn.addEventListener("mouseenter", () => {
+    cancelClose();
+    openNotificationsPanel();
   });
+  notificationsBtn.addEventListener("mouseleave", scheduleClose);
+  if (notificationsPanel) {
+    notificationsPanel.addEventListener("mouseenter", cancelClose);
+    notificationsPanel.addEventListener("mouseleave", scheduleClose);
+  }
 }
 if (notificationsCloseBtn) {
   notificationsCloseBtn.addEventListener("click", () => {
