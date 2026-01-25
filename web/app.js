@@ -4192,7 +4192,7 @@ function setFindGamesConsole(consoleId) {
 
 function buildFindGamesLetters() {
   if (!gameLetterBarEl) return;
-  const letters = ["all", "0-9"];
+  const letters = ["all", "#"];
   for (let code = 65; code <= 90; code += 1) {
     letters.push(String.fromCharCode(code));
   }
@@ -4205,7 +4205,7 @@ function buildFindGamesLetters() {
     btn.setAttribute("role", "tab");
     btn.setAttribute("aria-selected", letter === findGamesLetter ? "true" : "false");
     btn.dataset.letter = letter;
-    btn.addEventListener("click", () => setFindGamesLetter(letter));
+    btn.addEventListener("click", () => setFindGamesLetter(letter === "#" ? "0-9" : letter));
     gameLetterBarEl.appendChild(btn);
   }
   updateFindGamesLetterButtons();

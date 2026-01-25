@@ -503,6 +503,7 @@ h1 {
   flex-wrap: wrap;
   gap: 6px;
   margin: 6px 0 16px;
+  width: 100%;
 }
 
 .findGamesControls {
@@ -539,9 +540,11 @@ h1 {
 }
 
 .letterBtn {
-  padding: 6px 10px;
+  padding: 8px 0;
   font-size: 11px;
   letter-spacing: 0.6px;
+  flex: 1 1 42px;
+  text-align: center;
 }
 
 .letterBtn.active {
