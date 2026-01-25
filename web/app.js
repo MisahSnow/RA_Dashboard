@@ -5102,7 +5102,14 @@ async function loadScoreAttackLeaderboards(game) {
 
 function formatTimeLeft(endAt) {
   if (!endAt) return "";
-  const end = Date.parse(endAt);
+  const end = (() => {
+    if (endAt instanceof Date) return endAt.getTime();
+    const raw = String(endAt);
+    const hasTz = /Z|[+-]\d{2}:?\d{2}$/.test(raw);
+    const normalized = hasTz ? raw : `${raw.replace(" ", "T")}Z`;
+    const ts = Date.parse(normalized);
+    return Number.isNaN(ts) ? NaN : ts;
+  })();
   if (!end) return "";
   let remaining = Math.max(0, end - Date.now());
   const totalMinutes = Math.floor(remaining / 60000);
