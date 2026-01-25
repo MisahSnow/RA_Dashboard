@@ -396,6 +396,14 @@ h1 {
   transform: translateY(-4px);
 }
 
+.profileMenuWrap.lockout .profileMenu,
+.profileMenuWrap.lockout:hover .profileMenu,
+.profileMenuWrap.lockout:focus-within .profileMenu{
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-4px);
+}
+
 .controls {
   display: flex;
   gap: 12px;
@@ -2347,6 +2355,24 @@ tbody tr:nth-child(even){
 
 .profileSocialCard .socialPostCaption {
   margin-bottom: 8px;
+}
+
+.profileSocialCard #profileSocialList {
+  max-height: 750px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.profileActivityCard #profileActivityList {
+  max-height: 750px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.profileSocialActions {
+  display: flex;
+  justify-content: center;
+  margin-top: 10px;
 }
 
 .profileRecentCard {

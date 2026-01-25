@@ -2828,13 +2828,20 @@ app.get("/api/social/posts", requireAuth, async (req, res) => {
     const username = req.session?.user?.username;
     if (!userId || !username) return res.status(401).json({ error: "Not authenticated" });
     const limitQ = typeof req.query.limit === "string" ? Number(req.query.limit) : SOCIAL_MAX_POSTS;
+    const offsetQ = typeof req.query.offset === "string" ? Number(req.query.offset) : 0;
     const limit = Math.max(1, Math.min(SOCIAL_MAX_POSTS, Number.isFinite(limitQ) ? limitQ : SOCIAL_MAX_POSTS));
+    const offset = Math.max(0, Number.isFinite(offsetQ) ? offsetQ : 0);
+    const userFilter = typeof req.query.user === "string" ? normalizeUsername(req.query.user) : "";
     const friendsRes = await pool.query(
       `SELECT friend_username FROM friends WHERE user_id = $1`,
       [userId]
     );
     const friendUsernames = friendsRes.rows.map(r => normalizeUsername(r.friend_username));
     const allowed = [normalizeUsername(username), ...friendUsernames];
+    if (userFilter && !allowed.map(u => u.toLowerCase()).includes(userFilter.toLowerCase())) {
+      return res.status(403).json({ error: "Not authorized to view this user's posts." });
+    }
+    const allowedList = userFilter ? [userFilter] : allowed;
     const postsRes = await pool.query(
       `
         SELECT id, username, game_title, caption, image_data, image_url, is_auto, post_type, achievement_title, achievement_id, achievement_description, created_at
@@ -2842,10 +2849,14 @@ app.get("/api/social/posts", requireAuth, async (req, res) => {
         WHERE LOWER(username) = ANY($1)
         ORDER BY created_at DESC
         LIMIT $2
+        OFFSET $3
       `,
-      [allowed, limit]
+      [allowedList, limit + 1, offset]
     );
-    const posts = postsRes.rows.map((row) => ({
+    const rawRows = postsRes.rows;
+    const hasMore = rawRows.length > limit;
+    const rows = hasMore ? rawRows.slice(0, limit) : rawRows;
+    const posts = rows.map((row) => ({
       id: row.id,
       user: row.username,
       game: row.game_title || "",
@@ -2911,7 +2922,7 @@ app.get("/api/social/posts", requireAuth, async (req, res) => {
       post.reactions = reactionsByPost.get(post.id) || { likes: 0, dislikes: 0, userReaction: null };
     });
 
-    res.json({ count: posts.length, results: posts });
+    res.json({ count: posts.length, offset, hasMore, results: posts });
   } catch (err) {
     const status = err?.status || 500;
     res.status(status).json({ error: err?.message || "Failed to fetch social posts" });

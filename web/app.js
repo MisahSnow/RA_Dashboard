@@ -260,6 +260,7 @@ const profileRecentTabButtons = document.querySelectorAll("[data-profile-recent-
 const profileActivityListEl = document.getElementById("profileActivityList");
 const profileActivityLoadingEl = document.getElementById("profileActivityLoading");
 const profileSocialListEl = document.getElementById("profileSocialList");
+const profileSocialMoreBtn = document.getElementById("profileSocialMoreBtn");
 const findGamesListEl = document.getElementById("findGamesList");
 const findGamesAchievementsEl = document.getElementById("findGamesAchievements");
 const findGamesLoadingEl = document.getElementById("findGamesLoading");
@@ -682,6 +683,11 @@ let socialGameSuggestions = [];
 let socialGameSelected = null;
 let socialGameSuggestionsLoaded = false;
 let socialTrendingPlayers = new Map();
+const PROFILE_SOCIAL_PAGE_SIZE = 20;
+let profileSocialPosts = [];
+let profileSocialOffset = 0;
+let profileSocialHasMore = false;
+let profileSocialLoading = false;
 
 function clampUsername(s) {
   return (s || "").trim().replace(/\s+/g, "");
@@ -1417,7 +1423,7 @@ async function loadSocialPostsFromServer({ silent = false } = {}) {
   if (!socialPostListEl) return;
   try {
     if (!silent) setSocialStatus("Loading feed...");
-    const data = await fetchSocialPosts(SOCIAL_MAX_POSTS);
+    const data = await fetchSocialPosts({ limit: SOCIAL_MAX_POSTS });
     const results = Array.isArray(data?.results) ? data.results : [];
     socialPosts = results;
     const avatarUsers = new Set();
@@ -1436,11 +1442,6 @@ async function loadSocialPostsFromServer({ silent = false } = {}) {
     loadFriendSuggestions().then(renderSocialSidebarSuggestions).catch(() => {
       renderSocialSidebarSuggestions([]);
     });
-    const profileUser = clampUsername(currentProfileUser);
-    const profilePosts = profileUser
-      ? socialPosts.filter(p => normalizeUserKey(p?.user) === normalizeUserKey(profileUser))
-      : [];
-    renderSocialPosts(profilePosts, profileSocialListEl, { showComments: false, showActions: false, limit: 3 });
     if (!silent) setSocialStatus("");
   } catch (err) {
     const message = String(err?.message || "");
@@ -1449,18 +1450,68 @@ async function loadSocialPostsFromServer({ silent = false } = {}) {
       if (socialPostListEl) {
         socialPostListEl.innerHTML = `<div class="meta">Set your username to see friends posts.</div>`;
       }
-      if (profileSocialListEl) {
-        profileSocialListEl.innerHTML = `<div class="meta">Set your username to see friends posts.</div>`;
-      }
       return;
     }
     if (!silent) setSocialStatus("Failed to load social feed.");
     if (socialPostListEl) {
       socialPostListEl.innerHTML = `<div class="meta">Failed to load screenshots.</div>`;
     }
-    if (profileSocialListEl) {
-      profileSocialListEl.innerHTML = `<div class="meta">Failed to load screenshots.</div>`;
+  }
+}
+
+function updateProfileSocialMoreBtn() {
+  if (!profileSocialMoreBtn) return;
+  profileSocialMoreBtn.hidden = !profileSocialHasMore;
+  profileSocialMoreBtn.disabled = profileSocialLoading;
+  profileSocialMoreBtn.textContent = profileSocialLoading ? "Loading..." : "Load more";
+}
+
+async function loadProfileSocialPosts({ reset = false } = {}) {
+  if (!profileSocialListEl) return;
+  const target = clampUsername(currentProfileUser);
+  if (!target) {
+    profileSocialListEl.innerHTML = `<div class="meta">Select a profile to see posts.</div>`;
+    profileSocialPosts = [];
+    profileSocialOffset = 0;
+    profileSocialHasMore = false;
+    updateProfileSocialMoreBtn();
+    return;
+  }
+  if (profileSocialLoading) return;
+  if (reset) {
+    profileSocialPosts = [];
+    profileSocialOffset = 0;
+    profileSocialHasMore = false;
+    profileSocialListEl.innerHTML = `<div class="meta">Loading posts...</div>`;
+  }
+  profileSocialLoading = true;
+  updateProfileSocialMoreBtn();
+  const loadToken = profileLoadToken;
+  const targetAtRequest = target;
+  try {
+    const data = await fetchSocialPosts({
+      limit: PROFILE_SOCIAL_PAGE_SIZE,
+      offset: profileSocialOffset,
+      user: targetAtRequest
+    });
+    if (loadToken !== profileLoadToken || clampUsername(currentProfileUser) !== targetAtRequest) return;
+    const results = Array.isArray(data?.results) ? data.results : [];
+    if (profileSocialOffset === 0) {
+      profileSocialPosts = results.slice();
+    } else if (results.length) {
+      profileSocialPosts = profileSocialPosts.concat(results);
     }
+    profileSocialOffset = profileSocialPosts.length;
+    profileSocialHasMore = !!data?.hasMore;
+    renderSocialPosts(profileSocialPosts, profileSocialListEl, { showComments: false, showActions: false });
+  } catch {
+    if (loadToken !== profileLoadToken || clampUsername(currentProfileUser) !== targetAtRequest) return;
+    profileSocialListEl.innerHTML = `<div class="meta">Failed to load posts.</div>`;
+    profileSocialHasMore = false;
+  } finally {
+    if (loadToken !== profileLoadToken || clampUsername(currentProfileUser) !== targetAtRequest) return;
+    profileSocialLoading = false;
+    updateProfileSocialMoreBtn();
   }
 }
 
@@ -1652,10 +1703,26 @@ function closeProfileMenu() {
   if (!profileMenuWrap) return;
   profileMenuWrap.classList.remove("open");
   profileMenuWrap.classList.add("closing");
+  profileMenuWrap.classList.add("lockout");
   profileMenuBtn?.setAttribute("aria-expanded", "false");
-  setTimeout(() => {
+  const release = () => {
     profileMenuWrap.classList.remove("closing");
-  }, 180);
+    profileMenuWrap.removeEventListener("mouseleave", release);
+  };
+  if (profileMenuWrap.matches(":hover")) {
+    profileMenuWrap.addEventListener("mouseleave", release);
+  } else {
+    release();
+  }
+  const clearLockout = () => {
+    profileMenuWrap.classList.remove("lockout");
+    profileMenuWrap.removeEventListener("mouseleave", clearLockout);
+  };
+  if (profileMenuWrap.matches(":hover")) {
+    profileMenuWrap.addEventListener("mouseleave", clearLockout);
+  } else {
+    clearLockout();
+  }
 }
 
 function applyCachedSocialAvatars(usernames) {
@@ -2912,9 +2979,14 @@ async function loginUser(username) {
   return clampUsername(data?.username || username);
 }
 
-async function fetchSocialPosts(limit = SOCIAL_MAX_POSTS) {
+async function fetchSocialPosts({ limit = SOCIAL_MAX_POSTS, offset = 0, user = "" } = {}) {
   const count = Number.isFinite(limit) ? limit : SOCIAL_MAX_POSTS;
-  return fetchServerJson(`/api/social/posts?limit=${encodeURIComponent(count)}`, { silent: true });
+  const safeOffset = Number.isFinite(offset) ? Math.max(0, offset) : 0;
+  const params = new URLSearchParams();
+  params.set("limit", String(count));
+  if (safeOffset) params.set("offset", String(safeOffset));
+  if (user) params.set("user", user);
+  return fetchServerJson(`/api/social/posts?${params.toString()}`, { silent: true });
 }
 
 async function createSocialPost({ postType = "text", imageData = "", imageUrl = "", caption = "", game = "", achievementTitle = "", achievementDescription = "", achievementId = "" }) {
@@ -6877,6 +6949,14 @@ async function openProfile(username) {
   if (profileRecentGamesEl) {
     profileRecentGamesEl.innerHTML = `<div class="meta">Loading recent games...</div>`;
   }
+  if (profileSocialListEl) {
+    profileSocialListEl.innerHTML = `<div class="meta">Loading posts...</div>`;
+  }
+  profileSocialPosts = [];
+  profileSocialOffset = 0;
+  profileSocialHasMore = false;
+  profileSocialLoading = false;
+  updateProfileSocialMoreBtn();
   setProfileRecentTab("recent");
 
   setLoading(profileLoadingEl, true);
@@ -6884,6 +6964,7 @@ async function openProfile(username) {
   loadProfileRecentGames(target);
   loadProfileCompletionList(target);
   loadProfileBacklog(target);
+  loadProfileSocialPosts({ reset: true });
 
   let summaryRendered = false;
   try {
@@ -8231,6 +8312,12 @@ if (profileBacklogBtn) {
   });
 }
 
+if (profileSocialMoreBtn) {
+  profileSocialMoreBtn.addEventListener("click", () => {
+    loadProfileSocialPosts();
+  });
+}
+
 if (backlogRemoveBtn) {
   backlogRemoveBtn.addEventListener("click", () => {
     setBacklogRemoveMode(!backlogRemoveMode);
@@ -8759,6 +8846,14 @@ if (profileCloseBtn) {
     if (profileGameSearchEl) {
       profileGameSearchEl.value = "";
     }
+    if (profileSocialListEl) {
+      profileSocialListEl.innerHTML = "";
+    }
+    profileSocialPosts = [];
+    profileSocialOffset = 0;
+    profileSocialHasMore = false;
+    profileSocialLoading = false;
+    updateProfileSocialMoreBtn();
     setLoading(profileLoadingEl, false);
     setLoading(compareLoadingEl, false);
     comparePanel.hidden = true;
@@ -8822,15 +8917,18 @@ if (settingsBtn) {
 }
 
 if (profileMenuBtn) {
+  profileMenuBtn.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+  });
   profileMenuBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
     if (!currentUser) {
       ensureUsername();
       return;
     }
-    const open = !profileMenuWrap?.classList.contains("open");
-    profileMenuWrap?.classList.toggle("open", open);
-    profileMenuBtn.setAttribute("aria-expanded", open ? "true" : "false");
-    e.stopPropagation();
+    closeProfileMenu();
+    profileMenuBtn.blur();
+    openProfile(currentUser);
   });
 }
 
