@@ -1055,9 +1055,11 @@ function renderSocialPosts(posts = socialPosts, targetEl = socialPostListEl, { s
 
     const header = document.createElement("div");
     header.className = "socialPostHeader";
-    const author = document.createElement("div");
-    author.className = "socialPostAuthor";
+    const author = document.createElement("button");
+    author.type = "button";
+    author.className = "linkBtn socialPostAuthor";
     author.textContent = post?.user || "Unknown";
+    if (post?.user) author.dataset.profile = post.user;
     const time = document.createElement("div");
     time.className = "meta";
     time.textContent = formatDate(post?.createdAt);
@@ -1235,9 +1237,11 @@ function renderSocialPosts(posts = socialPosts, targetEl = socialPostListEl, { s
 
           const commentHeader = document.createElement("div");
           commentHeader.className = "socialCommentHeader";
-          const commentAuthor = document.createElement("div");
-          commentAuthor.className = "socialCommentAuthor";
+          const commentAuthor = document.createElement("button");
+          commentAuthor.type = "button";
+          commentAuthor.className = "linkBtn socialCommentAuthor";
           commentAuthor.textContent = comment?.user || "Unknown";
+          if (comment?.user) commentAuthor.dataset.profile = comment.user;
           const commentTime = document.createElement("div");
           commentTime.className = "meta";
           commentTime.textContent = formatDate(comment?.createdAt);
@@ -8189,6 +8193,12 @@ function bindSocialList(listEl) {
     }
   });
   listEl.addEventListener("click", (e) => {
+    const profileBtn = e.target.closest("button[data-profile]");
+    if (profileBtn) {
+      const target = profileBtn.getAttribute("data-profile");
+      openProfile(target);
+      return;
+    }
     const deleteBtn = e.target.closest("button[data-delete-post-id]");
     if (deleteBtn) {
       const id = deleteBtn.getAttribute("data-delete-post-id");
