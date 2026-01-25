@@ -3621,8 +3621,12 @@ app.get("/api/now-playing/:username", async (req, res) => {
     const cached = cacheGet(cacheKey);
     if (cached) return res.json({ ...cached, cached: true });
 
-    // only need the most recent game
-    const [latest] = await raGetUserRecentlyPlayedGames(username, 1, 0, apiKey);
+    // only need the most recent game + summary for rich presence
+    const [latestList, summary] = await Promise.all([
+      raGetUserRecentlyPlayedGames(username, 1, 0, apiKey),
+      raGetUserSummary(username, apiKey).catch(() => null)
+    ]);
+    const [latest] = latestList || [];
 
     if (!latest) {
       const payload = { username, nowPlaying: false, reason: "no recent games" };
@@ -3635,21 +3639,39 @@ app.get("/api/now-playing/:username", async (req, res) => {
     const ts = Date.parse(lastPlayed.replace(" ", "T") + "Z"); // best effort
     const ageSeconds = ts ? Math.floor((Date.now() - ts) / 1000) : null;
 
+    const summaryUser =
+      (summary && typeof summary.User === "object" ? summary.User : null) ||
+      (summary && typeof summary.user === "object" ? summary.user : null) ||
+      summary;
+    const summaryRichPresence =
+      summaryUser?.RichPresenceMsg ??
+      summaryUser?.RichPresence ??
+      summaryUser?.RichPresenceText ??
+      summary?.RichPresenceMsg ??
+      summary?.RichPresence ??
+      summary?.RichPresenceText;
+    const summaryGameId = summaryUser?.LastGameID ?? summary?.LastGameID ?? summaryUser?.LastGameId ?? summary?.LastGameId;
+    const summaryTitle = summaryUser?.LastGameTitle ?? summary?.LastGameTitle ?? summaryUser?.LastGame ?? summary?.LastGame;
+    const summaryConsoleName =
+      summaryUser?.LastGameConsoleName ?? summary?.LastGameConsoleName ?? summaryUser?.LastGameConsole ?? summary?.LastGameConsole;
+    const summaryImageIcon = summaryUser?.LastGameIcon ?? summary?.LastGameIcon ?? summaryUser?.LastGameImageIcon ?? summary?.LastGameImageIcon;
+
     const payload = {
       username,
       nowPlaying: ageSeconds !== null ? ageSeconds <= win : false,
       ageSeconds,
       windowSeconds: win,
-      gameId: latest.GameID ?? latest.gameId,
-      consoleName: latest.ConsoleName ?? latest.consoleName,
-      title: latest.Title ?? latest.title,
+      gameId: latest.GameID ?? latest.gameId ?? summaryGameId,
+      consoleName: latest.ConsoleName ?? latest.consoleName ?? summaryConsoleName,
+      title: latest.Title ?? latest.title ?? summaryTitle,
       richPresence:
+        summaryRichPresence ??
         latest.RichPresenceMsg ??
         latest.RichPresence ??
         latest.RichPresenceText ??
         latest.richPresence ??
         latest.richPresenceMsg,
-      imageIcon: latest.ImageIcon ?? latest.imageIcon,
+      imageIcon: latest.ImageIcon ?? latest.imageIcon ?? summaryImageIcon,
       lastPlayed
     };
 
