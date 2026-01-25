@@ -30,5 +30,6 @@ This repository is a single Node/Express server (`server.js`) with a vanilla JS 
 .
 - Logging:
   - When making commits for testing, record the commit hash in chat for traceability.
+  - Always add changes to the commit log when asked to push.
 
 If you add new local DB endpoints, consider whether they should bypass the client queue. If you add RA-backed endpoints, keep them queued and cached to avoid rate limits. 
