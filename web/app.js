@@ -3589,6 +3589,25 @@ function moveProfilePanel(targetHost) {
   }
 }
 
+function stopSocialEmbeds() {
+  if (!socialPage) return;
+  const frames = socialPage.querySelectorAll("iframe");
+  frames.forEach((frame) => {
+    const src = frame.getAttribute("src") || "";
+    if (!frame.dataset.src && src) frame.dataset.src = src;
+    frame.setAttribute("src", "about:blank");
+  });
+}
+
+function restoreSocialEmbeds() {
+  if (!socialPage) return;
+  const frames = socialPage.querySelectorAll("iframe[data-src]");
+  frames.forEach((frame) => {
+    const src = frame.dataset.src || "";
+    if (src) frame.setAttribute("src", src);
+  });
+}
+
 function setActivePage(name) {
   if (name && name !== activePageName) {
     pausedPages.add(activePageName);
@@ -3635,8 +3654,10 @@ function setActivePage(name) {
     loadSocialPostsFromServer();
     updateSocialComposerState();
     startSocialPolling();
+    restoreSocialEmbeds();
   } else {
     stopSocialPolling();
+    stopSocialEmbeds();
   }
   if (name === "friends") {
     refreshFriendsPage();
