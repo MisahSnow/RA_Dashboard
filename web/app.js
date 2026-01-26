@@ -8894,6 +8894,11 @@ if (settingsBtn) {
 }
 
 if (profileMenuBtn) {
+  profileMenuBtn.addEventListener("mouseenter", () => {
+    closeNotificationsPanel();
+    friendsMenuWrap?.classList.remove("open");
+    friendsMenuBtn?.setAttribute("aria-expanded", "false");
+  });
   profileMenuBtn.addEventListener("pointerdown", (e) => {
     e.preventDefault();
   });
@@ -8950,6 +8955,8 @@ if (friendsMenuBtn) {
   friendsMenuBtn.addEventListener("mouseenter", () => {
     cancelClose();
     ensureFriendsLoaded();
+    closeNotificationsPanel();
+    closeProfileMenu();
     friendsMenuWrap?.classList.add("open");
     friendsMenuBtn.setAttribute("aria-expanded", "true");
   });
@@ -9004,6 +9011,9 @@ if (notificationsBtn) {
   };
   notificationsBtn.addEventListener("mouseenter", () => {
     cancelClose();
+    friendsMenuWrap?.classList.remove("open");
+    friendsMenuBtn?.setAttribute("aria-expanded", "false");
+    closeProfileMenu();
     openNotificationsPanel();
   });
   notificationsBtn.addEventListener("mouseleave", scheduleClose);
