@@ -2275,11 +2275,6 @@ tbody tr:nth-child(even){
   padding:4px 12px;
 }
 
-.profilePanel #profileCloseBtn{
-  height:28px;
-  padding:0 12px;
-}
-
 .profileActions button[disabled]{
   opacity: 0.7;
   cursor: not-allowed;
@@ -2526,6 +2521,13 @@ tbody tr:nth-child(even){
   flex-direction: column;
   gap: 6px;
   align-items: center;
+}
+
+.profileHeroActions {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 12px;
 }
 
 .profileHeroLevel {

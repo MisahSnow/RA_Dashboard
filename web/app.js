@@ -441,9 +441,7 @@ const profileTitleNameEl = document.getElementById("profileTitleName");
 const profileSummaryEl = document.getElementById("profileSummary");
 const profileInsightsEl = document.getElementById("profileInsights");
 const profileSharedGamesEl = document.getElementById("profileSharedGames");
-const profileCloseBtn = document.getElementById("profileCloseBtn");
 const profileShowMoreBtn = document.getElementById("profileShowMoreBtn");
-const profileBacklogBtn = document.getElementById("profileBacklogBtn");
 const profileGamesNoteEl = document.getElementById("profileGamesNote");
 const profileGameSearchEl = document.getElementById("profileGameSearch");
 const profileLegendMeEl = document.getElementById("profileLegendMe");
@@ -6775,6 +6773,7 @@ function renderProfileSummary(summary) {
   identity.append(levelEl, nextLevelEl, nameEl, rankEl);
   top.append(avatarWrap, identity);
 
+
   const stats = document.createElement("div");
   stats.className = "profileHeroStats";
   const statItems = [
@@ -6810,6 +6809,34 @@ function renderProfileSummary(summary) {
 
   card.append(top, stats, meta);
   profileSummaryEl.appendChild(card);
+
+  const isFriend = friends.some((name) => normalizeUserKey(name) === normalizeUserKey(username));
+  if (!profileIsSelf && currentUser && !isFriend) {
+    const actions = document.createElement("div");
+    actions.className = "profileHeroActions";
+    const addBtn = document.createElement("button");
+    addBtn.type = "button";
+    addBtn.className = "smallBtn primaryBtn";
+    addBtn.textContent = "Add Friend";
+    addBtn.addEventListener("click", async () => {
+      addBtn.disabled = true;
+      addBtn.textContent = "Adding...";
+      try {
+        await addFriendToServer(username);
+        friends = Array.from(new Set([...friends, username]));
+        renderChallengeFriendOptions(friends);
+        if (activePageName === "friends") renderFriendsList(friends);
+        renderFriendsMenu();
+        addBtn.textContent = "Added";
+      } catch (e) {
+        addBtn.disabled = false;
+        addBtn.textContent = "Add Friend";
+        setStatus(String(e?.message || "Unable to add friend."));
+      }
+    });
+    actions.appendChild(addBtn);
+    profileSummaryEl.appendChild(actions);
+  }
 }
 
 function renderProfileInsights({ sharedCount, meSummary, themSummary, isSelf }) {
@@ -6956,8 +6983,6 @@ async function openProfile(username) {
     profileShowMoreBtn.hidden = true;
     profileShowMoreBtn.textContent = "Show more";
   }
-  if (profileCloseBtn) profileCloseBtn.hidden = isSelf;
-  if (profileBacklogBtn) profileBacklogBtn.hidden = isSelf;
   if (profileGamesNoteEl) {
     profileGamesNoteEl.textContent = "Recent games sorted by last played.";
   }
@@ -7017,6 +7042,8 @@ async function openProfile(username) {
 
     const needMine = !mineCache || mineCache.stale;
     const needTheirs = !theirsCache || theirsCache.stale;
+
+    await ensureFriendsLoaded();
 
     let meSummary = null;
     let themSummaryRaw = null;
@@ -8329,13 +8356,6 @@ if (profileShowMoreBtn) {
   });
 }
 
-if (profileBacklogBtn) {
-  profileBacklogBtn.addEventListener("click", () => {
-    setBacklogViewUser(currentProfileUser || currentUser);
-    setActivePage("backlog");
-  });
-}
-
 if (profileSocialMoreBtn) {
   profileSocialMoreBtn.addEventListener("click", () => {
     loadProfileSocialPosts();
@@ -8832,74 +8852,6 @@ if (refreshBtn) {
   });
 }
 
-
-if (profileCloseBtn) {
-  profileCloseBtn.addEventListener("click", () => {
-    const shouldReturnToDashboard = profilePage && !profilePage.hidden;
-    profilePanel.hidden = true;
-    profileTitleNameEl.textContent = "";
-    profileSummaryEl.innerHTML = "";
-    profileAllowCompare = true;
-    profileIsSelf = false;
-    if (profileInsightsEl) profileInsightsEl.innerHTML = "";
-    profileSharedGamesEl.innerHTML = "";
-    profileSharedGames = [];
-    profileDisplayedGames = [];
-    profileAllGamesLoaded = false;
-    profileGamesEmptyMessage = "No recent games found.";
-    profileAutoLoadingAll = false;
-    profileSkipAutoLoadOnce = false;
-    profileGameAchievementCounts = new Map();
-    profileGameAchievementPending = new Map();
-    profileCompletionByGameId = new Map();
-    profileCompletionLoading = false;
-    profileCompletionTarget = "";
-    if (profileLegendMeEl) {
-      profileLegendMeEl.textContent = "";
-    }
-    if (profileLegendThemEl) {
-      profileLegendThemEl.textContent = "";
-    }
-    if (profileShowMoreBtn) {
-      profileShowMoreBtn.disabled = true;
-      profileShowMoreBtn.hidden = true;
-      profileShowMoreBtn.textContent = "Show more";
-    }
-    if (profileGamesNoteEl) {
-      profileGamesNoteEl.textContent = "";
-    }
-    if (profileGameSearchEl) {
-      profileGameSearchEl.value = "";
-    }
-    if (profileSocialListEl) {
-      profileSocialListEl.innerHTML = "";
-    }
-    profileSocialPosts = [];
-    profileSocialOffset = 0;
-    profileSocialHasMore = false;
-    profileSocialLoading = false;
-    updateProfileSocialMoreBtn();
-    setLoading(profileLoadingEl, false);
-    setLoading(compareLoadingEl, false);
-    comparePanel.hidden = true;
-    if (selfGamePanel) selfGamePanel.hidden = true;
-    compareTitleGameEl.textContent = "";
-    compareMetaEl.textContent = "";
-    compareAchievementsEl.innerHTML = "";
-    compareTimesEl.innerHTML = "";
-    if (selfGameTitleEl) selfGameTitleEl.textContent = "";
-    if (selfGameMetaEl) selfGameMetaEl.textContent = "";
-    if (selfGameAchievementsEl) selfGameAchievementsEl.innerHTML = "";
-    if (profileActivityListEl) profileActivityListEl.innerHTML = "";
-    if (profileRecentGamesEl) profileRecentGamesEl.innerHTML = "";
-    setActiveCompareTab("achievements");
-    currentProfileUser = "";
-    activeProfileLoadToken = 0;
-    if (shouldReturnToDashboard) {
-      setActivePage("dashboard");
-    }
-  });
-}
 
 if (compareBackBtn) {
   compareBackBtn.addEventListener("click", () => {
