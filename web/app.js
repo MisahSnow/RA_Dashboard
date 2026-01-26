@@ -250,10 +250,6 @@ const friendsPage = document.getElementById("friendsPage");
 const gamePage = document.getElementById("gamePage");
 const profileHostDashboard = document.getElementById("profileHostDashboard");
 const profileHostProfile = document.getElementById("profileHostProfile");
-const selfGameHostDashboard = document.getElementById("selfGameHostDashboard");
-const selfGameHostProfile = document.getElementById("selfGameHostProfile");
-const selfGameHostPage = document.getElementById("selfGameHostPage");
-const compareHostPage = document.getElementById("compareHostPage");
 const profileRecentGamesEl = document.getElementById("profileRecentGames");
 const profileRecentLoadingEl = document.getElementById("profileRecentLoading");
 const profileRecentTabButtons = document.querySelectorAll("[data-profile-recent-tab]");
@@ -277,13 +273,8 @@ const findGamesTabButtons = document.querySelectorAll("[data-find-tab]");
 const findTabSearch = document.getElementById("findTabSearch");
 const findTabSuggested = document.getElementById("findTabSuggested");
 const findSearchListPanel = document.getElementById("findSearchListPanel");
-const findSearchAchievementsPanel = document.getElementById("findSearchAchievementsPanel");
-const findSearchBackBtn = document.getElementById("findSearchBackBtn");
 const findSuggestedListPanel = document.getElementById("findSuggestedListPanel");
-const findSuggestedAchievementsPanel = document.getElementById("findSuggestedAchievementsPanel");
-const findSuggestedBackBtn = document.getElementById("findSuggestedBackBtn");
 const findSuggestedListEl = document.getElementById("findSuggestedList");
-const findSuggestedAchievementsEl = document.getElementById("findSuggestedAchievements");
 const findSuggestedStatusEl = document.getElementById("findSuggestedStatus");
 const findSuggestedLoadingEl = document.getElementById("findSuggestedLoading");
 const backlogListEl = document.getElementById("backlogList");
@@ -431,7 +422,6 @@ const recentAchievementsShowLessBtn = document.getElementById("recentAchievement
 const recentTimesToggleBtn = document.getElementById("recentTimesToggleBtn");
 const leaderboardLoadingEl = document.getElementById("leaderboardLoading");
 const profileLoadingEl = document.getElementById("profileLoading");
-const compareLoadingEl = document.getElementById("compareLoading");
 const recentAchievementsLoadingEl = document.getElementById("recentAchievementsLoading");
 const recentTimesLoadingEl = document.getElementById("recentTimesLoading");
 
@@ -447,23 +437,10 @@ const profileGameSearchEl = document.getElementById("profileGameSearch");
 const profileLegendMeEl = document.getElementById("profileLegendMe");
 const profileLegendThemEl = document.getElementById("profileLegendThem");
 const findGamePageCard = document.getElementById("findGamePageCard");
-const findGamePageTitleEl = document.getElementById("findGamePageTitle");
 const findGamePageBackBtn = document.getElementById("findGamePageBackBtn");
 const findGamePageAchievementsEl = document.getElementById("findGamePageAchievements");
 const findGameCompareSelect = document.getElementById("findGameCompareSelect");
 let activeActivityTab = "achievements";
-
-const comparePanel = document.getElementById("comparePanel");
-const compareTitleGameEl = document.getElementById("compareTitleGame");
-const compareMetaEl = document.getElementById("compareMeta");
-const compareAchievementsEl = document.getElementById("compareAchievements");
-const compareTimesEl = document.getElementById("compareTimes");
-const compareBackBtn = document.getElementById("compareBackBtn");
-const selfGamePanel = document.getElementById("selfGamePanel");
-const selfGameTitleEl = document.getElementById("selfGameTitle");
-const selfGameMetaEl = document.getElementById("selfGameMeta");
-const selfGameAchievementsEl = document.getElementById("selfGameAchievements");
-const selfGameBackBtn = document.getElementById("selfGameBackBtn");
 
 // Challenge UI elements and modals.
 const challengesLoadingEl = document.getElementById("challengesLoading");
@@ -495,10 +472,6 @@ const scoreAttackTabButtons = document.querySelectorAll(".scoreAttackTabBtn");
 const scoreAttackGamesSearch = document.getElementById("scoreAttackGamesSearch");
 const scoreAttackBoardsSearch = document.getElementById("scoreAttackBoardsSearch");
 
-// Shared tab widgets.
-const compareTabButtons = document.querySelectorAll(".compareTabBtn");
-const compareTabPanels = document.querySelectorAll(".compareTabPanel");
-
 const tabButtons = document.querySelectorAll(".tabBtn");
 const tabPanels = document.querySelectorAll(".tabPanel");
 
@@ -519,8 +492,6 @@ let profileGameAchievementCounts = new Map();
 let profileGameAchievementPending = new Map();
 let profileAllowCompare = true;
 let profileIsSelf = false;
-let selfGameReturnToProfile = false;
-let compareReturnToProfile = false;
 let profileCompletionByGameId = new Map();
 let profileCompletionLoading = false;
 let profileCompletionTarget = "";
@@ -3585,37 +3556,10 @@ function setActiveTab(name) {
   }
 }
 
-function setActiveCompareTab(name) {
-  compareTabButtons.forEach(btn => {
-    const isActive = btn.dataset.tab === name;
-    btn.classList.toggle("active", isActive);
-    btn.setAttribute("aria-selected", isActive ? "true" : "false");
-  });
-
-  compareTabPanels.forEach(panel => {
-    const isActive = panel.id === `compare-tab-${name}`;
-    panel.classList.toggle("active", isActive);
-  });
-}
-
 function moveProfilePanel(targetHost) {
   if (!profilePanel || !targetHost) return;
   if (profilePanel.parentElement !== targetHost) {
     targetHost.appendChild(profilePanel);
-  }
-}
-
-function moveSelfGamePanel(targetHost) {
-  if (!selfGamePanel || !targetHost) return;
-  if (selfGamePanel.parentElement !== targetHost) {
-    targetHost.appendChild(selfGamePanel);
-  }
-}
-
-function moveComparePanel(targetHost) {
-  if (!comparePanel || !targetHost) return;
-  if (comparePanel.parentElement !== targetHost) {
-    targetHost.appendChild(comparePanel);
   }
 }
 
@@ -3678,19 +3622,12 @@ function setActivePage(name) {
     moveProfilePanel(profileHostProfile);
     refreshCompletionBadges();
     loadSocialPostsFromServer({ silent: true });
-  } else if (name === "game") {
-    moveSelfGamePanel(selfGameHostPage);
-    moveComparePanel(compareHostPage);
   } else {
     const isSelfOpen = currentProfileUser && currentUser &&
       currentProfileUser.toLowerCase() === currentUser.toLowerCase();
     if (!isSelfOpen) {
       moveProfilePanel(profileHostDashboard);
     }
-    if (selfGamePanel) selfGamePanel.hidden = true;
-    moveSelfGamePanel(selfGameHostPage);
-    if (comparePanel) comparePanel.hidden = true;
-    moveComparePanel(compareHostPage);
   }
 }
 
@@ -3704,17 +3641,6 @@ function ensureFindGamesReady() {
     });
     setFindGamesTab(findGamesTab);
   }
-  if (findGamesAchievementsEl) {
-    findGamesAchievementsEl.innerHTML = `<div class="meta">Select a game to see achievements.</div>`;
-    findGamesAchievementsEl.addEventListener("click", (e) => {
-      const img = e.target.closest(".findGameMediaItem img");
-      if (!img || !imageModal || !imageModalImg) return;
-      const src = img.getAttribute("src");
-      if (!src) return;
-      imageModalImg.src = src;
-      imageModal.hidden = false;
-    });
-  }
   if (findGamePageAchievementsEl) {
     findGamePageAchievementsEl.innerHTML = `<div class="meta">Select a game to see achievements.</div>`;
     findGamePageAchievementsEl.addEventListener("click", (e) => {
@@ -3724,27 +3650,6 @@ function ensureFindGamesReady() {
       if (!src) return;
       imageModalImg.src = src;
       imageModal.hidden = false;
-    });
-  }
-  if (findSuggestedAchievementsEl) {
-    findSuggestedAchievementsEl.innerHTML = `<div class="meta">Select a game to see achievements.</div>`;
-    findSuggestedAchievementsEl.addEventListener("click", (e) => {
-      const img = e.target.closest(".findGameMediaItem img");
-      if (!img || !imageModal || !imageModalImg) return;
-      const src = img.getAttribute("src");
-      if (!src) return;
-      imageModalImg.src = src;
-      imageModal.hidden = false;
-    });
-  }
-  if (findSearchBackBtn) {
-    findSearchBackBtn.addEventListener("click", () => {
-      showFindGamesListView("search");
-    });
-  }
-  if (findSuggestedBackBtn) {
-    findSuggestedBackBtn.addEventListener("click", () => {
-      showFindGamesListView("suggested");
     });
   }
   if (findGamesSearchInput) {
@@ -4304,22 +4209,9 @@ function sortConsolesByMaker(consoles) {
 function showFindGamesListView(mode) {
   if (mode === "search") {
     if (findSearchListPanel) findSearchListPanel.hidden = false;
-    if (findSearchAchievementsPanel) findSearchAchievementsPanel.hidden = true;
   }
   if (mode === "suggested") {
     if (findSuggestedListPanel) findSuggestedListPanel.hidden = false;
-    if (findSuggestedAchievementsPanel) findSuggestedAchievementsPanel.hidden = true;
-  }
-}
-
-function showFindGamesAchievementsView(mode) {
-  if (mode === "search") {
-    if (findSearchListPanel) findSearchListPanel.hidden = true;
-    if (findSearchAchievementsPanel) findSearchAchievementsPanel.hidden = false;
-  }
-  if (mode === "suggested") {
-    if (findSuggestedListPanel) findSuggestedListPanel.hidden = true;
-    if (findSuggestedAchievementsPanel) findSuggestedAchievementsPanel.hidden = false;
   }
 }
 
@@ -4328,12 +4220,7 @@ function openFindGamePage(game, mode) {
   findGamePageActiveGame = game;
   findGameCompareTarget = "";
   findGamePageReturnTab = mode === "suggested" ? "suggested" : "search";
-  if (findGamePageTitleEl) {
-    findGamePageTitleEl.textContent = game.title || "Game";
-  }
   if (findGamePageCard) findGamePageCard.hidden = false;
-  if (selfGamePanel) selfGamePanel.hidden = true;
-  if (comparePanel) comparePanel.hidden = true;
   setActivePage("game");
   ensureFriendsLoaded();
   renderFindGameCompareOptions(friends);
@@ -6311,11 +6198,7 @@ function renderLeaderboard(rows, me) {
           openFindGamePageWithCompare({ gameId, title: gameTitle }, target);
           return;
         }
-        selfGameReturnToProfile = true;
-        profileIsSelf = true;
-        currentProfileUser = me;
-        setActivePage("profile");
-        openSelfGame({ gameId, title: gameTitle });
+        openFindGamePage({ gameId, title: gameTitle }, "search");
         return;
       }
       const profileBtn = e.target.closest("button[data-profile]");
@@ -6415,8 +6298,7 @@ function renderProfileGamesList(games, emptyMessage) {
     if (allowOpen) {
       const open = () => {
         if (profileIsSelf) {
-          selfGameReturnToProfile = true;
-          openSelfGame(g);
+          openFindGamePage(g, "search");
         } else {
           openFindGamePageWithCompare(g, currentProfileUser);
         }
@@ -7203,10 +7085,7 @@ async function openProfile(username) {
   const isSelf = me.toLowerCase() === target.toLowerCase();
 
   moveProfilePanel(profileHostProfile);
-  moveSelfGamePanel(selfGameHostProfile);
   profilePanel.hidden = false;
-  comparePanel.hidden = true;
-  if (selfGamePanel) selfGamePanel.hidden = true;
   profileSummaryEl.innerHTML = `<div class="meta">Loading profile summary...</div>`;
   if (profileInsightsEl) profileInsightsEl.innerHTML = `<div class="meta">Loading profile insights...</div>`;
   profileSharedGamesEl.innerHTML = `<div class="meta">Loading recent games...</div>`;
@@ -7370,388 +7249,6 @@ async function openProfile(username) {
     setStatus(e?.message || "Failed to load profile.");
   } finally {
     setLoading(profileLoadingEl, false);
-  }
-}
-
-function renderCompareList(items, targetEl = compareAchievementsEl) {
-  if (!targetEl) return;
-  targetEl.innerHTML = "";
-
-  if (!items.length) {
-    targetEl.innerHTML = `<div class="meta">No achievements found for this game.</div>`;
-    return;
-  }
-
-  const haveItems = items.filter(a => a.statusLabel !== "None");
-  const noneItems = items.filter(a => a.statusLabel === "None");
-  const sections = [
-    { label: "Unlocked by you or them", items: haveItems },
-    { label: "Neither earned", items: noneItems }
-  ];
-
-  const frag = document.createDocumentFragment();
-  const renderDivider = (label) => {
-    const div = document.createElement("div");
-    div.className = "selfDivider";
-    div.textContent = label;
-    frag.appendChild(div);
-  };
-
-  let renderedAny = false;
-  for (const section of sections) {
-    if (!section.items.length) continue;
-    if (renderedAny) renderDivider(section.label);
-    renderedAny = true;
-
-    for (const a of section.items) {
-      const row = document.createElement("div");
-      row.className = `compareItem${a.shared ? " shared" : ""}`;
-
-      const img = document.createElement("img");
-      img.className = "compareBadge";
-      img.alt = safeText(a.title || "achievement");
-      img.loading = "lazy";
-      img.src = iconUrl(a.badgeUrl);
-
-      const main = document.createElement("div");
-      main.className = "compareMain";
-
-      const title = document.createElement("div");
-      title.className = "compareTitle";
-      title.textContent = a.title || `Achievement ${safeText(a.id)}`;
-
-      const desc = document.createElement("div");
-      desc.className = "compareDesc";
-      const points = (a.points !== undefined && a.points !== null) ? ` (${a.points} pts)` : "";
-      desc.textContent = `${a.description || ""}${points}`;
-
-      main.appendChild(title);
-      main.appendChild(desc);
-
-      const statusWrap = document.createElement("div");
-      statusWrap.className = "statusWrap";
-
-      const status = document.createElement("div");
-      status.className = `statusPill ${a.statusClass}`;
-      status.textContent = a.statusLabel;
-
-      const pointsPill = document.createElement("div");
-      pointsPill.className = "statusPill points";
-      pointsPill.textContent = `+${a.points ?? 0} pts`;
-
-      statusWrap.appendChild(status);
-      statusWrap.appendChild(pointsPill);
-
-      row.appendChild(img);
-      row.appendChild(main);
-      row.appendChild(statusWrap);
-      frag.appendChild(row);
-    }
-  }
-
-  targetEl.appendChild(frag);
-}
-
-function renderCompareTimes(items, targetEl = compareTimesEl) {
-  if (!targetEl) return;
-  targetEl.innerHTML = "";
-
-  if (!items.length) {
-    targetEl.innerHTML = `<div class="meta">No leaderboard scores found for this game.</div>`;
-    return;
-  }
-
-  for (const t of items) {
-    const row = document.createElement("div");
-    row.className = "compareItem";
-
-    const main = document.createElement("div");
-    main.className = "compareMain";
-
-    const title = document.createElement("div");
-    title.className = "compareTitle";
-    title.textContent = t.leaderboardTitle || "Leaderboard";
-
-    const desc = document.createElement("div");
-    desc.className = "compareDesc";
-    desc.textContent = t.format ? `Format: ${t.format}` : "";
-
-    main.appendChild(title);
-    main.appendChild(desc);
-
-    const cols = document.createElement("div");
-    cols.className = "timeCols";
-
-    const mineCol = document.createElement("div");
-    mineCol.className = "timeCol";
-    mineCol.innerHTML = `
-      <div class="meta">You</div>
-      <div class="statusPill ${t.me ? "me" : "none"}">${t.me || "No time"}</div>
-    `;
-
-    const theirsCol = document.createElement("div");
-    theirsCol.className = "timeCol";
-    theirsCol.innerHTML = `
-      <div class="meta">Them</div>
-      <div class="statusPill ${t.them ? "them" : "none"}">${t.them || "No time"}</div>
-    `;
-
-    cols.appendChild(mineCol);
-    cols.appendChild(theirsCol);
-
-    row.appendChild(main);
-    row.appendChild(cols);
-    targetEl.appendChild(row);
-  }
-}
-
-function renderSelfAchievements(items) {
-  selfGameAchievementsEl.innerHTML = "";
-  if (!items.length) {
-    selfGameAchievementsEl.innerHTML = `<div class="meta">No achievements found for this game.</div>`;
-    return;
-  }
-
-  const earnedItems = items.filter(a => a.earned);
-  const getEarnedTs = (a) => {
-    const raw = a.earnedHardcoreDate || a.earnedDate || "";
-    const ts = Date.parse(raw);
-    return Number.isFinite(ts) ? ts : 0;
-  };
-  earnedItems.sort((a, b) => getEarnedTs(b) - getEarnedTs(a));
-  const lockedItems = items.filter(a => !a.earned);
-  const sections = [
-    { label: "Earned", items: earnedItems },
-    { label: "Locked", items: lockedItems }
-  ];
-
-  const frag = document.createDocumentFragment();
-  const renderDivider = (label) => {
-    const div = document.createElement("div");
-    div.className = "selfDivider";
-    div.textContent = label;
-    frag.appendChild(div);
-  };
-
-  let renderedAny = false;
-  for (const section of sections) {
-    if (!section.items.length) continue;
-    if (renderedAny) renderDivider(section.label);
-    renderedAny = true;
-
-    for (const a of section.items) {
-      const row = document.createElement("div");
-      row.className = `compareItem${a.earned ? " earned" : ""}`;
-
-      const img = document.createElement("img");
-      img.className = "compareBadge";
-      img.alt = safeText(a.title || "achievement");
-      img.loading = "lazy";
-      img.src = iconUrl(a.badgeUrl);
-
-      const main = document.createElement("div");
-      main.className = "compareMain";
-
-      const titleRow = document.createElement("div");
-      titleRow.className = "compareTitleRow";
-
-      const title = document.createElement("div");
-      title.className = "compareTitle";
-      title.textContent = a.title || `Achievement ${safeText(a.id)}`;
-
-      titleRow.appendChild(title);
-      if (a.earned) {
-        const earnedDate = a.earnedHardcoreDate || a.earnedDate;
-        if (earnedDate) {
-          const earnedMeta = document.createElement("div");
-          earnedMeta.className = "compareTitleDate";
-          earnedMeta.textContent = formatDate(earnedDate);
-          titleRow.appendChild(earnedMeta);
-        }
-      }
-
-      const desc = document.createElement("div");
-      desc.className = "compareDesc";
-      desc.textContent = a.description || "";
-
-      main.appendChild(titleRow);
-      main.appendChild(desc);
-
-      const statusWrap = document.createElement("div");
-      statusWrap.className = "statusWrap";
-
-      const status = document.createElement("div");
-      status.className = `statusPill ${a.earned ? "me" : "none"}`;
-      status.textContent = a.earned ? "Earned" : "Locked";
-
-      const pointsPill = document.createElement("div");
-      pointsPill.className = "statusPill points";
-      pointsPill.textContent = `+${a.points ?? 0} pts`;
-
-      statusWrap.appendChild(status);
-      statusWrap.appendChild(pointsPill);
-
-      row.appendChild(img);
-      row.appendChild(main);
-      row.appendChild(statusWrap);
-      frag.appendChild(row);
-    }
-  }
-
-  selfGameAchievementsEl.appendChild(frag);
-}
-
-async function openSelfGame(game) {
-  const { me } = getUsersIncludingMe();
-  if (!me) return setStatus("Set your username first.");
-
-  setActivePage("game");
-  profilePanel.hidden = true;
-  comparePanel.hidden = true;
-  moveSelfGamePanel(selfGameHostPage);
-  if (selfGamePanel) selfGamePanel.hidden = false;
-  if (selfGameTitleEl) selfGameTitleEl.textContent = game.title || `Game ${safeText(game.gameId)}`;
-  if (selfGameMetaEl) selfGameMetaEl.textContent = `User: ${me}`;
-  if (selfGameAchievementsEl) selfGameAchievementsEl.innerHTML = `<div class="meta">Loading achievements...</div>`;
-
-  try {
-    const data = await fetchGameAchievements(me, game.gameId);
-    const items = (data?.achievements || []).map(a => ({
-      id: a.id,
-      title: a.title,
-      description: a.description,
-      badgeUrl: a.badgeUrl,
-      points: a.points,
-      earned: a.earned,
-      earnedDate: a.earnedDate,
-      earnedHardcoreDate: a.earnedHardcoreDate
-    }));
-    renderSelfAchievements(items);
-    if (selfGamePanel) {
-      selfGamePanel.scrollIntoView({ behavior: "smooth", block: "start" });
-    }
-  } catch {
-    if (selfGameAchievementsEl) {
-      selfGameAchievementsEl.innerHTML = `<div class="meta">Failed to load achievements.</div>`;
-    }
-  }
-}
-
-async function openGameCompare(game, targetOverride = "") {
-  const target = clampUsername(targetOverride || currentProfileUser);
-  if (!target) return;
-
-  const { me } = getUsersIncludingMe();
-  if (!me) return setStatus("Set your username first.");
-
-  compareReturnToProfile = activePageName === "profile";
-  setActivePage("game");
-  profilePanel.hidden = true;
-  if (selfGamePanel) selfGamePanel.hidden = true;
-  comparePanel.hidden = false;
-  setActiveCompareTab("achievements");
-  compareTitleGameEl.textContent = game.title || `Game ${safeText(game.gameId)}`;
-  compareMetaEl.textContent = `You: ${me} | Friend: ${target}`;
-  compareAchievementsEl.innerHTML = `<div class="meta">Loading achievements...</div>`;
-  compareTimesEl.innerHTML = `<div class="meta">Loading scores...</div>`;
-  setLoading(compareLoadingEl, true);
-
-  try {
-    const [mine, theirs] = await Promise.all([
-      fetchGameAchievements(me, game.gameId),
-      fetchGameAchievements(target, game.gameId)
-    ]);
-
-    const mineById = new Map((mine.achievements || []).map(a => [a.id, a]));
-    const theirsById = new Map((theirs.achievements || []).map(a => [a.id, a]));
-    const ids = new Set([...mineById.keys(), ...theirsById.keys()]);
-
-    const combined = [];
-    let sharedCount = 0;
-    let mineCount = 0;
-    let theirsCount = 0;
-
-    for (const id of ids) {
-      const ma = mineById.get(id);
-      const ta = theirsById.get(id);
-      const mineEarned = Boolean(ma?.earned);
-      const theirsEarned = Boolean(ta?.earned);
-
-      if (mineEarned) mineCount++;
-      if (theirsEarned) theirsCount++;
-      if (mineEarned && theirsEarned) sharedCount++;
-
-      let statusLabel = "None";
-      let statusClass = "none";
-      if (mineEarned && theirsEarned) { statusLabel = "Both"; statusClass = ""; }
-      else if (mineEarned) { statusLabel = "You"; statusClass = "me"; }
-      else if (theirsEarned) { statusLabel = "Them"; statusClass = "them"; }
-
-      combined.push({
-        id,
-        title: ma?.title || ta?.title,
-        description: ma?.description || ta?.description,
-        badgeUrl: ma?.badgeUrl || ta?.badgeUrl,
-        points: ma?.points ?? ta?.points,
-        shared: mineEarned && theirsEarned,
-        statusLabel,
-        statusClass
-      });
-    }
-
-    combined.sort((a, b) => {
-      const weight = (x) => x.shared ? 0 : (x.statusLabel === "You" || x.statusLabel === "Them") ? 1 : 2;
-      const w = weight(a) - weight(b);
-      if (w !== 0) return w;
-      return String(a.title || "").localeCompare(String(b.title || ""));
-    });
-
-    compareMetaEl.textContent = `You: ${me} | Friend: ${target} | Shared: ${sharedCount} | You: ${mineCount} | Them: ${theirsCount}`;
-    renderCompareList(combined);
-    comparePanel.scrollIntoView({ behavior: "smooth", block: "start" });
-  } catch (e) {
-    compareAchievementsEl.innerHTML = `<div class="meta">Failed to load achievements.</div>`;
-    setStatus(e?.message || "Failed to load game comparison.");
-  }
-
-  try {
-    const [mineTimes, theirsTimes] = await Promise.all([
-      fetchGameTimes(me, game.gameId),
-      fetchGameTimes(target, game.gameId)
-    ]);
-
-    const mineMap = new Map((mineTimes.results || []).map(lb => [lb.leaderboardId, lb]));
-    const theirsMap = new Map((theirsTimes.results || []).map(lb => [lb.leaderboardId, lb]));
-    const ids = new Set([...mineMap.keys(), ...theirsMap.keys()]);
-
-    const merged = [];
-    for (const id of ids) {
-      const m = mineMap.get(id);
-      const t = theirsMap.get(id);
-      const mineLabel = m ? `#${m.rank} ${m.formattedScore ?? m.score ?? ""}`.trim() : "";
-      const theirLabel = t ? `#${t.rank} ${t.formattedScore ?? t.score ?? ""}`.trim() : "";
-
-      merged.push({
-        leaderboardId: id,
-        leaderboardTitle: m?.leaderboardTitle || t?.leaderboardTitle,
-        format: m?.format || t?.format,
-        me: mineLabel,
-        them: theirLabel,
-        both: Boolean(m && t)
-      });
-    }
-
-    merged.sort((a, b) => {
-      const w = Number(b.both) - Number(a.both);
-      if (w !== 0) return w;
-      return String(a.leaderboardTitle || "").localeCompare(String(b.leaderboardTitle || ""));
-    });
-
-    renderCompareTimes(merged);
-  } catch (e) {
-    compareTimesEl.innerHTML = `<div class="meta">Failed to load scores.</div>`;
-  } finally {
-    setLoading(compareLoadingEl, false);
   }
 }
 
@@ -8413,8 +7910,7 @@ function renderProfileRecentGames(list, emptyMessage = "No recent games found.")
     if (allowOpen) {
       const open = () => {
         if (profileIsSelf) {
-          selfGameReturnToProfile = true;
-          openSelfGame(g);
+          openFindGamePage(g, "search");
         } else {
           openFindGamePageWithCompare(g, currentProfileUser);
         }
@@ -8590,10 +8086,6 @@ async function refreshRecentTimes() {
 // UI wiring
 tabButtons.forEach(btn => {
   btn.addEventListener("click", () => setActiveTab(btn.dataset.tab));
-});
-
-compareTabButtons.forEach(btn => {
-  btn.addEventListener("click", () => setActiveCompareTab(btn.dataset.tab));
 });
 
 if (leaderboardScopeFriendsBtn) {
@@ -9114,43 +8606,6 @@ if (refreshBtn) {
       }
       resetRefreshCountdown();
     })();
-  });
-}
-
-
-if (compareBackBtn) {
-  compareBackBtn.addEventListener("click", () => {
-    comparePanel.hidden = true;
-    profilePanel.hidden = false;
-    setLoading(compareLoadingEl, false);
-    compareTitleGameEl.textContent = "";
-    compareMetaEl.textContent = "";
-    compareAchievementsEl.innerHTML = "";
-    compareTimesEl.innerHTML = "";
-    if (compareReturnToProfile) {
-      compareReturnToProfile = false;
-      setActivePage("profile");
-      return;
-    }
-    setActivePage("dashboard");
-  });
-}
-
-if (selfGameBackBtn) {
-  selfGameBackBtn.addEventListener("click", () => {
-    if (selfGamePanel) selfGamePanel.hidden = true;
-    if (selfGameTitleEl) selfGameTitleEl.textContent = "";
-    if (selfGameMetaEl) selfGameMetaEl.textContent = "";
-    if (selfGameAchievementsEl) selfGameAchievementsEl.innerHTML = "";
-    if (selfGameReturnToProfile) {
-      selfGameReturnToProfile = false;
-      const { me } = getUsersIncludingMe();
-      if (me) {
-        openProfile(me);
-        return;
-      }
-    }
-    setActivePage("dashboard");
   });
 }
 

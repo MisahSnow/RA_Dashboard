@@ -766,6 +766,22 @@ h1 {
   justify-content: space-between;
 }
 
+.findGamePageCard {
+  width: 100%;
+  max-width: 1440px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+#challengesPage > .card,
+#groupsPage > .card,
+#socialPage > .card {
+  width: 100%;
+  max-width: 1440px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
 
 .findAchievementsHeader {
   display: flex;
