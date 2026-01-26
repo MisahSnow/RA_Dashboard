@@ -446,6 +446,11 @@ const profileGamesNoteEl = document.getElementById("profileGamesNote");
 const profileGameSearchEl = document.getElementById("profileGameSearch");
 const profileLegendMeEl = document.getElementById("profileLegendMe");
 const profileLegendThemEl = document.getElementById("profileLegendThem");
+const findGamePageCard = document.getElementById("findGamePageCard");
+const findGamePageTitleEl = document.getElementById("findGamePageTitle");
+const findGamePageBackBtn = document.getElementById("findGamePageBackBtn");
+const findGamePageAchievementsEl = document.getElementById("findGamePageAchievements");
+const findGameCompareSelect = document.getElementById("findGameCompareSelect");
 let activeActivityTab = "achievements";
 
 const comparePanel = document.getElementById("comparePanel");
@@ -614,6 +619,9 @@ let findGamesQuery = "";
 let findGamesSort = "name";
 let findGamesGenre = "all";
 let findGamesTab = "search";
+let findGamePageReturnTab = "search";
+let findGamePageActiveGame = null;
+let findGameCompareTarget = "";
 let findSuggestedLoadedFor = "";
 let findSuggestedGames = [];
 let findSuggestedSelectedGameId = "";
@@ -1710,6 +1718,7 @@ async function ensureFriendsLoaded({ force = false } = {}) {
     const list = await loadFriendsFromServer({ immediate: true });
     friends = list;
     renderFriendsMenu();
+    renderFindGameCompareOptions(friends);
   } finally {
     friendsMenuLoading = false;
   }
@@ -3224,6 +3233,7 @@ async function loginAndStart(username, { errorEl, loadingEl, closeModal } = {}) 
     friends = await loadFriendsFromServer({ immediate: true });
     renderChallengeFriendOptions(friends);
     renderFriendsMenu();
+    renderFindGameCompareOptions(friends);
     saveState();
   } catch (e) {
     const message = String(e?.message || "Login failed.");
@@ -3270,6 +3280,7 @@ async function addFriendFromModal() {
     renderChallengeFriendOptions(friends);
     if (activePageName === "friends") renderFriendsList(friends);
     renderFriendsMenu();
+    renderFindGameCompareOptions(friends);
     friendInput.value = "";
     closeAddFriendModal();
   } catch (e) {
@@ -3337,6 +3348,7 @@ async function refreshFriendsPage() {
     friends = await loadFriendsFromServer();
     renderFriendsList(friends);
     renderFriendsMenu();
+    renderFindGameCompareOptions(friends);
     await hydrateFriendSummaries(friends);
     await hydrateFriendPresence(friends);
     renderFriendsList(friends);
@@ -3634,6 +3646,7 @@ function setActivePage(name) {
   if (backlogPage) backlogPage.hidden = name !== "backlog";
   if (friendsPage) friendsPage.hidden = name !== "friends";
   if (gamePage) gamePage.hidden = name !== "game";
+  if (name !== "game" && findGamePageCard) findGamePageCard.hidden = true;
   if (profilePanel) profilePanel.hidden = name !== "profile";
   if (name !== "backlog") setBacklogRemoveMode(false);
   if (name === "find-games") {
@@ -3694,6 +3707,17 @@ function ensureFindGamesReady() {
   if (findGamesAchievementsEl) {
     findGamesAchievementsEl.innerHTML = `<div class="meta">Select a game to see achievements.</div>`;
     findGamesAchievementsEl.addEventListener("click", (e) => {
+      const img = e.target.closest(".findGameMediaItem img");
+      if (!img || !imageModal || !imageModalImg) return;
+      const src = img.getAttribute("src");
+      if (!src) return;
+      imageModalImg.src = src;
+      imageModal.hidden = false;
+    });
+  }
+  if (findGamePageAchievementsEl) {
+    findGamePageAchievementsEl.innerHTML = `<div class="meta">Select a game to see achievements.</div>`;
+    findGamePageAchievementsEl.addEventListener("click", (e) => {
       const img = e.target.closest(".findGameMediaItem img");
       if (!img || !imageModal || !imageModalImg) return;
       const src = img.getAttribute("src");
@@ -3788,8 +3812,7 @@ function ensureFindGamesReady() {
         title: row.getAttribute("data-title") || "",
         consoleName: row.getAttribute("data-console") || ""
       };
-      showFindGamesAchievementsView("search");
-      loadFindGameAchievements(game, { targetEl: findGamesAchievementsEl, listEl: findGamesListEl, selectedClass: "selected" });
+      openFindGamePage(game, "search");
     });
   }
   if (findSuggestedListEl) {
@@ -3822,10 +3845,27 @@ function ensureFindGamesReady() {
         consoleName: tile.getAttribute("data-console") || "",
         imageIcon: tile.getAttribute("data-image") || ""
       };
-      showFindGamesAchievementsView("suggested");
-      loadFindGameAchievements(game, { targetEl: findSuggestedAchievementsEl, listEl: findSuggestedListEl, selectedClass: "selected" });
+      openFindGamePage(game, "suggested");
     });
   }
+if (findGamePageBackBtn) {
+  findGamePageBackBtn.addEventListener("click", () => {
+    closeFindGamePage();
+  });
+}
+if (findGameCompareSelect) {
+  findGameCompareSelect.addEventListener("change", () => {
+    const target = clampUsername(findGameCompareSelect.value);
+    if (!findGamePageActiveGame) return;
+    findGameCompareTarget = target || "";
+    loadFindGameAchievements(findGamePageActiveGame, {
+      targetEl: findGamePageAchievementsEl,
+      listEl: null,
+      selectedClass: "",
+      compareTarget: findGameCompareTarget
+    });
+  });
+}
   loadFindGamesConsoles();
 }
 
@@ -4281,6 +4321,49 @@ function showFindGamesAchievementsView(mode) {
     if (findSuggestedListPanel) findSuggestedListPanel.hidden = true;
     if (findSuggestedAchievementsPanel) findSuggestedAchievementsPanel.hidden = false;
   }
+}
+
+function openFindGamePage(game, mode) {
+  if (!game) return;
+  findGamePageActiveGame = game;
+  findGameCompareTarget = "";
+  findGamePageReturnTab = mode === "suggested" ? "suggested" : "search";
+  if (findGamePageTitleEl) {
+    findGamePageTitleEl.textContent = game.title || "Game";
+  }
+  if (findGamePageCard) findGamePageCard.hidden = false;
+  if (selfGamePanel) selfGamePanel.hidden = true;
+  if (comparePanel) comparePanel.hidden = true;
+  setActivePage("game");
+  ensureFriendsLoaded();
+  renderFindGameCompareOptions(friends);
+  if (findGameCompareSelect) findGameCompareSelect.value = "";
+  loadFindGameAchievements(game, { targetEl: findGamePageAchievementsEl, listEl: null, selectedClass: "" });
+}
+
+function openFindGamePageWithCompare(game, target) {
+  openFindGamePage(game, "search");
+  const compareTarget = clampUsername(target);
+  if (!compareTarget) return;
+  ensureFindGameCompareOption(compareTarget);
+  findGameCompareTarget = compareTarget;
+  if (findGameCompareSelect) findGameCompareSelect.value = compareTarget;
+  loadFindGameAchievements(game, {
+    targetEl: findGamePageAchievementsEl,
+    listEl: null,
+    selectedClass: "",
+    compareTarget
+  });
+}
+
+function closeFindGamePage() {
+  findGamePageActiveGame = null;
+  findGameCompareTarget = "";
+  if (findGameCompareSelect) findGameCompareSelect.value = "";
+  if (findGamePageCard) findGamePageCard.hidden = true;
+  setActivePage("find-games");
+  setFindGamesTab(findGamePageReturnTab);
+  showFindGamesListView(findGamePageReturnTab);
 }
 
 function getFindGamesCachedList() {
@@ -5089,7 +5172,7 @@ function renderFindGamesList(games) {
   }
 }
 
-function renderFindGameAchievements(payload, targetEl = findGamesAchievementsEl) {
+function renderFindGameAchievements(payload, targetEl = findGamesAchievementsEl, compareOptions = null) {
   if (!targetEl) return;
   const achievements = Array.isArray(payload?.achievements) ? payload.achievements : [];
   const title = payload?.gameTitle || "Game";
@@ -5106,19 +5189,21 @@ function renderFindGameAchievements(payload, targetEl = findGamesAchievementsEl)
   const parentGameId = payload?.parentGameId || "";
   const numAchievements = payload?.numAchievements ?? "";
   const numDistinctPlayers = payload?.numDistinctPlayers ?? "";
+  const compareTarget = compareOptions?.target || "";
+  const compareAchievements = Array.isArray(compareOptions?.achievements) ? compareOptions.achievements : null;
   targetEl.innerHTML = "";
 
   const header = document.createElement("div");
   header.className = "findAchievementsHeader";
-  const headerTitle = document.createElement("h3");
-  headerTitle.className = "findAchievementsTitle";
-  headerTitle.textContent = safeText(title);
   const headerMeta = document.createElement("div");
   headerMeta.className = "meta";
-  headerMeta.textContent = consoleName
-    ? `${safeText(consoleName)} � ${achievements.length} achievements`
-    : `${achievements.length} achievements`;
-  header.appendChild(headerTitle);
+  if (compareTarget) {
+    headerMeta.textContent = `Comparing with ${compareTarget}`;
+  } else {
+    headerMeta.textContent = consoleName
+      ? `${safeText(consoleName)} � ${achievements.length} achievements`
+      : `${achievements.length} achievements`;
+  }
   header.appendChild(headerMeta);
   targetEl.appendChild(header);
 
@@ -5192,6 +5277,9 @@ function renderFindGameAchievements(payload, targetEl = findGamesAchievementsEl)
       media.appendChild(frame);
     }
     targetEl.appendChild(media);
+    const divider = document.createElement("div");
+    divider.className = "findGameDivider";
+    targetEl.appendChild(divider);
   }
 
   const list = document.createElement("div");
@@ -5200,9 +5288,35 @@ function renderFindGameAchievements(payload, targetEl = findGamesAchievementsEl)
   if (!achievements.length) {
     list.innerHTML = `<div class="meta">No achievements found for this game.</div>`;
   } else {
-    for (const a of achievements) {
+    const isEarned = (a) => !!(
+      a?.earned ||
+      a?.earnedHardcore ||
+      a?.earnedDate ||
+      a?.earnedHardcoreDate ||
+      a?.dateEarned ||
+      a?.dateEarnedHardcore ||
+      a?.dateEarnedSoftcore
+    );
+    const getEarnedTs = (a) => {
+      const earnedAt = a?.earnedHardcoreDate || a?.earnedDate || a?.dateEarnedHardcore || a?.dateEarned || a?.dateEarnedSoftcore || "";
+      if (!earnedAt) return 0;
+      const raw = String(earnedAt);
+      const parsed = Date.parse(raw.replace(" ", "T"));
+      return Number.isFinite(parsed) ? parsed : 0;
+    };
+
+    const appendSectionTitle = (label) => {
+      const title = document.createElement("div");
+      title.className = "findAchievementSectionTitle";
+      title.textContent = label;
+      list.appendChild(title);
+    };
+    const appendAchievement = (a, compareStatus = "") => {
       const item = document.createElement("div");
-      item.className = "findAchievementItem";
+      const earned = isEarned(a);
+      const hardcore = !!(a?.earnedHardcore || a?.earnedHardcoreDate || a?.dateEarnedHardcore);
+      const compareClass = compareStatus ? ` compare-${compareStatus}` : "";
+      item.className = `findAchievementItem${earned ? " earned" : ""}${hardcore ? " hardcore" : ""}${compareClass}`;
 
       const badge = document.createElement("img");
       badge.className = "findAchievementBadge";
@@ -5211,21 +5325,105 @@ function renderFindGameAchievements(payload, targetEl = findGamesAchievementsEl)
       badge.loading = "lazy";
 
       const body = document.createElement("div");
+      const titleRow = document.createElement("div");
+      titleRow.className = "findAchievementTitleRow";
       const titleEl = document.createElement("div");
       titleEl.className = "findAchievementTitle";
       const points = Number(a.points || 0);
       titleEl.textContent = points ? `${safeText(a.title)} (${points} pts)` : safeText(a.title);
+      titleRow.appendChild(titleEl);
+      if (compareStatus) {
+        const comparePill = document.createElement("span");
+        comparePill.className = `compareStatusPill ${compareStatus}`;
+        comparePill.textContent = compareStatus === "both"
+          ? "Both"
+          : compareStatus === "me"
+            ? "You"
+            : compareStatus === "them"
+              ? "Them"
+              : "None";
+        titleRow.appendChild(comparePill);
+      }
+      if (earned) {
+        const status = document.createElement("span");
+        status.className = `findAchievementStatus${hardcore ? " hardcore" : ""}`;
+        status.textContent = hardcore ? "Hardcore" : "Unlocked";
+        titleRow.appendChild(status);
+      }
 
       const desc = document.createElement("div");
       desc.className = "findAchievementDesc";
       desc.textContent = safeText(a.description || "");
 
-      body.appendChild(titleEl);
+      body.appendChild(titleRow);
       body.appendChild(desc);
+      if (earned) {
+        const stamp = document.createElement("div");
+        stamp.className = "findAchievementStamp";
+        const earnedAt = a.earnedHardcoreDate || a.earnedDate || a.dateEarnedHardcore || a.dateEarned || a.dateEarnedSoftcore || "";
+        stamp.textContent = earnedAt ? `Unlocked ${formatDate(earnedAt)}` : "Unlocked";
+        body.appendChild(stamp);
+      }
 
       item.appendChild(badge);
       item.appendChild(body);
       list.appendChild(item);
+    };
+
+    if (compareTarget && compareAchievements) {
+      const compareMap = new Map(compareAchievements.map(a => [String(a?.id ?? ""), a]));
+      const withStatus = achievements.map((a) => {
+        const id = String(a?.id ?? "");
+        const theirs = compareMap.get(id) || null;
+        const meEarned = isEarned(a);
+        const themEarned = isEarned(theirs);
+        let status = "none";
+        if (meEarned && themEarned) status = "both";
+        else if (meEarned) status = "me";
+        else if (themEarned) status = "them";
+        return { a, status };
+      });
+      const order = [
+        { key: "both", label: "Both unlocked" },
+        { key: "them", label: "They unlocked" },
+        { key: "me", label: "You unlocked" },
+        { key: "none", label: "Nobody unlocked" }
+      ];
+      let renderedAny = false;
+      for (const section of order) {
+        const items = withStatus
+          .filter(row => row.status === section.key)
+          .sort((x, y) => String(x.a?.title || "").localeCompare(String(y.a?.title || "")));
+        if (!items.length) continue;
+        if (renderedAny) {
+          const divider = document.createElement("div");
+          divider.className = "findAchievementDivider";
+          list.appendChild(divider);
+        }
+        renderedAny = true;
+        appendSectionTitle(section.label);
+        for (const row of items) {
+          appendAchievement(row.a, row.status);
+        }
+      }
+    } else {
+      const unlocked = achievements.filter(isEarned);
+      const locked = achievements.filter((a) => !isEarned(a));
+      unlocked.sort((a, b) => getEarnedTs(b) - getEarnedTs(a));
+
+      if (unlocked.length) {
+        appendSectionTitle("Unlocked achievements");
+        for (const a of unlocked) appendAchievement(a);
+      }
+      if (unlocked.length && locked.length) {
+        const divider = document.createElement("div");
+        divider.className = "findAchievementDivider";
+        list.appendChild(divider);
+      }
+      if (locked.length) {
+        appendSectionTitle("Locked achievements");
+        for (const a of locked) appendAchievement(a);
+      }
     }
   }
   targetEl.appendChild(list);
@@ -5270,7 +5468,12 @@ async function loadFindGamesLetter(letter) {
   }
 }
 
-async function loadFindGameAchievements(game, { targetEl = findGamesAchievementsEl, listEl = null, selectedClass = "" } = {}) {
+async function loadFindGameAchievements(game, {
+  targetEl = findGamesAchievementsEl,
+  listEl = null,
+  selectedClass = "",
+  compareTarget = ""
+} = {}) {
   if (!targetEl) return;
   const gameId = game?.gameId;
   if (!gameId) return;
@@ -5279,8 +5482,30 @@ async function loadFindGameAchievements(game, { targetEl = findGamesAchievements
   if (listEl && selectedClass) setSelectedGameInList(listEl, gameId, selectedClass);
   targetEl.innerHTML = `<div class="meta">Loading achievements...</div>`;
   try {
-    const payload = await fetchGameAchievementsBasic(gameId);
-    renderFindGameAchievements(payload, targetEl);
+    const basePromise = fetchGameAchievementsBasic(gameId);
+    if (!currentUser) {
+      const payload = await basePromise;
+      renderFindGameAchievements(payload, targetEl);
+      return;
+    }
+    const shouldCompare = compareTarget && compareTarget !== currentUser;
+    const [base, userPayload, comparePayload] = await Promise.all([
+      basePromise,
+      fetchGameAchievements(currentUser, gameId),
+      shouldCompare ? fetchGameAchievements(compareTarget, gameId) : Promise.resolve(null)
+    ]);
+    const merged = {
+      ...(base || {}),
+      ...(userPayload || {}),
+      achievements: Array.isArray(userPayload?.achievements)
+        ? userPayload.achievements
+        : (base?.achievements || [])
+    };
+    renderFindGameAchievements(
+      merged,
+      targetEl,
+      shouldCompare ? { target: compareTarget, achievements: comparePayload?.achievements || [] } : null
+    );
   } catch (e) {
     targetEl.innerHTML = `<div class="meta">Failed to load achievements.</div>`;
   }
@@ -5889,6 +6114,43 @@ function renderChallengeFriendOptions(list) {
   }
 }
 
+function renderFindGameCompareOptions(list = friends) {
+  if (!findGameCompareSelect) return;
+  const current = findGameCompareSelect.value;
+  const sorted = Array.from(new Set(list.map(clampUsername).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  findGameCompareSelect.innerHTML = "";
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = sorted.length ? "Select friend" : "No friends added yet";
+  findGameCompareSelect.appendChild(placeholder);
+
+  for (const name of sorted) {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = name;
+    findGameCompareSelect.appendChild(opt);
+  }
+
+  if (current && sorted.includes(current)) {
+    findGameCompareSelect.value = current;
+  } else {
+    findGameCompareSelect.value = "";
+  }
+}
+
+function ensureFindGameCompareOption(username) {
+  if (!findGameCompareSelect) return;
+  const target = clampUsername(username);
+  if (!target) return;
+  const existing = Array.from(findGameCompareSelect.options)
+    .some((opt) => opt.value.toLowerCase() === target.toLowerCase());
+  if (existing) return;
+  const opt = document.createElement("option");
+  opt.value = target;
+  opt.textContent = target;
+  findGameCompareSelect.appendChild(opt);
+}
+
 async function refreshChallenges({ includeTotals = true } = {}) {
   const ensured = ensureUsername({ prompt: true });
   if (!ensured) return;
@@ -6046,7 +6308,7 @@ function renderLeaderboard(rows, me) {
           return;
         }
         if (target && target.toLowerCase() !== me.toLowerCase()) {
-          openGameCompare({ gameId, title: gameTitle }, target);
+          openFindGamePageWithCompare({ gameId, title: gameTitle }, target);
           return;
         }
         selfGameReturnToProfile = true;
@@ -6156,7 +6418,7 @@ function renderProfileGamesList(games, emptyMessage) {
           selfGameReturnToProfile = true;
           openSelfGame(g);
         } else {
-          openGameCompare(g);
+          openFindGamePageWithCompare(g, currentProfileUser);
         }
       };
       tile.addEventListener("click", open);
@@ -7111,11 +7373,12 @@ async function openProfile(username) {
   }
 }
 
-function renderCompareList(items) {
-  compareAchievementsEl.innerHTML = "";
+function renderCompareList(items, targetEl = compareAchievementsEl) {
+  if (!targetEl) return;
+  targetEl.innerHTML = "";
 
   if (!items.length) {
-    compareAchievementsEl.innerHTML = `<div class="meta">No achievements found for this game.</div>`;
+    targetEl.innerHTML = `<div class="meta">No achievements found for this game.</div>`;
     return;
   }
 
@@ -7186,14 +7449,15 @@ function renderCompareList(items) {
     }
   }
 
-  compareAchievementsEl.appendChild(frag);
+  targetEl.appendChild(frag);
 }
 
-function renderCompareTimes(items) {
-  compareTimesEl.innerHTML = "";
+function renderCompareTimes(items, targetEl = compareTimesEl) {
+  if (!targetEl) return;
+  targetEl.innerHTML = "";
 
   if (!items.length) {
-    compareTimesEl.innerHTML = `<div class="meta">No leaderboard scores found for this game.</div>`;
+    targetEl.innerHTML = `<div class="meta">No leaderboard scores found for this game.</div>`;
     return;
   }
 
@@ -7237,7 +7501,7 @@ function renderCompareTimes(items) {
 
     row.appendChild(main);
     row.appendChild(cols);
-    compareTimesEl.appendChild(row);
+    targetEl.appendChild(row);
   }
 }
 
@@ -8152,7 +8416,7 @@ function renderProfileRecentGames(list, emptyMessage = "No recent games found.")
           selfGameReturnToProfile = true;
           openSelfGame(g);
         } else {
-          openGameCompare(g);
+          openFindGamePageWithCompare(g, currentProfileUser);
         }
       };
       tile.addEventListener("click", open);
@@ -8790,6 +9054,7 @@ if (friendsListEl) {
           renderChallengeFriendOptions(friends);
           renderFriendsList(friends);
           renderFriendsMenu();
+          renderFindGameCompareOptions(friends);
           refreshLeaderboard();
           if (activeActivityTab === "times") {
             refreshRecentTimes();
