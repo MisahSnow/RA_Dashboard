@@ -271,12 +271,17 @@ const imageModalImg = document.getElementById("imageModalImg");
 const imageModalCloseBtn = document.getElementById("imageModalCloseBtn");
 const findGamesTabButtons = document.querySelectorAll("[data-find-tab]");
 const findTabSearch = document.getElementById("findTabSearch");
+const findTabTrending = document.getElementById("findTabTrending");
 const findTabSuggested = document.getElementById("findTabSuggested");
 const findSearchListPanel = document.getElementById("findSearchListPanel");
 const findSuggestedListPanel = document.getElementById("findSuggestedListPanel");
 const findSuggestedListEl = document.getElementById("findSuggestedList");
 const findSuggestedStatusEl = document.getElementById("findSuggestedStatus");
 const findSuggestedLoadingEl = document.getElementById("findSuggestedLoading");
+const findSuggestedTrendingListPanel = document.getElementById("findSuggestedTrendingListPanel");
+const findSuggestedTrendingListEl = document.getElementById("findSuggestedTrendingList");
+const findSuggestedTrendingStatusEl = document.getElementById("findSuggestedTrendingStatus");
+const findSuggestedTrendingLoadingEl = document.getElementById("findSuggestedTrendingLoading");
 const backlogListEl = document.getElementById("backlogList");
 const backlogStatusEl = document.getElementById("backlogStatus");
 const backlogLoadingEl = document.getElementById("backlogLoading");
@@ -317,6 +322,7 @@ const socialSidebarTrendingEl = document.getElementById("socialSidebarTrending")
 const socialSidebarActivityEl = document.getElementById("socialSidebarActivity");
 const socialSidebarSuggestionsEl = document.getElementById("socialSidebarSuggestions");
 const socialTrendingTooltip = document.getElementById("socialTrendingTooltip");
+const findGamesTrendingTooltip = document.getElementById("findGamesTrendingTooltip");
 const socialFiltersEl = document.querySelector(".socialFilters");
 const socialFilterButtons = document.querySelectorAll(".socialFilters .filterPill");
 
@@ -596,6 +602,9 @@ let findGameCompareTarget = "";
 let findSuggestedLoadedFor = "";
 let findSuggestedGames = [];
 let findSuggestedSelectedGameId = "";
+let findSuggestedTrendingLoadedFor = "";
+let findSuggestedTrendingGames = [];
+let findSuggestedTrendingPlayers = new Map();
 let findGamesConsolesCache = [];
 const findGamesPlayersCache = new Map();
 const findGamesPlayersCacheTs = new Map();
@@ -2436,29 +2445,35 @@ function renderSocialSidebarSuggestions(list) {
   socialSidebarSuggestionsEl.appendChild(frag);
 }
 
-async function renderSocialTrendingGames() {
-  if (!socialSidebarTrendingEl) return;
-  const users = Array.from(new Set([currentUser, ...friends].map(clampUsername).filter(Boolean)));
-  if (!users.length) {
-    socialSidebarTrendingEl.innerHTML = `<div class="meta">No trending games yet.</div>`;
-    return;
-  }
+function getRecentGameInfo(game) {
+  return {
+    gameId: game?.gameId ?? game?.GameID ?? game?.id,
+    title: game?.title ?? game?.Title ?? game?.GameTitle ?? game?.gameTitle ?? "",
+    imageIcon: game?.imageIcon ?? game?.ImageIcon ?? "",
+    consoleName: game?.consoleName ?? game?.ConsoleName ?? game?.consoleName ?? ""
+  };
+}
+
+async function getTrendingGamesData(users, limit = 5) {
   const counts = new Map();
   const playersByGame = new Map();
   for (const user of users.slice(0, 12)) {
     try {
       const cached = readRecentGamesCache(user, 12);
       const data = cached?.data || (await fetchRecentGames(user, 12));
-      const recent = normalizeRecentGames(data?.results || []);
+      const recent = Array.isArray(data?.results) ? data.results : [];
       const seen = new Set();
       for (const game of recent) {
-        const id = String(game.gameId || "");
+        const info = getRecentGameInfo(game);
+        const id = String(info.gameId || "");
         if (!id || seen.has(id)) continue;
         seen.add(id);
+        const prev = counts.get(id) || {};
         counts.set(id, {
-          title: game.title || "",
-          console: game.consoleName || "",
-          count: (counts.get(id)?.count || 0) + 1
+          title: prev.title || info.title || "",
+          imageIcon: prev.imageIcon || info.imageIcon || "",
+          console: prev.console || info.consoleName || "",
+          count: (prev.count || 0) + 1
         });
         if (!playersByGame.has(id)) playersByGame.set(id, new Set());
         playersByGame.get(id).add(user);
@@ -2469,8 +2484,19 @@ async function renderSocialTrendingGames() {
   }
   const trending = Array.from(counts.entries())
     .map(([gameId, data]) => ({ gameId, ...data }))
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 5);
+    .sort((a, b) => b.count - a.count || String(a.title || "").localeCompare(String(b.title || "")))
+    .slice(0, limit);
+  return { trending, playersByGame };
+}
+
+async function renderSocialTrendingGames() {
+  if (!socialSidebarTrendingEl) return;
+  const users = Array.from(new Set([currentUser, ...friends].map(clampUsername).filter(Boolean)));
+  if (!users.length) {
+    socialSidebarTrendingEl.innerHTML = `<div class="meta">No trending games yet.</div>`;
+    return;
+  }
+    const { trending, playersByGame } = await getTrendingGamesData(users, 5);
   if (!trending.length) {
     socialSidebarTrendingEl.innerHTML = `<div class="meta">No trending games yet.</div>`;
     return;
@@ -3721,37 +3747,10 @@ function ensureFindGamesReady() {
     });
   }
   if (findSuggestedListEl) {
-    findSuggestedListEl.addEventListener("click", (e) => {
-      const backlogBtn = e.target.closest("[data-backlog]");
-      if (backlogBtn) {
-        e.stopPropagation();
-        const tile = backlogBtn.closest("[data-game-id]");
-        if (!tile) return;
-        const gameId = tile.getAttribute("data-game-id");
-        if (isInBacklog(gameId)) {
-          removeFromBacklog(gameId);
-        } else {
-          addToBacklog({
-            gameId,
-            title: tile.getAttribute("data-title") || "",
-            consoleName: tile.getAttribute("data-console") || "",
-            imageIcon: tile.getAttribute("data-image") || "",
-            numAchievements: Number(tile.getAttribute("data-achievements") || 0),
-            points: Number(tile.getAttribute("data-points") || 0)
-          });
-        }
-        return;
-      }
-      const tile = e.target.closest("[data-game-id]");
-      if (!tile) return;
-      const game = {
-        gameId: tile.getAttribute("data-game-id"),
-        title: tile.getAttribute("data-title") || "",
-        consoleName: tile.getAttribute("data-console") || "",
-        imageIcon: tile.getAttribute("data-image") || ""
-      };
-      openFindGamePage(game, "suggested");
-    });
+    findSuggestedListEl.addEventListener("click", handleSuggestedListClick);
+  }
+  if (findSuggestedTrendingListEl) {
+    findSuggestedTrendingListEl.addEventListener("click", handleSuggestedListClick);
   }
 if (findGamePageBackBtn) {
   findGamePageBackBtn.addEventListener("click", () => {
@@ -4112,6 +4111,7 @@ function setFindGamesTab(name) {
   if (!name) return;
   findGamesTab = name;
   if (findTabSearch) findTabSearch.hidden = name !== "search";
+  if (findTabTrending) findTabTrending.hidden = name !== "trending";
   if (findTabSuggested) findTabSuggested.hidden = name !== "suggested";
   findGamesTabButtons.forEach((btn) => {
     const active = btn.dataset.findTab === name;
@@ -4122,6 +4122,10 @@ function setFindGamesTab(name) {
     showFindGamesListView("search");
     ensureBacklogLoaded();
     loadFindGamesLetter(findGamesLetter);
+  } else if (name === "trending") {
+    showFindGamesListView("suggested");
+    ensureBacklogLoaded();
+    loadSuggestedTrendingGames();
   } else if (name === "suggested") {
     showFindGamesListView("suggested");
     ensureBacklogLoaded();
@@ -4408,11 +4412,11 @@ async function loadSuggestedGames() {
   }
 }
 
-function renderSuggestedGames(games) {
-  if (!findSuggestedListEl) return;
-  findSuggestedListEl.innerHTML = "";
+function renderFindGamesTileList(games, listEl) {
+  if (!listEl) return;
+  listEl.innerHTML = "";
   if (!games.length) {
-    findSuggestedListEl.innerHTML = `<div class="meta">No suggested games found.</div>`;
+    listEl.innerHTML = `<div class="meta">No suggested games found.</div>`;
     return;
   }
   const frag = document.createDocumentFragment();
@@ -4427,7 +4431,7 @@ function renderSuggestedGames(games) {
     tile.tabIndex = 0;
     tile.dataset.gameId = String(g.gameId ?? "");
     tile.dataset.title = g.title || "";
-    tile.dataset.console = g.consoleName || "";
+    tile.dataset.console = g.consoleName || g.console || "";
     tile.dataset.image = g.imageIcon || "";
     tile.dataset.achievements = String(g.numAchievements ?? 0);
     tile.dataset.points = String(g.points ?? 0);
@@ -4443,7 +4447,14 @@ function renderSuggestedGames(games) {
 
     const consoleLine = document.createElement("div");
     consoleLine.className = "tileMeta";
-    consoleLine.textContent = g.consoleName || "";
+    consoleLine.textContent = g.consoleName || g.console || "";
+
+    const friendsLine = document.createElement("div");
+    friendsLine.className = "tileMeta";
+    const friendsCount = Number(g.trendingFriendsCount ?? 0);
+    friendsLine.textContent = Number.isFinite(friendsCount) && friendsCount > 0
+      ? `${friendsCount} player${friendsCount === 1 ? "" : "s"} playing`
+      : "";
 
     const achievementsLine = document.createElement("div");
     achievementsLine.className = "tileMeta";
@@ -4465,6 +4476,7 @@ function renderSuggestedGames(games) {
     tile.appendChild(img);
     tile.appendChild(title);
     if (consoleLine.textContent) tile.appendChild(consoleLine);
+    if (friendsLine.textContent) tile.appendChild(friendsLine);
     if (achievementsLine.textContent) tile.appendChild(achievementsLine);
     if (pointsLine.textContent) tile.appendChild(pointsLine);
     if (playersLine.textContent) tile.appendChild(playersLine);
@@ -4480,7 +4492,108 @@ function renderSuggestedGames(games) {
     tile.appendChild(actions);
     frag.appendChild(tile);
   }
-  findSuggestedListEl.appendChild(frag);
+  listEl.appendChild(frag);
+}
+
+function renderSuggestedGames(games) {
+  renderFindGamesTileList(games, findSuggestedListEl);
+}
+
+function renderSuggestedTrendingGames(games) {
+  renderFindGamesTileList(games, findSuggestedTrendingListEl);
+}
+
+async function loadSuggestedTrendingGames() {
+  if (!findSuggestedTrendingListEl || !findSuggestedTrendingStatusEl) return;
+  const users = Array.from(new Set([currentUser, ...friends].map(clampUsername).filter(Boolean)));
+  if (!users.length) {
+    findSuggestedTrendingStatusEl.textContent = "Set your username first to see trending games.";
+    findSuggestedTrendingListEl.innerHTML = "";
+    return;
+  }
+  const userKey = users.slice().sort().join("|");
+  if (findSuggestedTrendingLoadedFor === userKey && findSuggestedTrendingGames.length) {
+    renderSuggestedTrendingGames(findSuggestedTrendingGames);
+    return;
+  }
+  setLoading(findSuggestedTrendingLoadingEl, true);
+  findSuggestedTrendingStatusEl.textContent = "Loading trending games...";
+  findSuggestedTrendingListEl.innerHTML = "";
+  try {
+    const { trending, playersByGame } = await getTrendingGamesData(users, 12);
+    let allGamesList = findGamesCache.get("all:all") || null;
+    if (!allGamesList) {
+      try {
+        const allData = await fetchGameListForConsole("all", "all");
+        allGamesList = Array.isArray(allData?.results) ? allData.results : [];
+        findGamesCache.set("all:all", allGamesList);
+      } catch {
+        allGamesList = [];
+      }
+    }
+    const detailsById = new Map((allGamesList || []).map(item => [String(item.gameId ?? ""), item]));
+    findSuggestedTrendingPlayers = new Map();
+    findSuggestedTrendingGames = trending.map((item) => {
+      const detail = detailsById.get(String(item.gameId)) || {};
+      const rawPlayers = playersByGame?.get(String(item.gameId)) || new Set();
+      const friendsPlaying = Array.from(rawPlayers);
+      if (friendsPlaying.length) {
+        findSuggestedTrendingPlayers.set(String(item.gameId), friendsPlaying);
+      }
+      return {
+        gameId: item.gameId,
+        title: detail.title || item.title,
+        imageIcon: detail.imageIcon || item.imageIcon || "",
+        consoleName: detail.consoleName || item.console || "",
+        numAchievements: detail.numAchievements ?? 0,
+        points: detail.points ?? 0,
+        trendingFriendsCount: friendsPlaying.length
+      };
+    });
+    findSuggestedTrendingLoadedFor = userKey;
+    if (!findSuggestedTrendingGames.length) {
+      findSuggestedTrendingStatusEl.textContent = "No trending games found.";
+    } else {
+      findSuggestedTrendingStatusEl.textContent = `Found ${findSuggestedTrendingGames.length} trending games.`;
+    }
+    renderSuggestedTrendingGames(findSuggestedTrendingGames);
+  } catch {
+    findSuggestedTrendingStatusEl.textContent = "Failed to load trending games.";
+  } finally {
+    setLoading(findSuggestedTrendingLoadingEl, false);
+  }
+}
+
+function handleSuggestedListClick(e) {
+  const backlogBtn = e.target.closest("[data-backlog]");
+  if (backlogBtn) {
+    e.stopPropagation();
+    const tile = backlogBtn.closest("[data-game-id]");
+    if (!tile) return;
+    const gameId = tile.getAttribute("data-game-id");
+    if (isInBacklog(gameId)) {
+      removeFromBacklog(gameId);
+    } else {
+      addToBacklog({
+        gameId,
+        title: tile.getAttribute("data-title") || "",
+        consoleName: tile.getAttribute("data-console") || "",
+        imageIcon: tile.getAttribute("data-image") || "",
+        numAchievements: Number(tile.getAttribute("data-achievements") || 0),
+        points: Number(tile.getAttribute("data-points") || 0)
+      });
+    }
+    return;
+  }
+  const tile = e.target.closest("[data-game-id]");
+  if (!tile) return;
+  const game = {
+    gameId: tile.getAttribute("data-game-id"),
+    title: tile.getAttribute("data-title") || "",
+    consoleName: tile.getAttribute("data-console") || "",
+    imageIcon: tile.getAttribute("data-image") || ""
+  };
+  openFindGamePage(game, "suggested");
 }
 
 function scoreFindGame(title, query) {
@@ -8837,6 +8950,46 @@ if (socialSidebarTrendingEl && socialTrendingTooltip) {
   });
   socialSidebarTrendingEl.addEventListener("mouseleave", () => {
     socialTrendingTooltip.hidden = true;
+  });
+}
+
+if (findSuggestedTrendingListEl && findGamesTrendingTooltip) {
+  let trendingTooltipPos = { clientX: 0, clientY: 0 };
+
+  const renderTrendingTooltip = (gameId) => {
+    const players = findSuggestedTrendingPlayers.get(gameId) || [];
+    if (!players.length) {
+      findGamesTrendingTooltip.hidden = true;
+      return;
+    }
+    const label = players.length === 1 ? "Friend playing" : "Friends playing";
+    const rows = players.map(p => `<div>${safeText(p)}</div>`).join("");
+    findGamesTrendingTooltip.innerHTML = `
+      <div class="socialMiniTitle">${safeText(label)}</div>
+      <div class="socialMiniMeta">${rows}</div>
+    `;
+    findGamesTrendingTooltip.hidden = false;
+    const wrap = findGamesTrendingTooltip.closest(".wrap") || document.querySelector(".wrap");
+    const wrapRect = wrap ? wrap.getBoundingClientRect() : { left: 0, top: 0 };
+    const scale = wrap ? (wrapRect.width / wrap.offsetWidth) : 1;
+    const left = (trendingTooltipPos.clientX - wrapRect.left) / (scale || 1) + 22;
+    const top = (trendingTooltipPos.clientY - wrapRect.top) / (scale || 1) + 12;
+    findGamesTrendingTooltip.style.left = `${left}px`;
+    findGamesTrendingTooltip.style.top = `${top}px`;
+  };
+
+  findSuggestedTrendingListEl.addEventListener("mousemove", (e) => {
+    const tile = e.target.closest("[data-game-id]");
+    if (!tile) {
+      findGamesTrendingTooltip.hidden = true;
+      return;
+    }
+    const gameId = String(tile.getAttribute("data-game-id") || "");
+    trendingTooltipPos = { clientX: e.clientX, clientY: e.clientY };
+    renderTrendingTooltip(gameId);
+  });
+  findSuggestedTrendingListEl.addEventListener("mouseleave", () => {
+    findGamesTrendingTooltip.hidden = true;
   });
 }
 
