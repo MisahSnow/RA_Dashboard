@@ -4583,9 +4583,12 @@ function buildFindGamesLetters() {
     btn.type = "button";
     btn.textContent = letter === "all" ? "All" : letter;
     btn.setAttribute("role", "tab");
-    btn.setAttribute("aria-selected", letter === findGamesLetter ? "true" : "false");
+    const letterValue = letter === "#" ? "0-9" : letter;
+    btn.setAttribute("aria-selected", letterValue === findGamesLetter ? "true" : "false");
     btn.dataset.letter = letter;
-    btn.addEventListener("click", () => setFindGamesLetter(letter === "#" ? "0-9" : letter));
+    btn.dataset.letterValue = letterValue;
+    btn.setAttribute("data-letter-value", letterValue);
+    btn.addEventListener("click", () => setFindGamesLetter(letterValue));
     gameLetterBarEl.appendChild(btn);
   }
   updateFindGamesLetterButtons();
@@ -4595,7 +4598,9 @@ function updateFindGamesLetterButtons() {
   if (!gameLetterBarEl) return;
   const buttons = gameLetterBarEl.querySelectorAll("button");
   buttons.forEach((btn) => {
-    const active = btn.dataset.letter === findGamesLetter;
+    const rawLetter = (btn.dataset.letter || btn.textContent || "").trim();
+    const normalized = rawLetter === "#" ? "0-9" : rawLetter;
+    const active = normalized === findGamesLetter;
     btn.classList.toggle("active", active);
     btn.setAttribute("aria-selected", active ? "true" : "false");
   });
@@ -7130,9 +7135,6 @@ async function openProfile(username) {
   if (profileGameSearchEl) {
     profileGameSearchEl.value = "";
   }
-  if (selfGameTitleEl) selfGameTitleEl.textContent = "";
-  if (selfGameMetaEl) selfGameMetaEl.textContent = "";
-  if (selfGameAchievementsEl) selfGameAchievementsEl.innerHTML = "";
   if (profileActivityListEl) {
     profileActivityListEl.innerHTML = `<div class="meta">Loading activity...</div>`;
   }

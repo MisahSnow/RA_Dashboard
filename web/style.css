@@ -740,6 +740,12 @@ h1 {
   box-shadow: 0 0 0 1px rgba(0, 245, 212, 0.4), 0 0 18px rgba(0, 245, 212, 0.2);
 }
 
+.letterBtn[aria-selected="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(0, 245, 212, 0.4), 0 0 18px rgba(0, 245, 212, 0.2);
+}
+
 .findGamesAchievements {
   border: 1px solid #2c2448;
   border-radius: var(--radius-sm);
