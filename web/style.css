@@ -307,6 +307,8 @@ h1 {
   justify-content:flex-end;
   align-items:flex-start;
   transform: none;
+  position: relative;
+  z-index: 200;
 }
 
 .profileMenuWrap{
@@ -414,8 +416,12 @@ h1 {
 .pageTabs {
   display: flex;
   gap: 8px;
-  margin: 6px 0 16px;
+  margin: 6px auto 16px;
+  width: 100%;
+  max-width: 1440px;
   flex-wrap: wrap;
+  position: relative;
+  z-index: 200;
 }
 
 .pageBtn.friendsTab{
@@ -440,6 +446,15 @@ h1 {
 
 .page[hidden] {
   display: none;
+}
+
+.page {
+  width: 100%;
+  max-width: 1440px;
+  margin-left: auto;
+  margin-right: auto;
+  position: relative;
+  z-index: 0;
 }
 
 .pageBtn {
@@ -472,6 +487,12 @@ h1 {
 
 .notifBtn{
   position: relative;
+}
+
+.notifWrap{
+  position: relative;
+  display: inline-flex;
+  align-items: center;
 }
 
 .iconMailbox{
@@ -585,12 +606,12 @@ h1 {
 
 .notifPanel{
   position: absolute;
-  top: 88px;
-  right: 16px;
+  top: calc(100% + 2px);
+  right: 0;
   width: 320px;
   max-height: 420px;
   overflow: auto;
-  z-index: 60;
+  z-index: 120;
   border-radius: var(--radius);
   border: 1px solid var(--border);
   background:
@@ -779,14 +800,6 @@ h1 {
   margin-right: auto;
 }
 
-#challengesPage > .card,
-#groupsPage > .card,
-#socialPage > .card {
-  width: 100%;
-  max-width: 1440px;
-  margin-left: auto;
-  margin-right: auto;
-}
 
 
 .findAchievementsHeader {
