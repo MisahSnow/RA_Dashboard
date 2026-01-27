@@ -87,6 +87,7 @@ const DEFAULT_CACHE_TTL_MS = 180 * 1000; // 3 minutes
 const PRESENCE_TTL_MS = 15 * 1000;
 const GAME_INDEX_TTL_MS = 12 * 60 * 60 * 1000;
 const GAME_META_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const GENRE_CACHE_TTL_MS = 10 * 365 * 24 * 60 * 60 * 1000;
 const CONSOLE_LIST_TTL_MS = 24 * 60 * 60 * 1000;
 const ALL_CONSOLES_WARMUP_INTERVAL_MS = Number(process.env.ALL_CONSOLES_WARMUP_INTERVAL_MS) || 6 * 60 * 60 * 1000;
 const ALL_CONSOLES_WARMUP_START_DELAY_MS = Number(process.env.ALL_CONSOLES_WARMUP_START_DELAY_MS) || 15 * 1000;
@@ -3468,11 +3469,8 @@ app.get("/api/game-genre", async (req, res) => {
 
     const meta = await readGameMeta(gameId);
     if (meta?.genre) {
-      const updatedAt = meta.updated_at ? new Date(meta.updated_at).getTime() : 0;
-      const ageMs = updatedAt ? Date.now() - updatedAt : Number.POSITIVE_INFINITY;
-      cacheSet(cacheKey, meta.genre, GAME_META_TTL_MS);
-      const stale = !Number.isFinite(ageMs) || ageMs >= GAME_META_TTL_MS;
-      return res.json({ gameId, genre: meta.genre, cached: true, stale });
+      cacheSet(cacheKey, meta.genre, GENRE_CACHE_TTL_MS);
+      return res.json({ gameId, genre: meta.genre, cached: true, stale: false });
     }
 
     res.json({ gameId, genre: null, cached: false, stale: true });
@@ -3490,6 +3488,12 @@ app.get("/api/game-genre-refresh", async (req, res) => {
     const gameId = Number(req.query.gameId || 0);
     if (!Number.isFinite(gameId) || gameId <= 0) {
       return res.status(400).json({ error: "Missing gameId" });
+    }
+
+    const existing = await readGameMeta(gameId);
+    if (existing?.genre) {
+      cacheSet(gameGenreCacheKey(gameId), existing.genre, GENRE_CACHE_TTL_MS);
+      return res.json({ gameId, genre: existing.genre, cached: true });
     }
 
     const meta = await refreshGameMeta(gameId, apiKey);
@@ -3526,13 +3530,10 @@ app.get("/api/game-genres-batch", async (req, res) => {
     const rows = result.rows || [];
     const byId = new Map();
     for (const row of rows) {
-      const updatedAt = row.updated_at ? new Date(row.updated_at).getTime() : 0;
-      const ageMs = updatedAt ? Date.now() - updatedAt : Number.POSITIVE_INFINITY;
-      const stale = !Number.isFinite(ageMs) || ageMs >= GAME_META_TTL_MS;
       byId.set(Number(row.game_id), {
         gameId: Number(row.game_id),
         genre: row.genre || null,
-        stale
+        stale: false
       });
     }
     const results = ids.map(gameId => {

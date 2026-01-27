@@ -633,7 +633,7 @@ const findGamesGenresLimiter = createLimiter(3);
 let findGamesGenresBatchController = null;
 let findGamesGenresBatchKey = "";
 const FIND_GAMES_GENRES_BATCH_CONCURRENCY = 6;
-const FIND_GAMES_GENRES_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const FIND_GAMES_GENRES_CACHE_TTL_MS = Number.POSITIVE_INFINITY;
 const FIND_GAMES_GENRES_CACHE_MAX = 6000;
 let findGamesGenresPersistTimer = null;
 let backlogItems = [];
@@ -665,6 +665,7 @@ let notificationsOpen = false;
 let notificationsReadAfterClose = false;
 let notificationsHoverTimer = null;
 let friendsMenuHoverTimer = null;
+let profileMenuHoverTimer = null;
 let socialFilter = "all";
 let socialGameSuggestions = [];
 let socialGameSelected = null;
@@ -1706,6 +1707,10 @@ async function ensureFriendsLoaded({ force = false } = {}) {
 
 function closeProfileMenu() {
   if (!profileMenuWrap) return;
+  if (profileMenuHoverTimer) {
+    clearTimeout(profileMenuHoverTimer);
+    profileMenuHoverTimer = null;
+  }
   profileMenuWrap.classList.remove("open");
   profileMenuWrap.classList.add("closing");
   profileMenuWrap.classList.add("lockout");
@@ -1728,6 +1733,28 @@ function closeProfileMenu() {
   } else {
     clearLockout();
   }
+}
+
+function openProfileMenuHover() {
+  if (!profileMenuWrap) return;
+  if (profileMenuHoverTimer) {
+    clearTimeout(profileMenuHoverTimer);
+    profileMenuHoverTimer = null;
+  }
+  profileMenuWrap.classList.remove("closing");
+  profileMenuWrap.classList.remove("lockout");
+  profileMenuWrap.classList.add("open");
+  profileMenuBtn?.setAttribute("aria-expanded", "true");
+}
+
+function scheduleProfileMenuClose() {
+  if (!profileMenuWrap) return;
+  if (profileMenuHoverTimer) clearTimeout(profileMenuHoverTimer);
+  profileMenuHoverTimer = setTimeout(() => {
+    profileMenuHoverTimer = null;
+    profileMenuWrap.classList.remove("open");
+    profileMenuBtn?.setAttribute("aria-expanded", "false");
+  }, 220);
 }
 
 function applyCachedSocialAvatars(usernames) {
@@ -3610,9 +3637,13 @@ function restoreSocialEmbeds() {
 
 function setActivePage(name) {
   if (name && name !== activePageName) {
+    const previousPage = activePageName;
     pausedPages.add(activePageName);
     activePageName = name;
     pausedPages.delete(name);
+    if (previousPage === "find-games" && name !== "find-games") {
+      cancelFindGamesMetaRequests();
+    }
     processClientQueue();
     processFastQueue();
   }
@@ -4131,6 +4162,7 @@ async function renderBacklog() {
 function setFindGamesTab(name) {
   if (!name) return;
   findGamesTab = name;
+  cancelFindGamesMetaRequests();
   if (findTabSearch) findTabSearch.hidden = name !== "search";
   if (findTabTrending) findTabTrending.hidden = name !== "trending";
   if (findTabSuggested) findTabSuggested.hidden = name !== "suggested";
@@ -8754,6 +8786,7 @@ if (profileMenuBtn) {
     closeNotificationsPanel();
     friendsMenuWrap?.classList.remove("open");
     friendsMenuBtn?.setAttribute("aria-expanded", "false");
+    openProfileMenuHover();
   });
   profileMenuBtn.addEventListener("pointerdown", (e) => {
     e.preventDefault();
@@ -8768,6 +8801,16 @@ if (profileMenuBtn) {
     profileMenuBtn.blur();
     openProfile(currentUser);
   });
+}
+
+if (profileMenuWrap) {
+  profileMenuWrap.addEventListener("mouseenter", openProfileMenuHover);
+  profileMenuWrap.addEventListener("mouseleave", scheduleProfileMenuClose);
+}
+
+if (profileMenu) {
+  profileMenu.addEventListener("mouseenter", openProfileMenuHover);
+  profileMenu.addEventListener("mouseleave", scheduleProfileMenuClose);
 }
 
 if (profileMenuProfileBtn) {
