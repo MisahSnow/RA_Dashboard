@@ -96,6 +96,14 @@ const presence = new Map(); // Map<username, Map<sessionId, lastSeen>>
 let consoleListCache = { builtAt: 0, list: null, inFlight: null };
 const gameListCache = new Map(); // Map<consoleId, { builtAt, list, inFlight }>
 let allGameListCache = { builtAt: 0, list: null, inFlight: null };
+let allConsolesWarmupStatus = {
+  status: "idle",
+  startedAt: null,
+  finishedAt: null,
+  total: 0,
+  completed: 0,
+  lastError: ""
+};
 const gameMetaRefreshInFlight = new Map(); // Map<gameId, Promise>
 const gameGenreCacheKey = (gameId) => `game-genre:${gameId}`;
 const notificationStreams = new Map(); // Map<username, Set<res>>
@@ -354,7 +362,7 @@ const limitLb = createLimiter(1); // only 1 leaderboard request at a time
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 // RetroAchievements API throttling (slow queue).
-const RA_REQUEST_INTERVAL_MS = 150;
+const RA_REQUEST_INTERVAL_MS = 200;
 const RA_MAX_CONCURRENT = 1;
 const raQueue = [];
 let raQueueActive = 0;
@@ -362,7 +370,7 @@ let raQueueTimer = null;
 let lastRaRequestAt = 0;
 
 // Fast queue for lightweight RA requests.
-const RA_FAST_MAX_CONCURRENT = 10;
+const RA_FAST_MAX_CONCURRENT = 1;
 const raFastQueue = [];
 let raFastActive = 0;
 
@@ -844,6 +852,7 @@ async function getGameListForConsole(consoleId, apiKey) {
 
 async function getGameListForAllConsoles(apiKey, options = {}) {
   const forceRefresh = Boolean(options.forceRefresh);
+  const onProgress = typeof options.onProgress === "function" ? options.onProgress : null;
   const now = Date.now();
   if (!forceRefresh && allGameListCache.list && (now - allGameListCache.builtAt) < GAME_INDEX_TTL_MS) {
     return allGameListCache.list;
@@ -852,11 +861,15 @@ async function getGameListForAllConsoles(apiKey, options = {}) {
   allGameListCache.inFlight = (async () => {
     const consoles = await getConsoleList(apiKey);
     const combined = [];
+    let completedConsoles = 0;
+    if (onProgress) onProgress({ total: consoles.length, completed: completedConsoles });
     for (const consoleInfo of consoles) {
       const consoleId = consoleInfo?.id ?? consoleInfo?.consoleId;
       if (!consoleId) continue;
       const list = await getGameListForConsole(consoleId, apiKey);
       combined.push(...list);
+      completedConsoles += 1;
+      if (onProgress) onProgress({ total: consoles.length, completed: completedConsoles });
     }
     allGameListCache = { builtAt: Date.now(), list: combined, inFlight: null };
     return combined;
@@ -880,9 +893,34 @@ function scheduleAllConsolesWarmup() {
     const task = (async () => {
       try {
         console.log(`Warmup: refreshing all-console game list (${reason}).`);
-        await getGameListForAllConsoles(RA_API_KEY, { forceRefresh: true });
+        allConsolesWarmupStatus = {
+          status: "running",
+          startedAt: new Date().toISOString(),
+          finishedAt: null,
+          total: 0,
+          completed: 0,
+          lastError: ""
+        };
+        await getGameListForAllConsoles(RA_API_KEY, {
+          forceRefresh: true,
+          onProgress: ({ total, completed }) => {
+            if (Number.isFinite(total)) allConsolesWarmupStatus.total = total;
+            if (Number.isFinite(completed)) allConsolesWarmupStatus.completed = completed;
+          }
+        });
+        allConsolesWarmupStatus = {
+          ...allConsolesWarmupStatus,
+          status: "idle",
+          finishedAt: new Date().toISOString()
+        };
       } catch (err) {
         console.warn("Warmup: failed to refresh all-console game list.", err?.message || err);
+        allConsolesWarmupStatus = {
+          ...allConsolesWarmupStatus,
+          status: "error",
+          finishedAt: new Date().toISOString(),
+          lastError: String(err?.message || err || "")
+        };
       }
     })().finally(() => {
       allConsolesWarmupInFlight = null;
@@ -948,6 +986,16 @@ async function refreshGameMeta(gameId, apiKey) {
 
 // --- API routes ---
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
+
+app.get("/api/debug/warmup-status", requireAuth, (req, res) => {
+  const apiKey = requireApiKey(req, res);
+  if (!apiKey) return;
+  res.json({
+    ...allConsolesWarmupStatus,
+    cacheBuiltAt: allGameListCache.builtAt || null,
+    cacheHasData: !!(allGameListCache.list && allGameListCache.list.length)
+  });
+});
 
 function normalizeUsername(u) {
   return String(u || "").trim().replace(/\s+/g, "").toLowerCase();

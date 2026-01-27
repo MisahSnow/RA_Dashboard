@@ -226,6 +226,7 @@ const apiQueueCounterEl = document.getElementById("apiQueueCounter");
 const apiQueueLogEntriesEl = document.getElementById("apiQueueLogEntries");
 const systemLogEntriesEl = document.getElementById("systemLogEntries");
 const apiQueueTabButtons = document.querySelectorAll(".apiQueueTab");
+const warmupStatusEl = document.getElementById("warmupStatus");
 const LS_DEBUG_LOG_TAB = "ra.debugLogTab";
 const leaderboardChartEl = document.getElementById("leaderboardChart");
 const leaderboardHourlyChartEl = document.getElementById("leaderboardHourlyChart");
@@ -395,6 +396,110 @@ function logSystemMessage(message) {
   appendLogEntry(systemLogEntriesEl, message);
 }
 
+async function fetchWarmupStatus() {
+  return fetchServerJson("/api/debug/warmup-status", { silent: true, immediate: true });
+}
+
+function renderWarmupStatus(data) {
+  if (!warmupStatusEl) return;
+  if (!data) {
+    warmupStatusEl.textContent = "";
+    return;
+  }
+  const status = String(data.status || "idle");
+  const total = Number(data.total || 0);
+  const completed = Number(data.completed || 0);
+  const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+  if (status === "running") {
+    if (total <= 0) {
+      warmupStatusEl.textContent = "Warmup: starting...";
+      return;
+    }
+    warmupStatusEl.textContent = `Warmup: ${completed}/${total} (${pct}%)`;
+    return;
+  }
+  if (status === "error") {
+    warmupStatusEl.textContent = "Warmup: error";
+    return;
+  }
+  const cacheReady = data.cacheHasData ? "ready" : "empty";
+  warmupStatusEl.textContent = `Warmup: ${cacheReady}`;
+}
+
+function startWarmupStatusPolling() {
+  if (warmupStatusTimer || !warmupStatusEl) return;
+  const tick = async () => {
+    try {
+      const data = await fetchWarmupStatus();
+      renderWarmupStatus(data);
+    } catch {
+      renderWarmupStatus(null);
+    }
+  };
+  tick();
+  warmupStatusTimer = setInterval(tick, 5000);
+}
+
+function stopWarmupStatusPolling() {
+  if (warmupStatusTimer) {
+    clearInterval(warmupStatusTimer);
+    warmupStatusTimer = null;
+  }
+  renderWarmupStatus(null);
+}
+
+function renderFindGamesWarmupStatus(data) {
+  if (!data || data.status !== "running") {
+    return;
+  }
+  const total = Number(data.total || 0);
+  const completed = Number(data.completed || 0);
+  if (total <= 0) {
+    if (findGamesListEl) {
+      findGamesListEl.innerHTML = `
+        <div class="meta findGamesWarmupInline">
+          <div>Loading: starting...</div>
+          <div class="warmupBar" aria-hidden="true"><div class="warmupBarFill" style="width:5%"></div></div>
+          <div class="note">Only after server restart</div>
+        </div>
+      `;
+    }
+    return;
+  }
+  const pct = Math.round((completed / total) * 100);
+  if (findGamesListEl) {
+    const loadingMeta = findGamesListEl.querySelector(".meta");
+    if (loadingMeta && loadingMeta.textContent?.startsWith("Loading")) {
+      loadingMeta.innerHTML = `
+        <div>Loading: ${pct}%</div>
+        <div class="warmupBar" aria-hidden="true"><div class="warmupBarFill" style="width:${Math.max(5, pct)}%"></div></div>
+        <div class="note">Only after server restart</div>
+      `;
+    }
+  }
+}
+
+function startFindGamesWarmupStatus() {
+  if (findGamesWarmupTimer) return;
+  const tick = async () => {
+    try {
+      const data = await fetchWarmupStatus();
+      renderFindGamesWarmupStatus(data);
+    } catch {
+      renderFindGamesWarmupStatus(null);
+    }
+  };
+  tick();
+  findGamesWarmupTimer = setInterval(tick, 3000);
+}
+
+function stopFindGamesWarmupStatus() {
+  if (findGamesWarmupTimer) {
+    clearInterval(findGamesWarmupTimer);
+    findGamesWarmupTimer = null;
+  }
+}
+
 function applyDebugUiState() {
   const enabled = localStorage.getItem(LS_DEBUG_UI) === "true";
   if (apiQueueCounterEl) {
@@ -405,6 +510,11 @@ function applyDebugUiState() {
   if (logEl) {
     logEl.hidden = !enabled;
     logEl.classList.toggle("debugHidden", !enabled);
+  }
+  if (enabled) {
+    startWarmupStatusPolling();
+  } else {
+    stopWarmupStatusPolling();
   }
 }
 
@@ -664,6 +774,8 @@ let notificationsReadAfterClose = false;
 let notificationsHoverTimer = null;
 let friendsMenuHoverTimer = null;
 let profileMenuHoverTimer = null;
+let warmupStatusTimer = null;
+let findGamesWarmupTimer = null;
 let socialFilter = "all";
 let socialGameSuggestions = [];
 let socialGameSelected = null;
@@ -3687,6 +3799,9 @@ function setActivePage(name) {
   if (name !== "game" && findGamePageCard) findGamePageCard.hidden = true;
   if (profilePanel) profilePanel.hidden = name !== "profile";
   if (name !== "backlog") setBacklogRemoveMode(false);
+  if (name !== "find-games") {
+    stopFindGamesWarmupStatus();
+  }
   if (name === "find-games") {
     ensureFindGamesReady();
     if (findGamesTab === "search") {
@@ -4360,6 +4475,11 @@ async function loadFindGamesAllForSearch() {
   if (!findGamesListEl) return;
   findGamesListEl.innerHTML = `<div class="meta">Loading all games for search...</div>`;
   setLoading(findGamesLoadingEl, true);
+  if (findGamesConsoleId === "all") {
+    startFindGamesWarmupStatus();
+  } else {
+    stopFindGamesWarmupStatus();
+  }
   try {
     const data = await fetchGameListByLetter("all");
     const results = Array.isArray(data?.results) ? data.results : [];
@@ -4370,6 +4490,7 @@ async function loadFindGamesAllForSearch() {
     findGamesListEl.innerHTML = `<div class="meta">Failed to load games for search.</div>`;
   } finally {
     setLoading(findGamesLoadingEl, false);
+    stopFindGamesWarmupStatus();
   }
 }
 
@@ -5532,6 +5653,11 @@ async function loadFindGamesLetter(letter) {
   }
   findGamesListEl.innerHTML = `<div class="meta">Loading games...</div>`;
   setLoading(findGamesLoadingEl, true);
+  if (findGamesConsoleId === "all") {
+    startFindGamesWarmupStatus();
+  } else {
+    stopFindGamesWarmupStatus();
+  }
   try {
     const data = await fetchGameListByLetter(normalized);
     const results = Array.isArray(data?.results) ? data.results : [];
@@ -5541,6 +5667,7 @@ async function loadFindGamesLetter(letter) {
     findGamesListEl.innerHTML = `<div class="meta">Failed to load games.</div>`;
   } finally {
     setLoading(findGamesLoadingEl, false);
+    stopFindGamesWarmupStatus();
   }
 }
 

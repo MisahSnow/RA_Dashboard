@@ -734,6 +734,39 @@ h1 {
   min-width: 240px;
   flex: 1 1 320px;
 }
+.findGamesWarmup{
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+  min-width:160px;
+  align-items:flex-end;
+}
+.findGamesWarmup .note{
+  margin:0;
+}
+.warmupBar{
+  width:100%;
+  max-width:100%;
+  height:10px;
+  border-radius:999px;
+  background:rgba(20, 30, 55, 0.7);
+  border:1px solid rgba(82, 65, 140, 0.6);
+  overflow:hidden;
+  box-shadow:inset 0 0 6px rgba(0,0,0,0.4);
+}
+.warmupBarFill{
+  height:100%;
+  width:0%;
+  background:linear-gradient(90deg, rgba(45,243,255,0.8), rgba(255,100,215,0.8));
+  transition:width 0.2s ease;
+}
+.findGamesWarmupInline{
+  width:100%;
+  max-width:100%;
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+}
 
 .findGamesFilters {
   display: flex;
@@ -1674,6 +1707,12 @@ button:hover {
   letter-spacing: 1px;
   text-transform: uppercase;
   color: var(--accent);
+}
+
+.apiQueueLogStatus{
+  font-size:12px;
+  color:var(--ink-muted);
+  margin-left:auto;
 }
 
 .apiQueueTabs{
