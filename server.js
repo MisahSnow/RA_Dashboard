@@ -792,7 +792,23 @@ async function raGetGameInfo(gameId, apiKey) {
 
 async function getConsoleList(apiKey) {
   const now = Date.now();
-  if (consoleListCache.list && (now - consoleListCache.builtAt) < CONSOLE_LIST_TTL_MS) {
+  const hasList = Array.isArray(consoleListCache.list) && consoleListCache.list.length > 0;
+  const isFresh = hasList && (now - consoleListCache.builtAt) < CONSOLE_LIST_TTL_MS;
+  if (isFresh) return consoleListCache.list;
+  if (hasList && !consoleListCache.inFlight) {
+    consoleListCache.inFlight = (async () => {
+      const list = await raGetConsoleIds(apiKey);
+      const normalized = list
+        .map(c => ({
+          id: c?.ID ?? c?.id ?? c?.ConsoleID ?? c?.consoleId,
+          name: c?.Name ?? c?.name ?? c?.ConsoleName ?? c?.consoleName
+        }))
+        .filter(c => c.id && c.name);
+      consoleListCache = { builtAt: Date.now(), list: normalized, inFlight: null };
+      return normalized;
+    })().finally(() => {
+      consoleListCache.inFlight = null;
+    });
     return consoleListCache.list;
   }
   if (consoleListCache.inFlight) return consoleListCache.inFlight;
