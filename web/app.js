@@ -7341,6 +7341,17 @@ async function openProfile(username) {
   loadProfileSocialPosts({ reset: true });
 
   let summaryRendered = false;
+  const meSummaryPromise = fetchUserSummary(me).catch(() => null);
+  const themSummaryPromise = fetchUserSummary(target).catch(() => null);
+  themSummaryPromise.then((themSummary) => {
+    if (loadToken !== activeProfileLoadToken) return;
+    if (themSummary) {
+      renderProfileSummary(themSummary);
+    } else {
+      profileSummaryEl.innerHTML = `<div class="meta">Profile summary unavailable.</div>`;
+    }
+    summaryRendered = true;
+  });
   try {
     const count = PROFILE_GAMES_INITIAL;
     const mineCache = readRecentGamesCache(me, count);
@@ -7373,8 +7384,8 @@ async function openProfile(username) {
     let meSummary = null;
     let themSummaryRaw = null;
     try {
-      meSummary = await fetchUserSummary(me).catch(() => null);
-      themSummaryRaw = await fetchUserSummary(target).catch(() => null);
+      meSummary = await meSummaryPromise;
+      themSummaryRaw = await themSummaryPromise;
     } catch {
       meSummary = null;
       themSummaryRaw = null;
@@ -7391,11 +7402,12 @@ async function openProfile(username) {
     if (loadToken !== activeProfileLoadToken) return;
 
     const themSummary = isSelf ? meSummary : themSummaryRaw;
-    if (themSummary) {
-      renderProfileSummary(themSummary);
-      summaryRendered = true;
-    } else {
-      profileSummaryEl.innerHTML = `<div class="meta">Profile summary unavailable.</div>`;
+    if (!summaryRendered) {
+      if (themSummary) {
+        renderProfileSummary(themSummary);
+      } else {
+        profileSummaryEl.innerHTML = `<div class="meta">Profile summary unavailable.</div>`;
+      }
       summaryRendered = true;
     }
 
