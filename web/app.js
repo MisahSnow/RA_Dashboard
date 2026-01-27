@@ -1891,11 +1891,13 @@ function readRecentGamesCache(username, count) {
     const results = Array.isArray(parsed.results) ? parsed.results : null;
     if (!results || !results.length) return null;
     const storedCount = Number(parsed.count ?? results.length);
-    if (!Number.isFinite(storedCount) || storedCount < count) return null;
+    if (!Number.isFinite(storedCount)) return null;
     const ts = Number(parsed.ts ?? 0);
     const ageMs = Date.now() - ts;
-    const data = { count, results: results.slice(0, count) };
-    return { data, stale: !Number.isFinite(ageMs) || ageMs > RECENT_CACHE_TTL_MS };
+    const safeCount = Math.min(count, storedCount, results.length);
+    const data = { count: safeCount, results: results.slice(0, safeCount) };
+    const stale = !Number.isFinite(ageMs) || ageMs > RECENT_CACHE_TTL_MS || storedCount < count;
+    return { data, stale };
   } catch {
     return null;
   }
