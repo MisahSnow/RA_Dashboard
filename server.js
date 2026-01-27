@@ -88,6 +88,9 @@ const PRESENCE_TTL_MS = 15 * 1000;
 const GAME_INDEX_TTL_MS = 12 * 60 * 60 * 1000;
 const GAME_META_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const CONSOLE_LIST_TTL_MS = 24 * 60 * 60 * 1000;
+const ALL_CONSOLES_WARMUP_INTERVAL_MS = Number(process.env.ALL_CONSOLES_WARMUP_INTERVAL_MS) || 6 * 60 * 60 * 1000;
+const ALL_CONSOLES_WARMUP_START_DELAY_MS = Number(process.env.ALL_CONSOLES_WARMUP_START_DELAY_MS) || 15 * 1000;
+const ALL_CONSOLES_WARMUP_PREEMPTIVE_MS = Number(process.env.ALL_CONSOLES_WARMUP_PREEMPTIVE_MS) || 60 * 60 * 1000;
 const presence = new Map(); // Map<username, Map<sessionId, lastSeen>>
 let consoleListCache = { builtAt: 0, list: null, inFlight: null };
 const gameListCache = new Map(); // Map<consoleId, { builtAt, list, inFlight }>
@@ -838,9 +841,10 @@ async function getGameListForConsole(consoleId, apiKey) {
   return inFlight;
 }
 
-async function getGameListForAllConsoles(apiKey) {
+async function getGameListForAllConsoles(apiKey, options = {}) {
+  const forceRefresh = Boolean(options.forceRefresh);
   const now = Date.now();
-  if (allGameListCache.list && (now - allGameListCache.builtAt) < GAME_INDEX_TTL_MS) {
+  if (!forceRefresh && allGameListCache.list && (now - allGameListCache.builtAt) < GAME_INDEX_TTL_MS) {
     return allGameListCache.list;
   }
   if (allGameListCache.inFlight) return allGameListCache.inFlight;
@@ -859,6 +863,35 @@ async function getGameListForAllConsoles(apiKey) {
     allGameListCache.inFlight = null;
   });
   return allGameListCache.inFlight;
+}
+
+let allConsolesWarmupTimer = null;
+let allConsolesWarmupInFlight = null;
+
+function scheduleAllConsolesWarmup() {
+  if (!RA_API_KEY || allConsolesWarmupTimer) return;
+  const runWarmup = async (reason) => {
+    if (allConsolesWarmupInFlight) return allConsolesWarmupInFlight;
+    const now = Date.now();
+    const age = now - (allGameListCache.builtAt || 0);
+    const shouldRefresh = !allGameListCache.list || age >= (GAME_INDEX_TTL_MS - ALL_CONSOLES_WARMUP_PREEMPTIVE_MS);
+    if (!shouldRefresh) return null;
+    const task = (async () => {
+      try {
+        console.log(`Warmup: refreshing all-console game list (${reason}).`);
+        await getGameListForAllConsoles(RA_API_KEY, { forceRefresh: true });
+      } catch (err) {
+        console.warn("Warmup: failed to refresh all-console game list.", err?.message || err);
+      }
+    })().finally(() => {
+      allConsolesWarmupInFlight = null;
+    });
+    allConsolesWarmupInFlight = task;
+    return task;
+  };
+
+  setTimeout(() => runWarmup("startup"), ALL_CONSOLES_WARMUP_START_DELAY_MS);
+  allConsolesWarmupTimer = setInterval(() => runWarmup("interval"), ALL_CONSOLES_WARMUP_INTERVAL_MS);
 }
 
 async function readGameMeta(gameId) {
@@ -3800,6 +3833,7 @@ const startServer = () => {
   app.listen(PORT, () => {
     console.log(`Server running: http://localhost:${PORT}`);
     console.log(`Health check : http://localhost:${PORT}/api/health`);
+    scheduleAllConsolesWarmup();
   });
 };
 
