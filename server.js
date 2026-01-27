@@ -1155,6 +1155,47 @@ function requireAuth(req, res, next) {
   return next();
 }
 
+function getRequestApiKey(req) {
+  return String(req.headers["x-ra-api-key"] || "").trim();
+}
+
+function requireApiKey(req, res) {
+  const apiKey = getRequestApiKey(req);
+  if (!apiKey) {
+    res.status(401).json({ error: "Missing RA API key" });
+    return null;
+  }
+  const sessionKey = req.session?.raApiKey;
+  if (sessionKey && sessionKey !== apiKey) {
+    res.status(403).json({ error: "API key does not match logged in user" });
+    return null;
+  }
+  return apiKey;
+}
+
+function extractSummaryUsername(data) {
+  const userObj =
+    (data && typeof data.User === "object" ? data.User : null) ||
+    (data && typeof data.user === "object" ? data.user : null) ||
+    null;
+  const candidates = [
+    userObj?.User,
+    userObj?.Username,
+    userObj?.UserName,
+    userObj?.user,
+    userObj?.username,
+    data?.User,
+    data?.Username,
+    data?.UserName,
+    data?.user,
+    data?.username
+  ];
+  for (const entry of candidates) {
+    if (typeof entry === "string" && entry.trim()) return entry.trim();
+  }
+  return "";
+}
+
 async function raGetGameLeaderboards(gameId, count = 200, apiKey) {
   if (!apiKey) throw new Error("Missing RA API key.");
 
@@ -1276,6 +1317,21 @@ app.post("/api/auth/login", async (req, res) => {
   const raw = req.body?.username;
   const username = normalizeUsername(raw);
   if (!username) return res.status(400).json({ error: "Missing username" });
+  const apiKey = String(req.body?.apiKey || getRequestApiKey(req) || "").trim();
+  if (!apiKey) return res.status(400).json({ error: "Missing RA API key" });
+
+  try {
+    const summary = await raGetUserSummary(username, apiKey);
+    const summaryName = normalizeUsername(extractSummaryUsername(summary));
+    if (summaryName && summaryName !== username) {
+      return res.status(403).json({ error: "API key does not match username" });
+    }
+  } catch (err) {
+    const msg = String(err?.message || "");
+    const notFound = msg.includes("404") || msg.toLowerCase().includes("not found");
+    if (notFound) return res.status(404).json({ error: `User not found: ${username}` });
+    return res.status(401).json({ error: "Invalid RA API key" });
+  }
 
   const result = await pool.query(
     "INSERT INTO users (username) VALUES ($1) ON CONFLICT (username) DO UPDATE SET username = EXCLUDED.username RETURNING id, username",
@@ -1283,6 +1339,7 @@ app.post("/api/auth/login", async (req, res) => {
   );
   const user = result.rows[0];
   req.session.user = { id: user.id, username: user.username };
+  req.session.raApiKey = apiKey;
   res.json({ username: user.username });
 });
 
@@ -1344,15 +1401,15 @@ app.post("/api/friends", requireAuth, async (req, res) => {
   const friend = normalizeUsername(req.body?.username);
   if (!friend) return res.status(400).json({ error: "Missing friend username" });
 
-  if (RA_API_KEY) {
-    try {
-      await raGetUserSummary(friend, RA_API_KEY);
-    } catch (err) {
-      const msg = String(err?.message || "");
-      const notFound = msg.includes("404") || msg.toLowerCase().includes("not found");
-      if (notFound) return res.status(404).json({ error: `User not found: ${friend}` });
-      return res.status(502).json({ error: `Unable to verify user: ${friend}` });
-    }
+  const apiKey = requireApiKey(req, res);
+  if (!apiKey) return;
+  try {
+    await raGetUserSummary(friend, apiKey);
+  } catch (err) {
+    const msg = String(err?.message || "");
+    const notFound = msg.includes("404") || msg.toLowerCase().includes("not found");
+    if (notFound) return res.status(404).json({ error: `User not found: ${friend}` });
+    return res.status(502).json({ error: `Unable to verify user: ${friend}` });
   }
 
   await pool.query(
@@ -1552,7 +1609,8 @@ app.get("/api/challenges", requireAuth, async (req, res) => {
   const me = normalizeUsername(req.session.user.username);
   const totalsQ = typeof req.query.totals === "string" ? req.query.totals.toLowerCase() : "1";
   const includeTotals = !(totalsQ === "0" || totalsQ === "false");
-  const apiKey = String(req.headers["x-ra-api-key"] || RA_API_KEY || "").trim();
+  const apiKey = includeTotals ? requireApiKey(req, res) : null;
+  if (includeTotals && !apiKey) return;
   const incoming = await pool.query(
     `
       SELECT id, creator_username, opponent_username, duration_hours, status,
@@ -1793,7 +1851,8 @@ app.post("/api/challenges", requireAuth, async (req, res) => {
   const leaderboardId = Number(req.body?.leaderboardId || 0);
   const gameTitle = String(req.body?.gameTitle || "");
   const leaderboardTitle = String(req.body?.leaderboardTitle || "");
-  const apiKey = String(req.headers["x-ra-api-key"] || RA_API_KEY || "").trim();
+  const apiKey = requireApiKey(req, res);
+  if (!apiKey) return;
   let leaderboardFormat = null;
   let leaderboardLower = null;
   let resolvedLeaderboardTitle = leaderboardTitle;
@@ -1804,9 +1863,6 @@ app.post("/api/challenges", requireAuth, async (req, res) => {
     }
     if (!Number.isFinite(leaderboardId) || leaderboardId <= 0) {
       return res.status(400).json({ error: "Missing leaderboard selection" });
-    }
-    if (!apiKey) {
-      return res.status(400).json({ error: "Missing RA API key" });
     }
     try {
       const boards = await raGetGameLeaderboards(gameId, 200, apiKey);
@@ -1822,15 +1878,13 @@ app.post("/api/challenges", requireAuth, async (req, res) => {
     }
   }
 
-  if (RA_API_KEY) {
-    try {
-      await raGetUserSummary(opponent, RA_API_KEY);
-    } catch (err) {
-      const msg = String(err?.message || "");
-      const notFound = msg.includes("404") || msg.toLowerCase().includes("not found");
-      if (notFound) return res.status(404).json({ error: `User not found: ${opponent}` });
-      return res.status(502).json({ error: `Unable to verify user: ${opponent}` });
-    }
+  try {
+    await raGetUserSummary(opponent, apiKey);
+  } catch (err) {
+    const msg = String(err?.message || "");
+    const notFound = msg.includes("404") || msg.toLowerCase().includes("not found");
+    if (notFound) return res.status(404).json({ error: `User not found: ${opponent}` });
+    return res.status(502).json({ error: `Unable to verify user: ${opponent}` });
   }
 
   const result = await pool.query(
@@ -1880,7 +1934,8 @@ app.post("/api/challenges/:id/accept", requireAuth, async (req, res) => {
   const me = normalizeUsername(req.session.user.username);
   const id = Number(req.params.id);
   if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid challenge id" });
-  const apiKey = String(req.headers["x-ra-api-key"] || RA_API_KEY || "").trim();
+  const apiKey = requireApiKey(req, res);
+  if (!apiKey) return;
 
   const existing = await pool.query(
     `
@@ -2238,8 +2293,8 @@ app.post("/api/presence/remove", (req, res) => {
   try {
     const username = String(req.params.username || "").trim();
     if (!username) return res.status(400).json({ error: "Missing username" });
-    const apiKey = String(req.headers["x-ra-api-key"] || RA_API_KEY || "").trim();
-    if (!apiKey) return res.status(400).json({ error: "Missing RA API key" });
+    const apiKey = requireApiKey(req, res);
+    if (!apiKey) return;
 
     const { start, end } = getMonthRange();
 
@@ -2323,8 +2378,8 @@ app.get("/api/daily/:username", async (req, res) => {
     const rawUsername = String(req.params.username || "").trim();
     if (!rawUsername) return res.status(400).json({ error: "Missing username" });
     const username = normalizeUsername(rawUsername);
-    const apiKey = String(req.headers["x-ra-api-key"] || RA_API_KEY || "").trim();
-    if (!apiKey) return res.status(400).json({ error: "Missing RA API key" });
+    const apiKey = requireApiKey(req, res);
+    if (!apiKey) return;
 
     const modeQ = typeof req.query.mode === "string" ? req.query.mode.toLowerCase() : "hc";
     const includeSoftcore = modeQ === "all";
@@ -2532,8 +2587,8 @@ app.get("/api/recent-achievements/:username", async (req, res) => {
   try {
     const username = String(req.params.username || "").trim();
     if (!username) return res.status(400).json({ error: "Missing username" });
-    const apiKey = String(req.headers["x-ra-api-key"] || RA_API_KEY || "").trim();
-    if (!apiKey) return res.status(400).json({ error: "Missing RA API key" });
+    const apiKey = requireApiKey(req, res);
+    if (!apiKey) return;
 
     const minutes = typeof req.query.m === "string" ? Number(req.query.m) : 10080; // default 7 days
     const limit = typeof req.query.limit === "string" ? Number(req.query.limit) : 20;
@@ -2569,8 +2624,8 @@ app.get("/api/recent-times/:username", async (req, res) => {
   try {
     const username = String(req.params.username || "").trim();
     if (!username) return res.status(400).json({ error: "Missing username" });
-    const apiKey = String(req.headers["x-ra-api-key"] || RA_API_KEY || "").trim();
-    if (!apiKey) return res.status(400).json({ error: "Missing RA API key" });
+    const apiKey = requireApiKey(req, res);
+    if (!apiKey) return;
 
     const gamesWanted = typeof req.query.games === "string" ? Number(req.query.games) : 5;
     const limit = typeof req.query.limit === "string" ? Number(req.query.limit) : 20;
@@ -2664,8 +2719,8 @@ app.get("/api/recent-games/:username", async (req, res) => {
   try {
     const username = String(req.params.username || "").trim();
     if (!username) return res.status(400).json({ error: "Missing username" });
-    const apiKey = String(req.headers["x-ra-api-key"] || RA_API_KEY || "").trim();
-    if (!apiKey) return res.status(400).json({ error: "Missing RA API key" });
+    const apiKey = requireApiKey(req, res);
+    if (!apiKey) return;
 
     const countQ = typeof req.query.count === "string" ? Number(req.query.count) : 50;
     const count = Math.max(1, Math.min(200, Number.isFinite(countQ) ? countQ : 50));
@@ -2700,8 +2755,8 @@ app.get("/api/user-summary/:username", async (req, res) => {
   try {
     const username = String(req.params.username || "").trim();
     if (!username) return res.status(400).json({ error: "Missing username" });
-    const apiKey = String(req.headers["x-ra-api-key"] || RA_API_KEY || "").trim();
-    if (!apiKey) return res.status(400).json({ error: "Missing RA API key" });
+    const apiKey = requireApiKey(req, res);
+    if (!apiKey) return;
 
     const cacheKey = `user-summary:${username}:${apiKey}`;
     const cached = cacheGet(cacheKey);
@@ -2777,8 +2832,8 @@ app.get("/api/user-completion-progress/:username", async (req, res) => {
   try {
     const username = String(req.params.username || "").trim();
     if (!username) return res.status(400).json({ error: "Missing username" });
-    const apiKey = String(req.headers["x-ra-api-key"] || RA_API_KEY || "").trim();
-    if (!apiKey) return res.status(400).json({ error: "Missing RA API key" });
+    const apiKey = requireApiKey(req, res);
+    if (!apiKey) return;
 
     const countQ = typeof req.query.count === "string" ? Number(req.query.count) : 100;
     const offsetQ = typeof req.query.offset === "string" ? Number(req.query.offset) : 0;
@@ -3307,8 +3362,8 @@ app.put("/api/backlog/:gameId/progress", requireAuth, async (req, res) => {
 // Console list (cached)
 app.get("/api/consoles", async (req, res) => {
   try {
-    const apiKey = String(req.headers["x-ra-api-key"] || RA_API_KEY || "").trim();
-    if (!apiKey) return res.status(400).json({ error: "Missing RA API key" });
+    const apiKey = requireApiKey(req, res);
+    if (!apiKey) return;
 
     const list = await getConsoleList(apiKey);
     res.json({ count: list.length, results: list });
@@ -3321,8 +3376,8 @@ app.get("/api/consoles", async (req, res) => {
 // All games list (cached) grouped by starting letter.
 app.get("/api/game-list", async (req, res) => {
   try {
-    const apiKey = String(req.headers["x-ra-api-key"] || RA_API_KEY || "").trim();
-    if (!apiKey) return res.status(400).json({ error: "Missing RA API key" });
+    const apiKey = requireApiKey(req, res);
+    if (!apiKey) return;
 
     const rawConsoleId = String(req.query.consoleId || "").trim();
     if (!rawConsoleId) return res.status(400).json({ error: "Missing consoleId" });
@@ -3354,8 +3409,8 @@ app.get("/api/game-list", async (req, res) => {
 
 app.get("/api/game-players", async (req, res) => {
   try {
-    const apiKey = String(req.headers["x-ra-api-key"] || RA_API_KEY || "").trim();
-    if (!apiKey) return res.status(400).json({ error: "Missing RA API key" });
+    const apiKey = requireApiKey(req, res);
+    if (!apiKey) return;
 
     const gameId = Number(req.query.gameId || 0);
     if (!Number.isFinite(gameId) || gameId <= 0) {
@@ -3389,8 +3444,8 @@ app.get("/api/game-players", async (req, res) => {
 
 app.get("/api/game-players-refresh", async (req, res) => {
   try {
-    const apiKey = String(req.headers["x-ra-api-key"] || RA_API_KEY || "").trim();
-    if (!apiKey) return res.status(400).json({ error: "Missing RA API key" });
+    const apiKey = requireApiKey(req, res);
+    if (!apiKey) return;
 
     const gameId = Number(req.query.gameId || 0);
     if (!Number.isFinite(gameId) || gameId <= 0) {
@@ -3407,6 +3462,8 @@ app.get("/api/game-players-refresh", async (req, res) => {
 
 app.get("/api/game-players-batch", async (req, res) => {
   try {
+    const apiKey = requireApiKey(req, res);
+    if (!apiKey) return;
     const raw = String(req.query.ids || "").trim();
     if (!raw) return res.json({ results: [] });
     const ids = raw
@@ -3453,9 +3510,6 @@ app.get("/api/game-players-batch", async (req, res) => {
 
 app.get("/api/game-genre", async (req, res) => {
   try {
-    const apiKey = String(req.headers["x-ra-api-key"] || RA_API_KEY || "").trim();
-    if (!apiKey) return res.status(400).json({ error: "Missing RA API key" });
-
     const gameId = Number(req.query.gameId || 0);
     if (!Number.isFinite(gameId) || gameId <= 0) {
       return res.status(400).json({ error: "Missing gameId" });
@@ -3482,8 +3536,7 @@ app.get("/api/game-genre", async (req, res) => {
 
 app.get("/api/game-genre-refresh", async (req, res) => {
   try {
-    const apiKey = String(req.headers["x-ra-api-key"] || RA_API_KEY || "").trim();
-    if (!apiKey) return res.status(400).json({ error: "Missing RA API key" });
+    if (!RA_API_KEY) return res.status(400).json({ error: "Missing RA API key" });
 
     const gameId = Number(req.query.gameId || 0);
     if (!Number.isFinite(gameId) || gameId <= 0) {
@@ -3496,7 +3549,7 @@ app.get("/api/game-genre-refresh", async (req, res) => {
       return res.json({ gameId, genre: existing.genre, cached: true });
     }
 
-    const meta = await refreshGameMeta(gameId, apiKey);
+    const meta = await refreshGameMeta(gameId, RA_API_KEY);
     res.json({ gameId, genre: meta?.genre ?? null });
   } catch (err) {
     const status = err?.status || 500;
@@ -3552,8 +3605,8 @@ app.get("/api/game-achievements-basic/:gameId", async (req, res) => {
   try {
     const gameId = String(req.params.gameId || "").trim();
     if (!gameId) return res.status(400).json({ error: "Missing gameId" });
-    const apiKey = String(req.headers["x-ra-api-key"] || RA_API_KEY || "").trim();
-    if (!apiKey) return res.status(400).json({ error: "Missing RA API key" });
+    const apiKey = requireApiKey(req, res);
+    if (!apiKey) return;
 
     const cacheKey = `game-achievements-basic:${gameId}:${apiKey}`;
     const cached = cacheGet(cacheKey);
@@ -3602,8 +3655,8 @@ app.get("/api/game-achievements/:username/:gameId", async (req, res) => {
     const username = String(req.params.username || "").trim();
     const gameId = String(req.params.gameId || "").trim();
     if (!username || !gameId) return res.status(400).json({ error: "Missing username or gameId" });
-    const apiKey = String(req.headers["x-ra-api-key"] || RA_API_KEY || "").trim();
-    if (!apiKey) return res.status(400).json({ error: "Missing RA API key" });
+    const apiKey = requireApiKey(req, res);
+    if (!apiKey) return;
 
     const cacheKey = `game-achievements:${username}:${gameId}:${apiKey}`;
     const cached = cacheGet(cacheKey);
@@ -3656,8 +3709,8 @@ app.get("/api/game-times/:username/:gameId", async (req, res) => {
     const username = String(req.params.username || "").trim();
     const gameId = String(req.params.gameId || "").trim();
     if (!username || !gameId) return res.status(400).json({ error: "Missing username or gameId" });
-    const apiKey = String(req.headers["x-ra-api-key"] || RA_API_KEY || "").trim();
-    if (!apiKey) return res.status(400).json({ error: "Missing RA API key" });
+    const apiKey = requireApiKey(req, res);
+    if (!apiKey) return;
 
     const cacheKey = `game-times:${username}:${gameId}:${apiKey}`;
     const cached = cacheGet(cacheKey);
@@ -3691,8 +3744,8 @@ app.get("/api/game-leaderboards/:gameId", async (req, res) => {
   try {
     const gameId = String(req.params.gameId || "").trim();
     if (!gameId) return res.status(400).json({ error: "Missing gameId" });
-    const apiKey = String(req.headers["x-ra-api-key"] || RA_API_KEY || "").trim();
-    if (!apiKey) return res.status(400).json({ error: "Missing RA API key" });
+    const apiKey = requireApiKey(req, res);
+    if (!apiKey) return;
 
     const cacheKey = `game-leaderboards:${gameId}:${apiKey}`;
     const cached = cacheGet(cacheKey);
@@ -3723,8 +3776,8 @@ app.get("/api/now-playing/:username", async (req, res) => {
   try {
     const username = String(req.params.username || "").trim();
     if (!username) return res.status(400).json({ error: "Missing username" });
-    const apiKey = String(req.headers["x-ra-api-key"] || RA_API_KEY || "").trim();
-    if (!apiKey) return res.status(400).json({ error: "Missing RA API key" });
+    const apiKey = requireApiKey(req, res);
+    if (!apiKey) return;
 
     const windowSeconds = typeof req.query.window === "string" ? Number(req.query.window) : 120;
     const win = Number.isFinite(windowSeconds) ? Math.max(5, Math.min(600, windowSeconds)) : 60;

@@ -161,7 +161,6 @@ function processFastQueue() {
 
 // LocalStorage keys for user settings and cached data.
 const LS_API_KEY = "ra.apiKey";
-const LS_USE_API_KEY = "ra.useApiKey";
 const LS_CACHE_PREFIX = "ra.cache.";
 const LS_CHALLENGE_LEAD_CACHE = "ra.challengeLeadCache";
 const LS_DEBUG_UI = "ra.debugUi";
@@ -198,7 +197,6 @@ const addFriendLoadingEl = document.getElementById("addFriendLoading");
 const usernameModal = document.getElementById("usernameModal");
 const usernameModalInput = document.getElementById("usernameModalInput");
 const usernameModalApiKeyInput = document.getElementById("usernameModalApiKeyInput");
-const usernameModalUseApiKeyToggle = document.getElementById("usernameModalUseApiKeyToggle");
 const usernameModalConfirmBtn = document.getElementById("usernameModalConfirmBtn");
 const usernameModalErrorEl = document.getElementById("usernameModalError");
 const usernameModalLoadingEl = document.getElementById("usernameModalLoading");
@@ -416,7 +414,6 @@ const settingsModal = document.getElementById("settingsModal");
 const settingsSaveBtn = document.getElementById("settingsSaveBtn");
 const settingsCloseBtn = document.getElementById("settingsCloseBtn");
 const settingsCancelBtn = document.getElementById("settingsCancelBtn");
-const useApiKeyToggle = document.getElementById("useApiKeyToggle");
 const debugUiToggle = document.getElementById("debugUiToggle");
 
 // Dashboard lists and loading states.
@@ -575,6 +572,7 @@ let leaderboardBaseRows = [];
 let lastRecentAchievementsKey = "";
 let lastRecentTimesKey = "";
 let authResolved = false;
+let pendingApiKeyPrompt = false;
 let challengeLeadCache = loadChallengeLeadCache();
 let scoreAttackSharedGames = [];
 let scoreAttackSelectedGame = null;
@@ -707,9 +705,6 @@ function loadState() {
     localStorage.setItem(LS_LEADERBOARD_RANGE, leaderboardRange);
   }
   if (apiKeyInput) apiKeyInput.value = localStorage.getItem(LS_API_KEY) || "";
-  if (useApiKeyToggle) {
-    useApiKeyToggle.checked = localStorage.getItem(LS_USE_API_KEY) === "true";
-  }
   if (debugUiToggle) {
     debugUiToggle.checked = localStorage.getItem(LS_DEBUG_UI) === "true";
   }
@@ -718,7 +713,6 @@ function loadState() {
 
 function saveState() {
   if (apiKeyInput) localStorage.setItem(LS_API_KEY, (apiKeyInput.value || "").trim());
-  if (useApiKeyToggle) localStorage.setItem(LS_USE_API_KEY, useApiKeyToggle.checked ? "true" : "false");
   if (debugUiToggle) localStorage.setItem(LS_DEBUG_UI, debugUiToggle.checked ? "true" : "false");
   applyDebugUiState();
 }
@@ -2373,8 +2367,7 @@ window.addEventListener("pagehide", sendPresenceRemove);
 
 async function fetchJson(url, { silent = false, signal = null, immediate = false } = {}) {
   const apiKey = (apiKeyInput?.value || "").trim();
-  const useApiKey = !!useApiKeyToggle?.checked;
-  const headers = (useApiKey && apiKey) ? { "x-ra-api-key": apiKey } : {};
+  const headers = apiKey ? { "x-ra-api-key": apiKey } : {};
   const options = { headers };
   if (signal) options.signal = signal;
   const res = immediate ? await fetch(url, options) : await enqueueClientFetch(url, options);
@@ -2388,8 +2381,7 @@ async function fetchJson(url, { silent = false, signal = null, immediate = false
 async function fetchServerJson(url, { method = "GET", body = null, silent = false, immediate = false } = {}) {
   const headers = {};
   const apiKey = (apiKeyInput?.value || "").trim();
-  const useApiKey = !!useApiKeyToggle?.checked;
-  if (useApiKey && apiKey) headers["x-ra-api-key"] = apiKey;
+  if (apiKey) headers["x-ra-api-key"] = apiKey;
   if (body !== null) headers["Content-Type"] = "application/json";
   const options = {
     method,
@@ -3024,7 +3016,10 @@ async function fetchAuthMeWithRetry(retries = 2) {
 async function loginUser(username) {
   const data = await fetchServerJson("/api/auth/login", {
     method: "POST",
-    body: { username }
+    body: {
+      username,
+      apiKey: (apiKeyInput?.value || "").trim()
+    }
   });
   return clampUsername(data?.username || username);
 }
@@ -3234,12 +3229,20 @@ async function bootstrapAfterLogin() {
 }
 
 async function loginAndStart(username, { errorEl, loadingEl, closeModal } = {}) {
+  const apiKey = (apiKeyInput?.value || "").trim();
+  if (!apiKey) {
+    const message = "API key is required.";
+    if (errorEl) {
+      errorEl.textContent = message;
+    } else {
+      setStatus(message);
+    }
+    if (loadingEl) loadingEl.hidden = true;
+    return false;
+  }
   try {
     if (loadingEl) loadingEl.hidden = false;
-    const apiKey = (apiKeyInput?.value || "").trim();
-    if (useApiKeyToggle?.checked && apiKey) {
-      await fetchUserSummary(username, { silent: true });
-    }
+    await fetchUserSummary(username, { silent: true });
   } catch (e) {
     const message = getUserValidationError(e, username);
     if (errorEl) {
@@ -3288,10 +3291,7 @@ async function addFriendFromModal() {
 
   try {
     if (addFriendLoadingEl) addFriendLoadingEl.hidden = false;
-    const apiKey = (apiKeyInput?.value || "").trim();
-    if (useApiKeyToggle?.checked && apiKey) {
-      await fetchUserSummary(u, { silent: true });
-    }
+    await fetchUserSummary(u, { silent: true });
   } catch (e) {
     if (addFriendErrorEl) addFriendErrorEl.textContent = getUserValidationError(e, u);
     if (addFriendLoadingEl) addFriendLoadingEl.hidden = true;
@@ -3572,18 +3572,34 @@ function ensureUsername({ prompt = true } = {}) {
     usernameModal.hidden = false;
     if (usernameModalInput) {
       usernameModalInput.value = "";
+      usernameModalInput.disabled = false;
       usernameModalInput.focus();
     }
     if (usernameModalApiKeyInput) {
-      const useApiKey = !!useApiKeyToggle?.checked;
-      usernameModalApiKeyInput.value = useApiKey ? (apiKeyInput?.value || "") : "";
-    }
-    if (usernameModalUseApiKeyToggle) {
-      usernameModalUseApiKeyToggle.checked = !!useApiKeyToggle?.checked;
+      usernameModalApiKeyInput.value = apiKeyInput?.value || "";
     }
     if (usernameModalErrorEl) usernameModalErrorEl.textContent = "";
     if (usernameModalLoadingEl) usernameModalLoadingEl.hidden = true;
   }
+  return "";
+}
+
+function ensureApiKey({ prompt = true } = {}) {
+  const apiKey = (apiKeyInput?.value || "").trim();
+  if (apiKey) return apiKey;
+  if (!prompt || !usernameModal) return "";
+  pendingApiKeyPrompt = true;
+  usernameModal.hidden = false;
+  if (usernameModalInput) {
+    usernameModalInput.value = currentUser || "";
+    usernameModalInput.disabled = !!currentUser;
+  }
+  if (usernameModalApiKeyInput) {
+    usernameModalApiKeyInput.value = apiKeyInput?.value || "";
+    usernameModalApiKeyInput.focus();
+  }
+  if (usernameModalErrorEl) usernameModalErrorEl.textContent = "API key required to continue.";
+  if (usernameModalLoadingEl) usernameModalLoadingEl.hidden = true;
   return "";
 }
 
@@ -8797,6 +8813,7 @@ if (profileMenuBtn) {
       ensureUsername();
       return;
     }
+    if (!ensureApiKey()) return;
     closeProfileMenu();
     profileMenuBtn.blur();
     openProfile(currentUser);
@@ -8816,6 +8833,7 @@ if (profileMenu) {
 if (profileMenuProfileBtn) {
   profileMenuProfileBtn.addEventListener("click", () => {
     if (!currentUser) return;
+    if (!ensureApiKey()) return;
     closeProfileMenu();
     openProfile(currentUser);
   });
@@ -8824,6 +8842,7 @@ if (profileMenuProfileBtn) {
 if (profileMenuBacklogBtn) {
   profileMenuBacklogBtn.addEventListener("click", () => {
     if (!currentUser) return;
+    if (!ensureApiKey()) return;
     closeProfileMenu();
     setBacklogViewUser(currentUser);
     setActivePage("backlog");
@@ -8832,6 +8851,11 @@ if (profileMenuBacklogBtn) {
 
 if (profileMenuSettingsBtn) {
   profileMenuSettingsBtn.addEventListener("click", () => {
+    if (!ensureApiKey({ prompt: false })) {
+      closeProfileMenu();
+      openSettings();
+      return;
+    }
     closeProfileMenu();
     openSettings();
   });
@@ -9081,6 +9105,7 @@ document.addEventListener("click", (e) => {
 pageButtons.forEach(btn => {
   btn.addEventListener("click", () => {
     const page = btn.dataset.page;
+    if (!ensureApiKey()) return;
     if (page === "backlog") {
       setBacklogViewUser(currentUser);
       setActivePage("backlog");
@@ -9111,8 +9136,8 @@ if (settingsSaveBtn) {
       setStatus("Username is required.");
       return;
     }
-    if (useApiKeyToggle?.checked && !(apiKeyInput?.value || "").trim()) {
-      setStatus("API key required when enabled.");
+    if (!(apiKeyInput?.value || "").trim()) {
+      setStatus("API key is required.");
       return;
     }
     (async () => {
@@ -9427,13 +9452,15 @@ if (usernameModalConfirmBtn) {
       return;
     }
     const apiKey = (usernameModalApiKeyInput?.value || "").trim();
-    const wantsCustomApiKey = !!usernameModalUseApiKeyToggle?.checked;
-    if (wantsCustomApiKey && !apiKey) {
-      if (usernameModalErrorEl) usernameModalErrorEl.textContent = "API key required when enabled.";
+    if (!apiKey) {
+      if (usernameModalErrorEl) usernameModalErrorEl.textContent = "API key is required.";
       return;
     }
+    if (pendingApiKeyPrompt && usernameModalInput) {
+      usernameModalInput.disabled = false;
+      pendingApiKeyPrompt = false;
+    }
     if (apiKeyInput) apiKeyInput.value = apiKey;
-    if (useApiKeyToggle) useApiKeyToggle.checked = wantsCustomApiKey && !!apiKey;
     saveState();
     (async () => {
       await loginAndStart(entered, {
@@ -9464,6 +9491,7 @@ if (usernameModalInput) {
   authResolved = true;
   if (me) {
     setCurrentUser(me);
+    if (!ensureApiKey()) return;
     fetchUserSummary(me).catch(() => {});
     await ensureFriendsLoaded({ force: true });
     await bootstrapAfterLogin();
