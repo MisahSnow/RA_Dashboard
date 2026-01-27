@@ -308,13 +308,15 @@ h1 {
   align-items:flex-start;
   transform: none;
   position: relative;
-  z-index: 200;
+  z-index: 600;
 }
 
 .profileMenuWrap{
   position: relative;
   display: inline-flex;
   align-items: center;
+  z-index: 300;
+  overflow: visible;
 }
 
 .profileMenuWrap::after{
@@ -324,6 +326,17 @@ h1 {
   top: 100%;
   width: 100%;
   height: 36px;
+  pointer-events: none;
+}
+
+.profileMenuWrap.open::before{
+  content:"";
+  position:absolute;
+  right:-20px;
+  top:100%;
+  width:220px;
+  height:240px;
+  pointer-events:none;
 }
 
 .profileMenuBtn{
@@ -372,7 +385,7 @@ h1 {
   pointer-events: none;
   transform: translateY(-4px);
   transition: opacity 0.15s ease, transform 0.15s ease;
-  z-index: 80;
+  z-index: 1100;
 }
 
 .profileMenuItem{
@@ -380,9 +393,11 @@ h1 {
   text-align: left;
   padding: 8px 10px;
   font-size: 12px;
+  position: relative;
+  z-index: 1001;
 }
 
-.profileMenuWrap:hover .profileMenu,
+.profileMenuBtn:hover + .profileMenu,
 .profileMenuWrap:focus-within .profileMenu,
 .profileMenuWrap.open .profileMenu{
   opacity: 1;

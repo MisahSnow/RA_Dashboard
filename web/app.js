@@ -1853,8 +1853,16 @@ function openProfileMenuHover() {
   profileMenuBtn?.setAttribute("aria-expanded", "true");
 }
 
-function scheduleProfileMenuClose() {
+function scheduleProfileMenuClose(e) {
   if (!profileMenuWrap) return;
+  if (profileMenu) {
+    if (profileMenu.matches(":hover")) return;
+    if (e?.relatedTarget && profileMenu.contains(e.relatedTarget)) return;
+  }
+  if (profileMenuBtn) {
+    if (profileMenuBtn.matches(":hover")) return;
+    if (e?.relatedTarget && profileMenuBtn.contains(e.relatedTarget)) return;
+  }
   if (profileMenuHoverTimer) clearTimeout(profileMenuHoverTimer);
   profileMenuHoverTimer = setTimeout(() => {
     profileMenuHoverTimer = null;
@@ -8962,7 +8970,6 @@ if (profileMenuBtn) {
 }
 
 if (profileMenuWrap) {
-  profileMenuWrap.addEventListener("mouseenter", openProfileMenuHover);
   profileMenuWrap.addEventListener("mouseleave", scheduleProfileMenuClose);
 }
 
@@ -9281,8 +9288,9 @@ if (settingsSaveBtn) {
       setStatus("API key is required.");
       return;
     }
+    closeSettings();
     (async () => {
-      await loginAndStart(entered, { closeModal: closeSettings });
+      await loginAndStart(entered, { closeModal: null });
     })();
   });
 }
