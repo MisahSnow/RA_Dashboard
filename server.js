@@ -102,7 +102,8 @@ let allConsolesWarmupStatus = {
   finishedAt: null,
   total: 0,
   completed: 0,
-  lastError: ""
+  lastError: "",
+  errorCount: 0
 };
 const gameMetaRefreshInFlight = new Map(); // Map<gameId, Promise>
 const gameGenreCacheKey = (gameId) => `game-genre:${gameId}`;
@@ -853,6 +854,9 @@ async function getGameListForConsole(consoleId, apiKey) {
 async function getGameListForAllConsoles(apiKey, options = {}) {
   const forceRefresh = Boolean(options.forceRefresh);
   const onProgress = typeof options.onProgress === "function" ? options.onProgress : null;
+  const onError = typeof options.onError === "function" ? options.onError : null;
+  const retryFailed = Boolean(options.retryFailed);
+  const onRetry = typeof options.onRetry === "function" ? options.onRetry : null;
   const now = Date.now();
   if (!forceRefresh && allGameListCache.list && (now - allGameListCache.builtAt) < GAME_INDEX_TTL_MS) {
     return allGameListCache.list;
@@ -862,14 +866,51 @@ async function getGameListForAllConsoles(apiKey, options = {}) {
     const consoles = await getConsoleList(apiKey);
     const combined = [];
     let completedConsoles = 0;
+    const failed = [];
     if (onProgress) onProgress({ total: consoles.length, completed: completedConsoles });
     for (const consoleInfo of consoles) {
       const consoleId = consoleInfo?.id ?? consoleInfo?.consoleId;
       if (!consoleId) continue;
-      const list = await getGameListForConsole(consoleId, apiKey);
-      combined.push(...list);
-      completedConsoles += 1;
-      if (onProgress) onProgress({ total: consoles.length, completed: completedConsoles });
+      try {
+        const list = await getGameListForConsole(consoleId, apiKey);
+        combined.push(...list);
+      } catch (err) {
+        failed.push(consoleInfo);
+        if (onError) {
+          onError({
+            consoleId,
+            consoleName: consoleInfo?.name ?? consoleInfo?.consoleName ?? "",
+            error: err
+          });
+        }
+      } finally {
+        completedConsoles += 1;
+        if (onProgress) onProgress({ total: consoles.length, completed: completedConsoles });
+      }
+    }
+    if (retryFailed && failed.length) {
+      for (const consoleInfo of failed) {
+        const consoleId = consoleInfo?.id ?? consoleInfo?.consoleId;
+        if (!consoleId) continue;
+        if (onRetry) {
+          onRetry({
+            consoleId,
+            consoleName: consoleInfo?.name ?? consoleInfo?.consoleName ?? ""
+          });
+        }
+        try {
+          const list = await getGameListForConsole(consoleId, apiKey);
+          combined.push(...list);
+        } catch (err) {
+          if (onError) {
+            onError({
+              consoleId,
+              consoleName: consoleInfo?.name ?? consoleInfo?.consoleName ?? "",
+              error: err
+            });
+          }
+        }
+      }
     }
     allGameListCache = { builtAt: Date.now(), list: combined, inFlight: null };
     return combined;
@@ -899,13 +940,24 @@ function scheduleAllConsolesWarmup() {
           finishedAt: null,
           total: 0,
           completed: 0,
-          lastError: ""
+          lastError: "",
+          errorCount: 0
         };
         await getGameListForAllConsoles(RA_API_KEY, {
           forceRefresh: true,
+          retryFailed: true,
           onProgress: ({ total, completed }) => {
             if (Number.isFinite(total)) allConsolesWarmupStatus.total = total;
             if (Number.isFinite(completed)) allConsolesWarmupStatus.completed = completed;
+          },
+          onRetry: ({ consoleName, consoleId }) => {
+            const label = consoleName || consoleId || "console";
+            console.log(`Warmup: retrying ${label}.`);
+          },
+          onError: ({ consoleName, consoleId, error }) => {
+            allConsolesWarmupStatus.errorCount = (allConsolesWarmupStatus.errorCount || 0) + 1;
+            const label = consoleName || consoleId || "console";
+            allConsolesWarmupStatus.lastError = `${label}: ${String(error?.message || error || "").slice(0, 160)}`;
           }
         });
         allConsolesWarmupStatus = {
