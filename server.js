@@ -959,23 +959,34 @@ function scheduleAllConsolesWarmup() {
           lastError: "",
           errorCount: 0
         };
-        await getGameListForAllConsoles(RA_API_KEY, {
-          forceRefresh: true,
-          retryFailed: true,
-          onProgress: ({ total, completed }) => {
-            if (Number.isFinite(total)) allConsolesWarmupStatus.total = total;
-            if (Number.isFinite(completed)) allConsolesWarmupStatus.completed = completed;
-          },
-          onRetry: ({ consoleName, consoleId }) => {
-            const label = consoleName || consoleId || "console";
-            console.log(`Warmup: retrying ${label}.`);
-          },
-          onError: ({ consoleName, consoleId, error }) => {
-            allConsolesWarmupStatus.errorCount = (allConsolesWarmupStatus.errorCount || 0) + 1;
-            const label = consoleName || consoleId || "console";
-            allConsolesWarmupStatus.lastError = `${label}: ${String(error?.message || error || "").slice(0, 160)}`;
+        const warmupRetries = 2;
+        for (let attempt = 0; attempt <= warmupRetries; attempt++) {
+          try {
+            await getGameListForAllConsoles(RA_API_KEY, {
+              forceRefresh: true,
+              retryFailed: true,
+              onProgress: ({ total, completed }) => {
+                if (Number.isFinite(total)) allConsolesWarmupStatus.total = total;
+                if (Number.isFinite(completed)) allConsolesWarmupStatus.completed = completed;
+              },
+              onRetry: ({ consoleName, consoleId }) => {
+                const label = consoleName || consoleId || "console";
+                console.log(`Warmup: retrying ${label}.`);
+              },
+              onError: ({ consoleName, consoleId, error }) => {
+                allConsolesWarmupStatus.errorCount = (allConsolesWarmupStatus.errorCount || 0) + 1;
+                const label = consoleName || consoleId || "console";
+                allConsolesWarmupStatus.lastError = `${label}: ${String(error?.message || error || "").slice(0, 160)}`;
+              }
+            });
+            break;
+          } catch (err) {
+            if (attempt >= warmupRetries) throw err;
+            const msg = String(err?.message || err || "");
+            allConsolesWarmupStatus.lastError = `Warmup retry ${attempt + 1}/${warmupRetries}: ${msg.slice(0, 160)}`;
+            await sleep(1500 * (attempt + 1));
           }
-        });
+        }
         allConsolesWarmupStatus = {
           ...allConsolesWarmupStatus,
           status: "idle",
