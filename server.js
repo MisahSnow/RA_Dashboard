@@ -1275,6 +1275,12 @@ function getRequestApiKey(req) {
   return String(req.headers["x-ra-api-key"] || "").trim();
 }
 
+function resolveOverlayApiKey(req) {
+  const headerKey = getRequestApiKey(req);
+  if (headerKey) return headerKey;
+  return RA_API_KEY || "";
+}
+
 function requireApiKey(req, res) {
   const apiKey = getRequestApiKey(req);
   if (!apiKey) {
@@ -1310,6 +1316,25 @@ function extractSummaryUsername(data) {
     if (typeof entry === "string" && entry.trim()) return entry.trim();
   }
   return "";
+}
+
+async function computeMonthlyPoints(username, apiKey, { fromDate = null, toDate = null, includeSoftcore = false } = {}) {
+  if (!apiKey) throw new Error("Missing RA API key.");
+  const { start, end } = getMonthRange();
+  const from = fromDate || start;
+  const to = toDate || end;
+  const unlocks = await raGetAchievementsEarnedBetween(username, from, to, apiKey);
+  const isHardcoreUnlock = (u) => Boolean(
+    u?.HardcoreMode ?? u?.hardcoreMode ??
+    u?.Hardcore ?? u?.hardcore ??
+    u?.IsHardcore ?? u?.isHardcore ??
+    u?.HardcoreModeActive ?? u?.hardcoreModeActive ??
+    false
+  );
+  const considered = includeSoftcore ? unlocks : unlocks.filter(isHardcoreUnlock);
+  let points = 0;
+  for (const u of considered) points += Number(u.points ?? u.Points ?? 0);
+  return { points, unlockCount: considered.length };
 }
 
 async function raGetGameLeaderboards(gameId, count = 200, apiKey) {
@@ -3884,6 +3909,68 @@ app.get("/api/game-leaderboards/:gameId", async (req, res) => {
       res.status(status).json({ error: err?.message || "Failed to fetch game leaderboards" });
     }
   });
+
+// Public-ish snapshot for overlays (optional SNAPSHOT_SECRET gate).
+// Returns leaderboard rows for a username's friends list (or explicit users list).
+app.get("/api/leaderboard-snapshot", requireSnapshotSecret, async (req, res) => {
+  try {
+    const usernameParam = typeof req.query.username === "string" ? req.query.username.trim() : "";
+    const usersParam = typeof req.query.users === "string" ? req.query.users.trim() : "";
+    const modeQ = typeof req.query.mode === "string" ? req.query.mode.toLowerCase() : "hc";
+    const includeSoftcore = modeQ === "all";
+
+    const apiKey = resolveOverlayApiKey(req);
+    if (!apiKey) return res.status(400).json({ error: "Missing RA API key" });
+
+    let users = [];
+    if (usernameParam) {
+      if (!pool) return res.status(500).json({ error: "Database unavailable" });
+      const normalized = normalizeUsername(usernameParam);
+      if (!normalized) return res.status(400).json({ error: "Missing username" });
+      const userRes = await pool.query("SELECT id, username FROM users WHERE username = $1", [normalized]);
+      if (!userRes.rows.length) {
+        return res.status(404).json({ error: `User not found: ${normalized}` });
+      }
+      const userId = userRes.rows[0].id;
+      const friendsRes = await pool.query(
+        "SELECT friend_username FROM friends WHERE user_id = $1 ORDER BY friend_username",
+        [userId]
+      );
+      users = [normalized, ...friendsRes.rows.map(r => normalizeUsername(r.friend_username))].filter(Boolean);
+    } else if (usersParam) {
+      users = usersParam.split(",").map(s => normalizeUsername(String(s || ""))).filter(Boolean);
+    } else {
+      return res.status(400).json({ error: "Missing username or users" });
+    }
+
+    const uniqueUsers = Array.from(new Set(users)).slice(0, 50);
+    if (!uniqueUsers.length) return res.status(400).json({ error: "No users to show" });
+
+    const cacheKey = `overlay-leaderboard:${includeSoftcore ? "all" : "hc"}:${uniqueUsers.join(",")}`;
+    const cached = cacheGet(cacheKey);
+    if (cached) return res.json(cached);
+
+    const rows = await Promise.all(uniqueUsers.map(async (u) => {
+      try {
+        const data = await computeMonthlyPoints(u, apiKey, { includeSoftcore });
+        return { username: u, points: data.points };
+      } catch (err) {
+        return { username: u, points: 0, error: String(err?.message || err || "") };
+      }
+    }));
+
+    rows.sort((a, b) => (b.points - a.points) || a.username.localeCompare(b.username));
+    const payload = {
+      generatedAt: new Date().toISOString(),
+      mode: includeSoftcore ? "all" : "hc",
+      results: rows
+    };
+    cacheSet(cacheKey, payload, DEFAULT_CACHE_TTL_MS);
+    res.json(payload);
+  } catch (err) {
+    res.status(500).json({ error: err?.message || "Failed to build leaderboard snapshot" });
+  }
+});
 
 
 // "Now playing" (best-effort): use most recent LastPlayed from Recently Played Games.
