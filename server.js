@@ -374,6 +374,12 @@ let lastRaRequestAt = 0;
 const RA_FAST_MAX_CONCURRENT = 1;
 const raFastQueue = [];
 let raFastActive = 0;
+const raServerQueue = [];
+let raServerActive = 0;
+let raServerTimer = null;
+let lastRaServerRequestAt = 0;
+const raServerFastQueue = [];
+let raServerFastActive = 0;
 
 function enqueueRaRequest(url, retries = 0) {
   return new Promise((resolve, reject) => {
@@ -412,6 +418,53 @@ function processRaQueue() {
     processRaQueue();
   });
   processRaQueue();
+}
+
+function enqueueRaServerRequest(url, retries = 0) {
+  return new Promise((resolve, reject) => {
+    raServerQueue.push({ url, resolve, reject, retries });
+    processRaServerQueue();
+  });
+}
+
+function processRaServerQueue() {
+  if (raServerActive >= RA_MAX_CONCURRENT || raServerQueue.length === 0) return;
+  const now = Date.now();
+  const waitMs = Math.max(0, RA_REQUEST_INTERVAL_MS - (now - lastRaServerRequestAt));
+  if (waitMs > 0) {
+    if (!raServerTimer) {
+      raServerTimer = setTimeout(() => {
+        raServerTimer = null;
+        processRaServerQueue();
+      }, waitMs);
+    }
+    return;
+  }
+  const job = raServerQueue.shift();
+  raServerActive += 1;
+  lastRaServerRequestAt = Date.now();
+  (async () => {
+    const res = await fetch(job.url, { headers: { Accept: "application/json" } });
+    if (res.status === 429 && (job.retries || 0) < 3) {
+      raServerQueue.unshift({ ...job, retries: (job.retries || 0) + 1 });
+    } else {
+      job.resolve(res);
+    }
+  })().catch((err) => {
+    job.reject(err);
+  }).finally(() => {
+    raServerActive -= 1;
+    processRaServerQueue();
+  });
+  processRaServerQueue();
+}
+
+function isServerApiKey(apiKey) {
+  return Boolean(apiKey && RA_API_KEY && apiKey === RA_API_KEY);
+}
+
+function getQueueKey(apiKey) {
+  return isServerApiKey(apiKey) ? "server" : "user";
 }
 
 // --- helpers ---
@@ -456,6 +509,33 @@ function processRaFastQueue() {
     processRaFastQueue();
   });
   processRaFastQueue();
+}
+
+function enqueueRaServerFastRequest(url, retries = 0) {
+  return new Promise((resolve, reject) => {
+    raServerFastQueue.push({ url, resolve, reject, retries });
+    processRaServerFastQueue();
+  });
+}
+
+function processRaServerFastQueue() {
+  if (raServerFastActive >= RA_FAST_MAX_CONCURRENT || raServerFastQueue.length === 0) return;
+  const job = raServerFastQueue.shift();
+  raServerFastActive += 1;
+  (async () => {
+    const res = await fetch(job.url, { headers: { Accept: "application/json" } });
+    if (res.status === 429 && (job.retries || 0) < 3) {
+      raServerFastQueue.push({ ...job, retries: (job.retries || 0) + 1 });
+    } else {
+      job.resolve(res);
+    }
+  })().catch((err) => {
+    job.reject(err);
+  }).finally(() => {
+    raServerFastActive -= 1;
+    processRaServerFastQueue();
+  });
+  processRaServerFastQueue();
 }
 
 function getHourRange(now = new Date()) {
@@ -592,10 +672,15 @@ async function computePointsBetween(username, fromDate, toDate, includeSoftcore,
     throw new Error("Failed to fetch hourly points after retries.");
   }
 
-  async function raFetchJson(url, { retries = 2, fast = false } = {}) {
+  async function raFetchJson(url, { retries = 2, fast = false, queueKey = "user" } = {}) {
     let attempt = 0;
     while (true) {
-      const res = await (fast ? enqueueRaFastRequest(url) : enqueueRaRequest(url));
+      const useServerQueue = queueKey === "server";
+      const res = await (
+        fast
+          ? (useServerQueue ? enqueueRaServerFastRequest(url) : enqueueRaFastRequest(url))
+          : (useServerQueue ? enqueueRaServerRequest(url) : enqueueRaRequest(url))
+      );
 
       if (res.status === 429 && attempt < retries) {
         attempt++;
@@ -625,7 +710,7 @@ async function raGetAchievementsEarnedBetween(username, fromDate, toDate, apiKey
   url.searchParams.set("t", String(t));
   url.searchParams.set("y", apiKey);
 
-  const data = await raFetchJson(url.toString());
+  const data = await raFetchJson(url.toString(), { queueKey: getQueueKey(apiKey) });
   if (!Array.isArray(data)) throw new Error("Unexpected RA response (expected an array).");
   return data;
 }
@@ -638,7 +723,7 @@ async function raGetUserRecentAchievements(username, minutes = 10080, apiKey) {
   url.searchParams.set("m", String(minutes));
   url.searchParams.set("y", apiKey);
 
-  const data = await raFetchJson(url.toString());
+  const data = await raFetchJson(url.toString(), { queueKey: getQueueKey(apiKey) });
   if (!Array.isArray(data)) throw new Error("Unexpected RA response (expected an array).");
   return data;
 }
@@ -655,7 +740,11 @@ async function raGetUserRecentlyPlayedGames(username, count = 10, offset = 0, ap
   const MAX_TRIES = 4; // total attempts (initial + retries)
     for (let attempt = 0; attempt < MAX_TRIES; attempt++) {
       try {
-        const data = await raFetchJson(url.toString(), { retries: 3, fast });
+        const data = await raFetchJson(url.toString(), {
+          retries: 3,
+          fast,
+          queueKey: getQueueKey(apiKey)
+        });
         if (!Array.isArray(data)) throw new Error("Unexpected RA response (expected an array).");
         return data;
       } catch (err) {
@@ -686,11 +775,13 @@ async function raGetUserGameLeaderboards(username, gameId, count = 200, apiKey) 
 
   // This endpoint returns 422 for games with no leaderboards.
   // Treat that as "no results" instead of failing the whole feed.
-  const res = await enqueueRaRequest(url.toString());
+  const res = await (isServerApiKey(apiKey)
+    ? enqueueRaServerRequest(url.toString())
+    : enqueueRaRequest(url.toString()));
 
   if (res.status === 429) {
     // reuse our queue + retry logic by delegating to raFetchJson
-    const data = await raFetchJson(url.toString());
+    const data = await raFetchJson(url.toString(), { queueKey: getQueueKey(apiKey) });
     const results = data?.Results || data?.results;
     return Array.isArray(results) ? results : [];
   }
@@ -721,7 +812,7 @@ async function raGetGameInfoAndUserProgress(username, gameId, apiKey) {
   url.searchParams.set("g", String(gameId));
   url.searchParams.set("y", apiKey);
 
-  return raFetchJson(url.toString(), { fast: true });
+  return raFetchJson(url.toString(), { fast: true, queueKey: getQueueKey(apiKey) });
 }
 
 async function raGetUserSummary(username, apiKey, { fast = false } = {}) {
@@ -731,7 +822,7 @@ async function raGetUserSummary(username, apiKey, { fast = false } = {}) {
   url.searchParams.set("u", username);
   url.searchParams.set("y", apiKey);
 
-  return raFetchJson(url.toString(), { fast });
+  return raFetchJson(url.toString(), { fast, queueKey: getQueueKey(apiKey) });
 }
 
 async function raGetUserCompletionProgress(username, count = 100, offset = 0, apiKey) {
@@ -743,7 +834,7 @@ async function raGetUserCompletionProgress(username, count = 100, offset = 0, ap
   url.searchParams.set("o", String(offset));
   url.searchParams.set("y", apiKey);
 
-  return raFetchJson(url.toString());
+  return raFetchJson(url.toString(), { queueKey: getQueueKey(apiKey) });
 }
 
 function normalizeGameLetter(letter) {
@@ -768,7 +859,7 @@ async function raGetConsoleIds(apiKey) {
   if (!apiKey) throw new Error("Missing RA API key.");
   const url = new URL("https://retroachievements.org/API/API_GetConsoleIDs.php");
   url.searchParams.set("y", apiKey);
-  const data = await raFetchJson(url.toString(), { fast: true });
+  const data = await raFetchJson(url.toString(), { fast: true, queueKey: getQueueKey(apiKey) });
   return Array.isArray(data) ? data : [];
 }
 
@@ -778,7 +869,7 @@ async function raGetGameList(consoleId, apiKey) {
   url.searchParams.set("i", String(consoleId));
   url.searchParams.set("f", "1");
   url.searchParams.set("y", apiKey);
-  const data = await raFetchJson(url.toString(), { fast: true });
+  const data = await raFetchJson(url.toString(), { fast: true, queueKey: getQueueKey(apiKey) });
   return Array.isArray(data) ? data : [];
 }
 
@@ -787,7 +878,7 @@ async function raGetGameInfo(gameId, apiKey) {
   const url = new URL("https://retroachievements.org/API/API_GetGameExtended.php");
   url.searchParams.set("i", String(gameId));
   url.searchParams.set("y", apiKey);
-  return raFetchJson(url.toString(), { fast: true });
+  return raFetchJson(url.toString(), { fast: true, queueKey: getQueueKey(apiKey) });
 }
 
 async function getConsoleList(apiKey) {
@@ -1356,7 +1447,7 @@ async function raGetGameLeaderboards(gameId, count = 200, apiKey) {
   url.searchParams.set("c", String(count));
   url.searchParams.set("y", apiKey);
 
-  const data = await raFetchJson(url.toString());
+  const data = await raFetchJson(url.toString(), { queueKey: getQueueKey(apiKey) });
   const results = data?.Results || data?.results || data;
   return Array.isArray(results) ? results : [];
 }
