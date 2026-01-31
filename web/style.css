@@ -1475,6 +1475,82 @@ button:hover {
   align-items: center;
 }
 
+.groupProfileCard{
+  margin-top: 16px;
+}
+
+.groupProfileLayout{
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(0, 2fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.groupProfileMembers{
+  border: 1px solid rgba(120, 140, 190, 0.3);
+  border-radius: var(--radius);
+  padding: 12px;
+  background: linear-gradient(rgba(16, 12, 34, 0.92), rgba(10, 8, 22, 0.86));
+  box-shadow: rgba(6, 4, 18, 0.5) 0 12px 22px;
+}
+
+.groupMembersList{
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 420px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.groupMemberRow{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 10px;
+  border: 1px solid rgba(120, 140, 190, 0.25);
+  background: rgba(9, 12, 24, 0.8);
+}
+
+.groupMemberStatus{
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.4);
+  box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.15);
+  flex: 0 0 auto;
+}
+
+.groupMemberStatus.online{
+  background: #22c55e;
+  box-shadow: 0 0 0 2px rgba(12, 10, 24, 0.9), 0 0 10px rgba(34, 197, 94, 0.6);
+}
+
+.groupMemberName{
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.groupProfileSubtitle{
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+
+.groupProfileFeed .socialComposerBar{
+  margin-bottom: 12px;
+}
+
+.groupProfileFeed .socialFeed{
+  margin-top: 12px;
+}
+
+@media (max-width: 980px) {
+  .groupProfileLayout{
+    grid-template-columns: 1fr;
+  }
+}
+
 
 @media (max-width: 900px) {
   .challengeLayout {

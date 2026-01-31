@@ -247,6 +247,18 @@ const findGamesPage = document.getElementById("findGamesPage");
 const backlogPage = document.getElementById("backlogPage");
 const friendsPage = document.getElementById("friendsPage");
 const gamePage = document.getElementById("gamePage");
+const groupProfilePage = document.getElementById("groupProfilePage");
+const groupProfilePanel = document.getElementById("groupProfilePanel");
+const groupProfileTitle = document.getElementById("groupProfileTitle");
+const groupProfileSubtitle = document.getElementById("groupProfileSubtitle");
+const groupProfileCloseBtn = document.getElementById("groupProfileCloseBtn");
+const groupProfileMembersList = document.getElementById("groupProfileMembersList");
+const groupProfileMembersLoading = document.getElementById("groupProfileMembersLoading");
+const groupPostText = document.getElementById("groupPostText");
+const groupPostBtn = document.getElementById("groupPostBtn");
+const groupPostStatus = document.getElementById("groupPostStatus");
+const groupPostList = document.getElementById("groupPostList");
+const groupPostLoading = document.getElementById("groupPostLoading");
 const profileHostDashboard = document.getElementById("profileHostDashboard");
 const profileHostProfile = document.getElementById("profileHostProfile");
 const profileRecentGamesEl = document.getElementById("profileRecentGames");
@@ -663,6 +675,10 @@ let friends = [];
 let groups = [];
 let groupBrowse = [];
 let groupInvites = [];
+let activeGroupProfileId = "";
+let activeGroupProfileName = "";
+let groupProfileMembers = [];
+let groupProfilePosts = [];
 let leaderboardScope = "friends";
 let leaderboardGroupId = "";
 let friendsMenuLoading = false;
@@ -2480,6 +2496,9 @@ function schedulePresenceRender(users, me) {
     onlinePresenceUsers = Array.isArray(users) ? users.slice() : [];
     renderPresence(users, me);
     renderFriendsMenu();
+    if (groupProfilePanel && !groupProfilePanel.hidden && groupProfileMembers.length) {
+      renderGroupProfileMembers(groupProfileMembers);
+    }
   }, 200);
 }
 
@@ -2726,7 +2745,27 @@ async function declineGroupInvite(inviteId) {
 }
 
 async function fetchGroupMembers(groupId) {
-  return fetchServerJson(`/api/groups/${encodeURIComponent(groupId)}/members`);
+  return fetchServerJson(`/api/groups/${encodeURIComponent(groupId)}/members`, { immediate: true });
+}
+
+async function fetchGroupPosts(groupId, { limit = SOCIAL_MAX_POSTS, offset = 0 } = {}) {
+  const count = Number.isFinite(limit) ? limit : SOCIAL_MAX_POSTS;
+  const safeOffset = Number.isFinite(offset) ? Math.max(0, offset) : 0;
+  const params = new URLSearchParams();
+  params.set("limit", String(count));
+  if (safeOffset) params.set("offset", String(safeOffset));
+  return fetchServerJson(`/api/groups/${encodeURIComponent(groupId)}/posts?${params.toString()}`, {
+    silent: true,
+    immediate: true
+  });
+}
+
+async function createGroupPost(groupId, payload) {
+  return fetchServerJson(`/api/groups/${encodeURIComponent(groupId)}/posts`, {
+    method: "POST",
+    body: payload,
+    immediate: true
+  });
 }
 
 async function fetchDailyHistory(users, days = 7) {
@@ -2803,12 +2842,27 @@ function renderGroupList(targetEl, list, { mode = "browse" } = {}) {
   items.forEach((g) => {
     const row = document.createElement("div");
     row.className = "groupRow";
+    if (mode === "mine") {
+      row.dataset.groupProfileId = String(g.id);
+      row.dataset.groupProfileName = String(g.name || `Group ${g.id}`);
+      row.addEventListener("click", (e) => {
+        if (e.target?.closest("button, input, select, textarea")) return;
+        openGroupProfile(g);
+      });
+    }
 
     const top = document.createElement("div");
     top.className = "groupRowTop";
-    const title = document.createElement("div");
+    const title = document.createElement(mode === "mine" ? "button" : "div");
     title.className = "groupRowTitle";
     title.textContent = g.name || `Group ${g.id}`;
+    if (mode === "mine") {
+      title.type = "button";
+      title.classList.add("linkBtn");
+      title.dataset.groupProfileId = String(g.id);
+      title.dataset.groupProfileName = String(g.name || `Group ${g.id}`);
+      title.addEventListener("click", () => openGroupProfile(g));
+    }
     const meta = document.createElement("div");
     meta.className = "groupRowMeta";
     const count = Number(g.member_count ?? g.memberCount ?? 0);
@@ -2917,6 +2971,124 @@ function renderInvitesList(list) {
   groupInvitesListEl.appendChild(frag);
 }
 
+function setGroupPostStatus(message) {
+  if (!groupPostStatus) return;
+  groupPostStatus.textContent = message || "";
+}
+
+function renderGroupProfileMembers(list) {
+  if (!groupProfileMembersList) return;
+  const items = Array.isArray(list) ? list : [];
+  if (!items.length) {
+    groupProfileMembersList.innerHTML = `<div class="meta">No members yet.</div>`;
+    return;
+  }
+  const onlineSet = new Set((onlinePresenceUsers || []).map(normalizeUserKey));
+  const sorted = items.slice().sort((a, b) => {
+    const aOnline = onlineSet.has(normalizeUserKey(a)) ? 1 : 0;
+    const bOnline = onlineSet.has(normalizeUserKey(b)) ? 1 : 0;
+    if (aOnline !== bOnline) return bOnline - aOnline;
+    return String(a).localeCompare(String(b));
+  });
+  const frag = document.createDocumentFragment();
+  sorted.forEach((name) => {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "groupMemberRow linkBtn";
+    row.dataset.profile = name;
+    const status = document.createElement("span");
+    const isOnline = onlineSet.has(normalizeUserKey(name));
+    status.className = `groupMemberStatus${isOnline ? " online" : ""}`;
+    status.setAttribute("aria-hidden", "true");
+    const label = document.createElement("span");
+    label.className = "groupMemberName";
+    label.textContent = name;
+    row.append(status, label);
+    frag.appendChild(row);
+  });
+  groupProfileMembersList.innerHTML = "";
+  groupProfileMembersList.appendChild(frag);
+}
+
+async function loadGroupProfileMembers() {
+  if (!activeGroupProfileId) return;
+  setLoading(groupProfileMembersLoading, true);
+  try {
+    const data = await fetchGroupMembers(activeGroupProfileId);
+    const results = Array.isArray(data?.results)
+      ? data.results
+      : Array.isArray(data)
+        ? data
+        : [];
+    const users = results
+      .map(r => clampUsername(r?.username ?? r?.user ?? r))
+      .filter(Boolean);
+    groupProfileMembers = Array.from(new Set(users));
+    renderGroupProfileMembers(groupProfileMembers);
+    if (groupProfileSubtitle) {
+      groupProfileSubtitle.textContent = `${groupProfileMembers.length} members`;
+    }
+  } catch {
+    if (groupProfileMembersList) {
+      groupProfileMembersList.innerHTML = `<div class="meta">Failed to load members.</div>`;
+    }
+  } finally {
+    setLoading(groupProfileMembersLoading, false);
+  }
+}
+
+async function loadGroupProfilePosts({ silent = false } = {}) {
+  if (!activeGroupProfileId || !groupPostList) return;
+  setLoading(groupPostLoading, true);
+  try {
+    const data = await fetchGroupPosts(activeGroupProfileId, { limit: SOCIAL_MAX_POSTS });
+    groupProfilePosts = Array.isArray(data?.results) ? data.results : [];
+    renderSocialPosts(groupProfilePosts, groupPostList, { filter: "all" });
+    if (!silent) setGroupPostStatus("");
+  } catch {
+    if (!silent) setGroupPostStatus("Failed to load group posts.");
+    groupPostList.innerHTML = `<div class="meta">Failed to load group posts.</div>`;
+  } finally {
+    setLoading(groupPostLoading, false);
+  }
+}
+
+function openGroupProfile(group) {
+  if (!groupProfilePanel) return;
+  const id = String(group?.id || "");
+  if (!id) return;
+  activeGroupProfileId = id;
+  activeGroupProfileName = String(group?.name || `Group ${id}`);
+  setActivePage("group-profile");
+  if (groupsPage) groupsPage.hidden = true;
+  if (groupProfilePage) groupProfilePage.hidden = false;
+  groupProfilePanel.hidden = false;
+  if (groupProfileTitle) groupProfileTitle.textContent = activeGroupProfileName;
+  if (groupProfileSubtitle) {
+    const count = Number(group?.member_count ?? group?.memberCount ?? 0);
+    groupProfileSubtitle.textContent = count ? `${count} members` : "";
+  }
+  setGroupPostStatus("");
+  loadGroupProfileMembers();
+  loadGroupProfilePosts({ silent: true });
+}
+
+function closeGroupProfile() {
+  if (!groupProfilePanel) return;
+  setActivePage("groups");
+  activeGroupProfileId = "";
+  activeGroupProfileName = "";
+  groupProfileMembers = [];
+  groupProfilePosts = [];
+  if (groupProfileMembersList) groupProfileMembersList.innerHTML = "";
+  if (groupPostList) {
+    groupPostList.innerHTML = "";
+    groupPostList.dataset.renderKey = "";
+  }
+  if (groupProfileSubtitle) groupProfileSubtitle.textContent = "";
+  setGroupPostStatus("");
+}
+
 async function refreshGroupsPage() {
   if (!currentUser) return;
   setLoading(groupsLoadingEl, true);
@@ -2934,6 +3106,18 @@ async function refreshGroupsPage() {
     renderGroupList(groupMyListEl, groups, { mode: "mine" });
     renderInvitesList(groupInvites);
     renderLeaderboardGroupSelect();
+    if (activeGroupProfileId) {
+      const group = groups.find((g) => String(g.id) === String(activeGroupProfileId));
+      if (!group) {
+        closeGroupProfile();
+      } else {
+        if (groupProfileTitle) groupProfileTitle.textContent = group.name || `Group ${group.id}`;
+        if (groupProfileSubtitle) {
+          const count = Number(group.member_count ?? group.memberCount ?? 0);
+          groupProfileSubtitle.textContent = count ? `${count} members` : "";
+        }
+      }
+    }
   } catch (e) {
     setStatus(e?.message || "Failed to load groups.");
   } finally {
@@ -3829,6 +4013,7 @@ function setActivePage(name) {
   if (backlogPage) backlogPage.hidden = name !== "backlog";
   if (friendsPage) friendsPage.hidden = name !== "friends";
   if (gamePage) gamePage.hidden = name !== "game";
+  if (groupProfilePage) groupProfilePage.hidden = name !== "group-profile";
   if (name !== "game" && findGamePageCard) findGamePageCard.hidden = true;
   if (profilePanel) profilePanel.hidden = name !== "profile";
   if (name !== "backlog") setBacklogRemoveMode(false);
@@ -3861,6 +4046,8 @@ function setActivePage(name) {
   }
   if (name === "groups") {
     refreshGroupsPage();
+  } else if (name !== "group-profile" && groupProfilePage && !groupProfilePage.hidden) {
+    closeGroupProfile();
   }
   if (name === "profile") {
     moveProfilePanel(profileHostProfile);
@@ -8858,6 +9045,91 @@ function bindSocialList(listEl) {
 bindSocialList(socialPostListEl);
 bindSocialList(profileSocialListEl);
 
+function bindSocialListWithRefresh(listEl, { onRefresh, onStatus } = {}) {
+  if (!listEl) return;
+  listEl.addEventListener("submit", async (e) => {
+    const form = e.target.closest(".socialCommentForm");
+    if (!form) return;
+    e.preventDefault();
+    const input = form.querySelector(".socialCommentInput");
+    const text = (input?.value || "").trim();
+    if (!text) return;
+    if (!currentUser) {
+      if (onStatus) onStatus("Set your username in Settings to comment.");
+      return;
+    }
+    try {
+      if (onStatus) onStatus("Posting comment...");
+      await addSocialComment(form.dataset.postId, text);
+      if (onRefresh) await onRefresh({ silent: true });
+      if (onStatus) onStatus("");
+    } catch {
+      if (onStatus) onStatus("Failed to post comment.");
+    }
+  });
+  listEl.addEventListener("click", (e) => {
+    const profileBtn = e.target.closest("button[data-profile]");
+    if (profileBtn) {
+      const target = profileBtn.getAttribute("data-profile");
+      openProfile(target);
+      return;
+    }
+    const deleteBtn = e.target.closest("button[data-delete-post-id]");
+    if (deleteBtn) {
+      const id = deleteBtn.getAttribute("data-delete-post-id");
+      if (!id) return;
+      (async () => {
+        try {
+          await fetchServerJson(`/api/social/posts/${encodeURIComponent(id)}`, { method: "DELETE" });
+          if (onRefresh) await onRefresh({ silent: true });
+        } catch {
+          if (onStatus) onStatus("Failed to remove post.");
+        }
+      })();
+      return;
+    }
+    const reactionBtn = e.target.closest("button[data-reaction]");
+    if (reactionBtn) {
+      const postId = reactionBtn.getAttribute("data-post-id");
+      const reaction = reactionBtn.getAttribute("data-reaction");
+      if (!postId || !reaction) return;
+      const card = reactionBtn.closest(".socialPost");
+      const current = card?.querySelector(".reactionBtn.active")?.getAttribute("data-reaction") || "";
+      const nextReaction = current === reaction ? "none" : reaction;
+      (async () => {
+        try {
+          const data = await setSocialReaction(postId, nextReaction);
+          if (!data) return;
+          const likeBtn = card?.querySelector(".reactionBtn[data-reaction='like']");
+          const dislikeBtn = card?.querySelector(".reactionBtn[data-reaction='dislike']");
+          if (likeBtn) {
+            likeBtn.classList.toggle("active", data.userReaction === "like");
+            likeBtn.textContent = `Like ${data.likes ?? 0}`;
+          }
+          if (dislikeBtn) {
+            dislikeBtn.classList.toggle("active", data.userReaction === "dislike");
+            dislikeBtn.textContent = `Dislike ${data.dislikes ?? 0}`;
+          }
+        } catch {
+          if (onStatus) onStatus("Failed to update reaction.");
+        }
+      })();
+      return;
+    }
+    const img = e.target.closest(".socialPostImage");
+    if (!img || !imageModal || !imageModalImg) return;
+    const src = img.getAttribute("src");
+    if (!src) return;
+    imageModalImg.src = src;
+    imageModal.hidden = false;
+  });
+}
+
+bindSocialListWithRefresh(groupPostList, {
+  onRefresh: loadGroupProfilePosts,
+  onStatus: setGroupPostStatus
+});
+
 if (profileGameSearchEl) {
   profileGameSearchEl.addEventListener("input", applyProfileGameFilter);
 }
@@ -8990,6 +9262,51 @@ if (groupNameInput) {
   groupNameInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && groupCreateBtn) {
       groupCreateBtn.click();
+    }
+  });
+}
+
+if (groupMyListEl) {
+  groupMyListEl.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-group-profile-id]");
+    if (!btn) return;
+    const groupId = btn.getAttribute("data-group-profile-id");
+    if (!groupId) return;
+    const group = groups.find((g) => String(g.id) === String(groupId)) || {
+      id: groupId,
+      name: btn.getAttribute("data-group-profile-name") || `Group ${groupId}`
+    };
+    openGroupProfile(group);
+  });
+}
+
+if (groupProfileCloseBtn) {
+  groupProfileCloseBtn.addEventListener("click", closeGroupProfile);
+}
+
+if (groupProfileMembersList) {
+  groupProfileMembersList.addEventListener("click", (e) => {
+    const profileBtn = e.target.closest("button[data-profile]");
+    if (!profileBtn) return;
+    const target = profileBtn.getAttribute("data-profile");
+    if (target) openProfile(target);
+  });
+}
+
+if (groupPostBtn) {
+  groupPostBtn.addEventListener("click", async () => {
+    if (!activeGroupProfileId) return;
+    const text = (groupPostText?.value || "").trim();
+    if (!text) return setGroupPostStatus("Post text is required.");
+    if (!currentUser) return setGroupPostStatus("Set your username first.");
+    try {
+      setGroupPostStatus("Posting...");
+      await createGroupPost(activeGroupProfileId, { postType: "text", caption: text });
+      if (groupPostText) groupPostText.value = "";
+      await loadGroupProfilePosts({ silent: true });
+      setGroupPostStatus("");
+    } catch (err) {
+      setGroupPostStatus(String(err?.message || "Failed to post."));
     }
   });
 }

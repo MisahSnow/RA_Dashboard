@@ -271,6 +271,7 @@ async function initDb() {
       id SERIAL PRIMARY KEY,
       user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
       username TEXT NOT NULL,
+      group_id INTEGER REFERENCES groups(id) ON DELETE CASCADE,
       game_title TEXT,
       caption TEXT,
       image_data TEXT NOT NULL,
@@ -285,12 +286,17 @@ async function initDb() {
   `);
   await pool.query(`
     ALTER TABLE social_posts
+    ADD COLUMN IF NOT EXISTS group_id INTEGER REFERENCES groups(id) ON DELETE CASCADE,
     ADD COLUMN IF NOT EXISTS image_url TEXT,
     ADD COLUMN IF NOT EXISTS is_auto BOOLEAN NOT NULL DEFAULT false,
     ADD COLUMN IF NOT EXISTS post_type TEXT NOT NULL DEFAULT 'screenshot',
     ADD COLUMN IF NOT EXISTS achievement_title TEXT,
     ADD COLUMN IF NOT EXISTS achievement_id INTEGER,
     ADD COLUMN IF NOT EXISTS achievement_description TEXT
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS social_posts_group_id_idx
+      ON social_posts (group_id, created_at DESC)
   `);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS social_comments (
@@ -1371,6 +1377,15 @@ function requireAuth(req, res, next) {
     return res.status(401).json({ error: "Not authenticated" });
   }
   return next();
+}
+
+async function requireGroupMember(groupId, userId) {
+  if (!pool) return false;
+  const result = await pool.query(
+    "SELECT 1 FROM group_members WHERE group_id = $1 AND user_id = $2",
+    [groupId, userId]
+  );
+  return result.rows.length > 0;
 }
 
 function getRequestApiKey(req) {
@@ -3178,7 +3193,7 @@ app.get("/api/social/posts", requireAuth, async (req, res) => {
       `
         SELECT id, username, game_title, caption, image_data, image_url, is_auto, post_type, achievement_title, achievement_id, achievement_description, created_at
         FROM social_posts
-        WHERE LOWER(username) = ANY($1)
+        WHERE LOWER(username) = ANY($1) AND group_id IS NULL
         ORDER BY created_at DESC
         LIMIT $2
         OFFSET $3
@@ -3258,6 +3273,193 @@ app.get("/api/social/posts", requireAuth, async (req, res) => {
   } catch (err) {
     const status = err?.status || 500;
     res.status(status).json({ error: err?.message || "Failed to fetch social posts" });
+  }
+});
+
+// Group social posts (group members only)
+app.get("/api/groups/:groupId/posts", requireAuth, async (req, res) => {
+  try {
+    if (!pool) return res.json({ count: 0, results: [] });
+    const userId = req.session?.user?.id;
+    const username = req.session?.user?.username;
+    if (!userId || !username) return res.status(401).json({ error: "Not authenticated" });
+    const groupId = Number(req.params.groupId);
+    if (!Number.isFinite(groupId)) return res.status(400).json({ error: "Invalid group id" });
+    const isMember = await requireGroupMember(groupId, userId);
+    if (!isMember) return res.status(403).json({ error: "Not authorized to view this group" });
+
+    const limitQ = typeof req.query.limit === "string" ? Number(req.query.limit) : SOCIAL_MAX_POSTS;
+    const offsetQ = typeof req.query.offset === "string" ? Number(req.query.offset) : 0;
+    const limit = Math.max(1, Math.min(SOCIAL_MAX_POSTS, Number.isFinite(limitQ) ? limitQ : SOCIAL_MAX_POSTS));
+    const offset = Math.max(0, Number.isFinite(offsetQ) ? offsetQ : 0);
+
+    const postsRes = await pool.query(
+      `
+        SELECT id, username, game_title, caption, image_data, image_url, is_auto, post_type, achievement_title, achievement_id, achievement_description, created_at
+        FROM social_posts
+        WHERE group_id = $1
+        ORDER BY created_at DESC
+        LIMIT $2
+        OFFSET $3
+      `,
+      [groupId, limit + 1, offset]
+    );
+    const rawRows = postsRes.rows;
+    const hasMore = rawRows.length > limit;
+    const rows = hasMore ? rawRows.slice(0, limit) : rawRows;
+    const posts = rows.map((row) => ({
+      id: row.id,
+      user: row.username,
+      game: row.game_title || "",
+      caption: row.caption || "",
+      imageData: row.image_data,
+      imageUrl: row.image_url,
+      isAuto: row.is_auto,
+      postType: row.post_type,
+      achievementTitle: row.achievement_title,
+      achievementId: row.achievement_id,
+      achievementDescription: row.achievement_description,
+      createdAt: row.created_at,
+      reactions: { likes: 0, dislikes: 0, userReaction: null },
+      comments: []
+    }));
+
+    if (!posts.length) {
+      return res.json({ count: 0, results: [] });
+    }
+
+    const postIds = posts.map(p => p.id);
+    const reactionsRes = await pool.query(
+      `
+        SELECT post_id, reaction, username
+        FROM social_reactions
+        WHERE post_id = ANY($1)
+      `,
+      [postIds]
+    );
+    const reactionsByPost = new Map();
+    reactionsRes.rows.forEach((row) => {
+      if (!reactionsByPost.has(row.post_id)) {
+        reactionsByPost.set(row.post_id, { likes: 0, dislikes: 0, userReaction: null });
+      }
+      const bucket = reactionsByPost.get(row.post_id);
+      if (row.reaction === "like") bucket.likes += 1;
+      if (row.reaction === "dislike") bucket.dislikes += 1;
+      if (normalizeUsername(row.username) === normalizeUsername(username)) {
+        bucket.userReaction = row.reaction;
+      }
+    });
+    const commentsRes = await pool.query(
+      `
+        SELECT id, post_id, username, body, created_at
+        FROM social_comments
+        WHERE post_id = ANY($1)
+        ORDER BY created_at ASC
+      `,
+      [postIds]
+    );
+    const byPost = new Map();
+    commentsRes.rows.forEach((row) => {
+      if (!byPost.has(row.post_id)) byPost.set(row.post_id, []);
+      byPost.get(row.post_id).push({
+        id: row.id,
+        user: row.username,
+        text: row.body,
+        createdAt: row.created_at
+      });
+    });
+    posts.forEach((post) => {
+      post.comments = byPost.get(post.id) || [];
+      post.reactions = reactionsByPost.get(post.id) || { likes: 0, dislikes: 0, userReaction: null };
+    });
+
+    res.json({ count: posts.length, offset, hasMore, results: posts });
+  } catch (err) {
+    const status = err?.status || 500;
+    res.status(status).json({ error: err?.message || "Failed to fetch group posts" });
+  }
+});
+
+app.post("/api/groups/:groupId/posts", requireAuth, async (req, res) => {
+  try {
+    if (!pool) return res.status(500).json({ error: "Database unavailable" });
+    const userId = req.session?.user?.id;
+    const username = req.session?.user?.username;
+    if (!userId || !username) return res.status(401).json({ error: "Not authenticated" });
+    const groupId = Number(req.params.groupId);
+    if (!Number.isFinite(groupId)) return res.status(400).json({ error: "Invalid group id" });
+    const isMember = await requireGroupMember(groupId, userId);
+    if (!isMember) return res.status(403).json({ error: "Not authorized to post to this group" });
+
+    const postType = String(req.body?.postType || "text").trim().toLowerCase();
+    const caption = String(req.body?.caption || "").trim();
+    const gameTitle = String(req.body?.game || "").trim();
+    const imageData = String(req.body?.imageData || "").trim();
+    const imageUrl = String(req.body?.imageUrl || "").trim();
+    const achievementTitle = String(req.body?.achievementTitle || "").trim();
+    const achievementIdRaw = req.body?.achievementId;
+    const achievementDescription = String(req.body?.achievementDescription || "").trim();
+    const achievementId = Number.isFinite(Number(achievementIdRaw)) ? Number(achievementIdRaw) : null;
+
+    if (!["text", "screenshot", "achievement"].includes(postType)) {
+      return res.status(400).json({ error: "Invalid post type" });
+    }
+    if (postType === "screenshot") {
+      if (!imageData || !imageData.startsWith("data:image/")) {
+        return res.status(400).json({ error: "Invalid image data" });
+      }
+      const sizeBytes = estimateDataUrlBytes(imageData);
+      if (sizeBytes <= 0 || sizeBytes > SOCIAL_MAX_IMAGE_BYTES) {
+        return res.status(400).json({ error: "Image too large (max 2MB)" });
+      }
+    } else if (postType === "text") {
+      if (!caption) return res.status(400).json({ error: "Text post requires content" });
+    } else if (postType === "achievement") {
+      if (!achievementTitle || !gameTitle || !imageUrl) {
+        return res.status(400).json({ error: "Achievement post missing details" });
+      }
+    }
+
+    const insertRes = await pool.query(
+      `
+        INSERT INTO social_posts
+          (user_id, username, group_id, game_title, caption, image_data, image_url, is_auto, post_type, achievement_title, achievement_id, achievement_description, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, false, $8, $9, $10, $11, NOW())
+        RETURNING id, created_at
+      `,
+      [
+        userId,
+        username,
+        groupId,
+        gameTitle || null,
+        caption || null,
+        imageData,
+        imageUrl || null,
+        postType,
+        achievementTitle || null,
+        achievementId,
+        achievementDescription || null
+      ]
+    );
+
+    res.json({
+      id: insertRes.rows[0].id,
+      user: username,
+      game: gameTitle,
+      caption,
+      imageData,
+      imageUrl: imageUrl || null,
+      isAuto: false,
+      postType,
+      achievementTitle: achievementTitle || null,
+      achievementId,
+      achievementDescription: achievementDescription || null,
+      createdAt: insertRes.rows[0].created_at,
+      comments: []
+    });
+  } catch (err) {
+    const status = err?.status || 500;
+    res.status(status).json({ error: err?.message || "Failed to create group post" });
   }
 });
 
@@ -3360,8 +3562,13 @@ app.post("/api/social/posts/:id/comments", requireAuth, async (req, res) => {
     const text = String(req.body?.text || "").trim();
     if (!text) return res.status(400).json({ error: "Missing comment text" });
 
-    const postRes = await pool.query(`SELECT id FROM social_posts WHERE id = $1`, [postId]);
+    const postRes = await pool.query(`SELECT id, group_id FROM social_posts WHERE id = $1`, [postId]);
     if (!postRes.rows.length) return res.status(404).json({ error: "Post not found" });
+    const groupId = postRes.rows[0].group_id;
+    if (groupId) {
+      const isMember = await requireGroupMember(groupId, userId);
+      if (!isMember) return res.status(403).json({ error: "Not authorized to comment on this post" });
+    }
 
     const insertRes = await pool.query(
       `
@@ -3394,6 +3601,13 @@ app.delete("/api/social/posts/:id", requireAuth, async (req, res) => {
     if (!userId || !username) return res.status(401).json({ error: "Not authenticated" });
     const postId = Number(req.params.id);
     if (!Number.isFinite(postId)) return res.status(400).json({ error: "Invalid post id" });
+    const groupRes = await pool.query(`SELECT group_id FROM social_posts WHERE id = $1`, [postId]);
+    if (!groupRes.rows.length) return res.status(404).json({ error: "Post not found" });
+    const groupId = groupRes.rows[0].group_id;
+    if (groupId) {
+      const isMember = await requireGroupMember(groupId, userId);
+      if (!isMember) return res.status(403).json({ error: "Not authorized to delete this post" });
+    }
     const result = await pool.query(
       `
         DELETE FROM social_posts
@@ -3421,6 +3635,13 @@ app.post("/api/social/posts/:id/reaction", requireAuth, async (req, res) => {
     const reactionRaw = String(req.body?.reaction || "").trim().toLowerCase();
     if (!["like", "dislike", "none"].includes(reactionRaw)) {
       return res.status(400).json({ error: "Invalid reaction" });
+    }
+    const groupRes = await pool.query(`SELECT group_id FROM social_posts WHERE id = $1`, [postId]);
+    if (!groupRes.rows.length) return res.status(404).json({ error: "Post not found" });
+    const groupId = groupRes.rows[0].group_id;
+    if (groupId) {
+      const isMember = await requireGroupMember(groupId, userId);
+      if (!isMember) return res.status(403).json({ error: "Not authorized to react to this post" });
     }
     if (reactionRaw === "none") {
       await pool.query(
