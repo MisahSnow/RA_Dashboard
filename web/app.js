@@ -7807,10 +7807,28 @@ async function refreshLeaderboard() {
     lastChartKey = "";
     lastHourlyChartKey = "";
     lastLeaderboardRows = [];
+    leaderboardBaseRows = [];
   }
 
   if (!leaderboardHasLoadedOnce) {
-    if (tbody) {
+    const cached = cacheGet("leaderboard");
+    if (cached?.rows?.length) {
+      const cachedUsersKey = cached.rows
+        .map(r => clampUsername(r.username))
+        .filter(Boolean)
+        .sort()
+        .join("|");
+      if (cachedUsersKey === usersKey) {
+        leaderboardBaseRows = cached.rows.map(r => ({
+          ...r,
+          nowPlayingHtml: "Loading...",
+          nowPlayingText: ""
+        }));
+        renderLeaderboardForRange(leaderboardBaseRows, cached.me || me);
+      } else if (tbody) {
+        tbody.innerHTML = `<tr><td colspan="6"><div class="meta">Loading leaderboard...</div></td></tr>`;
+      }
+    } else if (tbody) {
       tbody.innerHTML = `<tr><td colspan="6"><div class="meta">Loading leaderboard...</div></td></tr>`;
     }
   } else {
