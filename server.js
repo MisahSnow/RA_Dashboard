@@ -643,7 +643,7 @@ async function raGetUserRecentAchievements(username, minutes = 10080, apiKey) {
   return data;
 }
 
-async function raGetUserRecentlyPlayedGames(username, count = 10, offset = 0, apiKey) {
+async function raGetUserRecentlyPlayedGames(username, count = 10, offset = 0, apiKey, { fast = false } = {}) {
   if (!apiKey) throw new Error("Missing RA API key.");
 
   const url = new URL("https://retroachievements.org/API/API_GetUserRecentlyPlayedGames.php");
@@ -655,7 +655,7 @@ async function raGetUserRecentlyPlayedGames(username, count = 10, offset = 0, ap
   const MAX_TRIES = 4; // total attempts (initial + retries)
     for (let attempt = 0; attempt < MAX_TRIES; attempt++) {
       try {
-        const data = await raFetchJson(url.toString(), { retries: 3 });
+        const data = await raFetchJson(url.toString(), { retries: 3, fast });
         if (!Array.isArray(data)) throw new Error("Unexpected RA response (expected an array).");
         return data;
       } catch (err) {
@@ -724,14 +724,14 @@ async function raGetGameInfoAndUserProgress(username, gameId, apiKey) {
   return raFetchJson(url.toString(), { fast: true });
 }
 
-async function raGetUserSummary(username, apiKey) {
+async function raGetUserSummary(username, apiKey, { fast = false } = {}) {
   if (!apiKey) throw new Error("Missing RA API key.");
 
   const url = new URL("https://retroachievements.org/API/API_GetUserSummary.php");
   url.searchParams.set("u", username);
   url.searchParams.set("y", apiKey);
 
-  return raFetchJson(url.toString());
+  return raFetchJson(url.toString(), { fast });
 }
 
 async function raGetUserCompletionProgress(username, count = 100, offset = 0, apiKey) {
@@ -3991,8 +3991,8 @@ app.get("/api/now-playing/:username", async (req, res) => {
 
     // only need the most recent game + summary for rich presence
     const [latestList, summary] = await Promise.all([
-      raGetUserRecentlyPlayedGames(username, 1, 0, apiKey),
-      raGetUserSummary(username, apiKey).catch(() => null)
+      raGetUserRecentlyPlayedGames(username, 1, 0, apiKey, { fast: true }),
+      raGetUserSummary(username, apiKey, { fast: true }).catch(() => null)
     ]);
     const [latest] = latestList || [];
 

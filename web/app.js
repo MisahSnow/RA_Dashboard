@@ -679,6 +679,8 @@ let lastChallengesKey = "";
 let lastLeaderboardKey = "";
 let lastLeaderboardRows = [];
 let leaderboardBaseRows = [];
+let leaderboardUsersKey = "";
+let leaderboardHasLoadedOnce = false;
 let lastRecentAchievementsKey = "";
 let lastRecentTimesKey = "";
 let authResolved = false;
@@ -2505,12 +2507,16 @@ function startPresence() {
 
 window.addEventListener("pagehide", sendPresenceRemove);
 
-async function fetchJson(url, { silent = false, signal = null, immediate = false } = {}) {
+async function fetchJson(url, { silent = false, signal = null, immediate = false, fast = false } = {}) {
   const apiKey = (apiKeyInput?.value || "").trim();
   const headers = apiKey ? { "x-ra-api-key": apiKey } : {};
   const options = { headers };
   if (signal) options.signal = signal;
-  const res = immediate ? await fetch(url, options) : await enqueueClientFetch(url, options);
+  const res = immediate
+    ? await fetch(url, options)
+    : fast
+      ? await enqueueFastFetch(url, options)
+      : await enqueueClientFetch(url, options);
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(text || `Request failed: ${res.status}`);
@@ -3056,7 +3062,7 @@ async function fetchRecentAchievements(username, minutes, limit) {
 
 async function fetchNowPlaying(username, windowSeconds) {
   const u = encodeURIComponent(username);
-  return fetchJson(`/api/now-playing/${u}?window=${encodeURIComponent(windowSeconds)}`);
+  return fetchJson(`/api/now-playing/${u}?window=${encodeURIComponent(windowSeconds)}`, { fast: true });
 }
 
 async function fetchRecentTimes(username, games, limit) {
@@ -7793,10 +7799,26 @@ async function refreshLeaderboard() {
     return;
   }
 
-  const cached = cacheGet("leaderboard");
-  if (cached?.rows?.length) {
-    leaderboardBaseRows = cached.rows.map(r => ({ ...r }));
-    renderLeaderboardForRange(leaderboardBaseRows, cached.me || me);
+  const usersKey = users.slice().sort().join("|");
+  if (usersKey !== leaderboardUsersKey) {
+    leaderboardUsersKey = usersKey;
+    leaderboardHasLoadedOnce = false;
+    lastLeaderboardKey = "";
+    lastChartKey = "";
+    lastHourlyChartKey = "";
+    lastLeaderboardRows = [];
+  }
+
+  if (!leaderboardHasLoadedOnce) {
+    if (tbody) {
+      tbody.innerHTML = `<tr><td colspan="6"><div class="meta">Loading leaderboard...</div></td></tr>`;
+    }
+  } else {
+    const cached = cacheGet("leaderboard");
+    if (cached?.rows?.length) {
+      leaderboardBaseRows = cached.rows.map(r => ({ ...r }));
+      renderLeaderboardForRange(leaderboardBaseRows, cached.me || me);
+    }
   }
 
   setLoading(leaderboardLoadingEl, true);
@@ -7832,6 +7854,7 @@ async function refreshLeaderboard() {
     baseRows.sort((a, b) => (b.points - a.points) || a.username.localeCompare(b.username));
     leaderboardBaseRows = baseRows.map(r => ({ ...r }));
     renderLeaderboardForRange(leaderboardBaseRows, me);
+    leaderboardHasLoadedOnce = true;
 
     // 1b) Load DB-backed levels and update rows without changing rank/points.
     (async () => {
@@ -8006,10 +8029,17 @@ async function refreshLeaderboard() {
         }
       })));
       const avatarMap = Object.fromEntries(avatarPairs);
+      let didChange = false;
       for (const r of leaderboardBaseRows) {
-        r.avatarUrl = avatarMap[r.username];
+        const next = avatarMap[r.username] || null;
+        if (!next) continue;
+        const existing = r.avatarUrl || getCachedAvatarUrl(r.username);
+        if (next !== existing) {
+          r.avatarUrl = next;
+          didChange = true;
+        }
       }
-      renderLeaderboardForRange(leaderboardBaseRows, me);
+      if (didChange) renderLeaderboardForRange(leaderboardBaseRows, me);
     })().catch(() => {});
 
   } catch (e) {
