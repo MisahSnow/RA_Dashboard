@@ -2954,10 +2954,10 @@ async function fetchGameLeaderboards(gameId) {
   return fetchJson(`/api/game-leaderboards/${encodeURIComponent(gameId)}`);
 }
 
-async function fetchChallenges({ includeTotals = true } = {}) {
+async function fetchChallenges({ includeTotals = true, immediate = false } = {}) {
   const params = new URLSearchParams();
   params.set("totals", includeTotals ? "1" : "0");
-  return fetchServerJson(`/api/challenges?${params.toString()}`, { silent: true });
+  return fetchServerJson(`/api/challenges?${params.toString()}`, { silent: true, immediate });
 }
 
 async function createChallenge(opponent, hours, type, game, leaderboard) {
@@ -2994,7 +2994,7 @@ async function cancelChallenge(id) {
 }
 
 async function fetchChallengeHistory() {
-  return fetchServerJson("/api/challenges-history", { silent: true });
+  return fetchServerJson("/api/challenges-history", { silent: true, immediate: true });
 }
 
 async function hydrateChallengeAvatars(items) {
@@ -3531,7 +3531,7 @@ async function fetchNotifications({ unreadOnly = false, limit = 50, silent = fal
   const url = params.toString()
     ? `/api/notifications?${params.toString()}`
     : "/api/notifications";
-  return fetchServerJson(url, { silent });
+  return fetchServerJson(url, { silent, immediate: true });
 }
 
 async function markNotificationsRead(ids = []) {
@@ -3543,7 +3543,8 @@ async function markNotificationsRead(ids = []) {
 
 async function deleteNotification(id) {
   return fetchServerJson(`/api/notifications/${encodeURIComponent(id)}`, {
-    method: "DELETE"
+    method: "DELETE",
+    immediate: true
   });
 }
 
@@ -6388,8 +6389,8 @@ async function refreshChallenges({ includeTotals = true } = {}) {
   setLoading(challengesLoadingEl, true);
   try {
     const baseData = includeTotals
-      ? await fetchChallenges({ includeTotals: false })
-      : await fetchChallenges({ includeTotals });
+      ? await fetchChallenges({ includeTotals: false, immediate: true })
+      : await fetchChallenges({ includeTotals, immediate: true });
     const incoming = Array.isArray(baseData?.incoming) ? baseData.incoming : [];
     const outgoing = Array.isArray(baseData?.outgoing) ? baseData.outgoing : [];
     const active = Array.isArray(baseData?.active) ? baseData.active : [];

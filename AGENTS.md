@@ -5,6 +5,7 @@ This repository is a single Node/Express server (`server.js`) with a vanilla JS 
 - Client API calls:
   - Most client fetches use the client-side queue (`enqueueClientFetch` via `fetchJson`/`fetchServerJson`) to avoid flooding.
   - Some local-only DB endpoints bypass the queue using `fetchJson(..., { immediate: true })` for responsiveness.
+  - Any endpoints that do not call RetroAchievements should bypass the queue with `{ immediate: true }`.
 - Find Games player counts:
   - `/api/game-players-batch` is DB-only and used to hydrate player counts quickly.
   - `/api/game-players-refresh` hits the RA API and updates the DB; it runs lazily in the background.
