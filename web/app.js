@@ -2070,7 +2070,7 @@ function createLimiter(max) {
 }
 
 async function fetchPresence() {
-  return fetchJson("/api/presence", { silent: true });
+  return fetchJson("/api/presence", { silent: true, immediate: true });
 }
 
 function getLocalDateKey(d = new Date()) {
