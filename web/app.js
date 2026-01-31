@@ -786,6 +786,7 @@ let profileSocialPosts = [];
 let profileSocialOffset = 0;
 let profileSocialHasMore = false;
 let profileSocialLoading = false;
+let onlinePresenceUsers = [];
 
 function clampUsername(s) {
   return (s || "").trim().replace(/\s+/g, "");
@@ -1785,12 +1786,27 @@ function renderFriendsMenu() {
     return;
   }
   const frag = document.createDocumentFragment();
-  friends.forEach((name) => {
+  const onlineSet = new Set((onlinePresenceUsers || []).map(normalizeUserKey));
+  const sorted = Array.from(new Set(friends.map(clampUsername).filter(Boolean))).sort((a, b) => {
+    const aOnline = onlineSet.has(normalizeUserKey(a)) ? 1 : 0;
+    const bOnline = onlineSet.has(normalizeUserKey(b)) ? 1 : 0;
+    if (aOnline !== bOnline) return bOnline - aOnline;
+    return a.localeCompare(b);
+  });
+  sorted.forEach((name) => {
+    const isOnline = onlineSet.has(normalizeUserKey(name));
     const row = document.createElement("button");
     row.type = "button";
     row.className = "friendsMenuItem";
-    row.textContent = name;
+    if (isOnline) row.classList.add("isOnline");
     row.setAttribute("data-profile", name);
+    const status = document.createElement("span");
+    status.className = `friendsMenuStatus${isOnline ? " online" : ""}`;
+    status.setAttribute("aria-hidden", "true");
+    const label = document.createElement("span");
+    label.className = "friendsMenuName";
+    label.textContent = name;
+    row.append(status, label);
     frag.appendChild(row);
   });
   friendsMenuList.appendChild(frag);
@@ -2459,7 +2475,9 @@ function schedulePresenceRender(users, me) {
     presenceRenderTimer = null;
     lastPresenceKey = key;
     lastPresenceMe = me;
+    onlinePresenceUsers = Array.isArray(users) ? users.slice() : [];
     renderPresence(users, me);
+    renderFriendsMenu();
   }, 200);
 }
 
