@@ -238,6 +238,7 @@ const leaderboardTabButtons = document.querySelectorAll(".leaderboardTab");
 const leaderboardHistoryBtn = document.getElementById("leaderboardHistoryBtn");
 const leaderboardHistoryModal = document.getElementById("leaderboardHistoryModal");
 const leaderboardHistoryCloseBtn = document.getElementById("leaderboardHistoryCloseBtn");
+const leaderboardHistoryYear = document.getElementById("leaderboardHistoryYear");
 const leaderboardHistoryMonth = document.getElementById("leaderboardHistoryMonth");
 const leaderboardHistoryList = document.getElementById("leaderboardHistoryList");
 const leaderboardHistoryStatus = document.getElementById("leaderboardHistoryStatus");
@@ -2252,18 +2253,42 @@ function getLastCompleteMonthKey(now = new Date()) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
-function buildMonthOptions(count = 12, now = new Date()) {
-  const options = [];
+function parseMonthKey(key) {
+  const [yearRaw, monthRaw] = String(key || "").split("-");
+  const year = Number(yearRaw || 0);
+  const monthIndex = Number(monthRaw || 0) - 1;
+  return { year, monthIndex };
+}
+
+function buildHistoryMonths(count = 24, now = new Date()) {
+  const months = [];
   const start = new Date(now.getFullYear(), now.getMonth(), 1);
   start.setMonth(start.getMonth() - 1);
   for (let i = 0; i < count; i++) {
     const d = new Date(start);
     d.setMonth(start.getMonth() - i);
-    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    const year = d.getFullYear();
+    const monthIndex = d.getMonth();
+    const key = `${year}-${String(monthIndex + 1).padStart(2, "0")}`;
     const label = d.toLocaleString(undefined, { month: "long", year: "numeric" });
-    options.push({ key, label });
+    const monthLabel = d.toLocaleString(undefined, { month: "long" });
+    months.push({ key, year, monthIndex, label, monthLabel });
   }
-  return options;
+  return months;
+}
+
+function buildHistoryYearOptions(months) {
+  const years = Array.from(new Set(months.map(item => item.year)));
+  years.sort((a, b) => b - a);
+  return years;
+}
+
+function buildHistoryMonthOptions(months, year) {
+  return months.filter(item => item.year === year);
+}
+
+function makeMonthKey(year, monthIndex) {
+  return `${year}-${String(monthIndex + 1).padStart(2, "0")}`;
 }
 
 function renderLeaderboardHistoryList(rows) {
@@ -2293,6 +2318,25 @@ function renderLeaderboardHistoryList(rows) {
   });
   leaderboardHistoryList.innerHTML = "";
   leaderboardHistoryList.appendChild(frag);
+}
+
+function buildLeaderboardHistoryMonthSelect(year, preferredKey) {
+  if (!leaderboardHistoryMonth) return "";
+  const options = buildHistoryMonths(24);
+  const monthsForYear = buildHistoryMonthOptions(options, year);
+  leaderboardHistoryMonth.innerHTML = "";
+  monthsForYear.forEach((opt) => {
+    const el = document.createElement("option");
+    el.value = opt.key;
+    el.textContent = opt.monthLabel || opt.label;
+    leaderboardHistoryMonth.appendChild(el);
+  });
+  let selected = preferredKey;
+  if (!monthsForYear.some(o => o.key === selected)) {
+    selected = monthsForYear[0]?.key || "";
+  }
+  leaderboardHistoryMonth.value = selected;
+  return selected;
 }
 
 function updateChallengeFormState() {
@@ -8773,20 +8817,25 @@ async function loadLeaderboardHistory(monthKey) {
 
 function openLeaderboardHistory() {
   if (!leaderboardHistoryModal) return;
-  const options = buildMonthOptions(12);
-  if (leaderboardHistoryMonth) {
-    leaderboardHistoryMonth.innerHTML = "";
-    options.forEach((opt) => {
+  const defaultKey = getLastCompleteMonthKey();
+  const parsedDefault = parseMonthKey(defaultKey);
+  if (leaderboardHistoryYear) {
+    const options = buildHistoryMonths(24);
+    const years = buildHistoryYearOptions(options);
+    leaderboardHistoryYear.innerHTML = "";
+    years.forEach((year) => {
       const el = document.createElement("option");
-      el.value = opt.key;
-      el.textContent = opt.label;
-      leaderboardHistoryMonth.appendChild(el);
+      el.value = String(year);
+      el.textContent = String(year);
+      leaderboardHistoryYear.appendChild(el);
     });
-    const defaultKey = getLastCompleteMonthKey();
-    leaderboardHistoryMonth.value = options.some(o => o.key === defaultKey) ? defaultKey : options[0]?.key || "";
+    const defaultYear = years.includes(parsedDefault.year) ? parsedDefault.year : years[0];
+    leaderboardHistoryYear.value = String(defaultYear);
   }
+  const selectedYear = Number(leaderboardHistoryYear?.value || parsedDefault.year);
+  const monthKey = makeMonthKey(selectedYear, parsedDefault.monthIndex);
+  const selected = buildLeaderboardHistoryMonthSelect(selectedYear, monthKey) || getLastCompleteMonthKey();
   leaderboardHistoryModal.hidden = false;
-  const selected = leaderboardHistoryMonth?.value || getLastCompleteMonthKey();
   if (selected) loadLeaderboardHistory(selected);
 }
 
@@ -9435,6 +9484,14 @@ if (leaderboardHistoryBtn) {
 
 if (leaderboardHistoryCloseBtn) {
   leaderboardHistoryCloseBtn.addEventListener("click", closeLeaderboardHistory);
+}
+
+if (leaderboardHistoryYear) {
+  leaderboardHistoryYear.addEventListener("change", () => {
+    const year = Number(leaderboardHistoryYear.value || 0);
+    const selected = buildLeaderboardHistoryMonthSelect(year, leaderboardHistoryMonth?.value || "");
+    if (selected) loadLeaderboardHistory(selected);
+  });
 }
 
 if (leaderboardHistoryMonth) {
