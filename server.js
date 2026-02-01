@@ -204,6 +204,22 @@ async function initDb() {
     );
   `);
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS leaderboard_history (
+      id SERIAL PRIMARY KEY,
+      username TEXT NOT NULL,
+      month_start DATE NOT NULL,
+      mode TEXT NOT NULL DEFAULT 'hc',
+      points INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(username, month_start, mode)
+    );
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS leaderboard_history_month_idx
+      ON leaderboard_history (month_start, mode);
+  `);
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS challenges (
       id SERIAL PRIMARY KEY,
       creator_username TEXT NOT NULL,
@@ -482,6 +498,17 @@ function getMonthRange(now = new Date()) {
   const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
   const end = new Date(now);
   return { start, end };
+}
+
+function getMonthRangeFromKey(monthKey) {
+  const match = /^(\d{4})-(\d{2})$/.exec(String(monthKey || ""));
+  if (!match) return null;
+  const year = Number(match[1]);
+  const monthIndex = Number(match[2]) - 1;
+  if (!Number.isFinite(year) || !Number.isFinite(monthIndex) || monthIndex < 0 || monthIndex > 11) return null;
+  const start = new Date(year, monthIndex, 1, 0, 0, 0, 0);
+  const end = new Date(year, monthIndex + 1, 1, 0, 0, 0, 0);
+  return { start, end, key: `${year}-${String(monthIndex + 1).padStart(2, "0")}` };
 }
 
 function getDayRange(now = new Date()) {
@@ -3273,6 +3300,86 @@ app.get("/api/social/posts", requireAuth, async (req, res) => {
   } catch (err) {
     const status = err?.status || 500;
     res.status(status).json({ error: err?.message || "Failed to fetch social posts" });
+  }
+});
+
+// Monthly leaderboard history from DB (completed months only)
+app.get("/api/leaderboard-history", requireAuth, async (req, res) => {
+  try {
+    if (!pool) return res.status(500).json({ error: "Database unavailable" });
+    const usersParam = typeof req.query.users === "string" ? req.query.users : "";
+    const users = usersParam
+      .split(",")
+      .map(normalizeUsername)
+      .filter(Boolean)
+      .slice(0, 50);
+    if (!users.length) return res.status(400).json({ error: "Missing users" });
+
+    const monthParam = typeof req.query.month === "string" ? req.query.month : "";
+    const range = getMonthRangeFromKey(monthParam);
+    if (!range) return res.status(400).json({ error: "Invalid month" });
+
+    const modeQ = typeof req.query.mode === "string" ? req.query.mode.toLowerCase() : "hc";
+    const mode = modeQ === "all" ? "all" : "hc";
+    const startKey = range.start.toISOString().slice(0, 10);
+    const endKey = range.end.toISOString().slice(0, 10);
+
+    const existingRes = await pool.query(
+      `
+        SELECT username, points
+        FROM leaderboard_history
+        WHERE username = ANY($1) AND month_start = $2 AND mode = $3
+      `,
+      [users, startKey, mode]
+    );
+    const byUser = new Map();
+    existingRes.rows.forEach((row) => {
+      byUser.set(normalizeUsername(row.username), Number(row.points || 0));
+    });
+
+    const now = new Date();
+    const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const canBackfill = range.end <= currentMonthStart;
+    if (canBackfill) {
+      const missing = users.filter(u => !byUser.has(normalizeUsername(u)));
+      if (missing.length) {
+        const modeList = mode === "all" ? ["hc", "sc"] : [mode];
+        const sumsRes = await pool.query(
+          `
+            SELECT username, SUM(points) AS points
+            FROM daily_points
+            WHERE username = ANY($1) AND mode = ANY($2) AND day >= $3 AND day < $4
+            GROUP BY username
+          `,
+          [missing, modeList, startKey, endKey]
+        );
+        const pointsByUser = new Map();
+        sumsRes.rows.forEach((row) => {
+          pointsByUser.set(normalizeUsername(row.username), Number(row.points || 0));
+        });
+        for (const username of missing) {
+          const points = pointsByUser.get(normalizeUsername(username)) || 0;
+          await pool.query(
+            `
+              INSERT INTO leaderboard_history (username, month_start, mode, points, created_at, updated_at)
+              VALUES ($1, $2, $3, $4, NOW(), NOW())
+              ON CONFLICT (username, month_start, mode)
+              DO UPDATE SET points = EXCLUDED.points, updated_at = NOW()
+            `,
+            [username, startKey, mode, points]
+          );
+          byUser.set(normalizeUsername(username), points);
+        }
+      }
+    }
+
+    const results = users.map((u) => ({
+      username: u,
+      points: byUser.get(normalizeUsername(u)) ?? 0
+    }));
+    res.json({ month: range.key, mode, results });
+  } catch (err) {
+    res.status(500).json({ error: err?.message || "Failed to load leaderboard history" });
   }
 });
 

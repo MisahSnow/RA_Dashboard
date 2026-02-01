@@ -1551,6 +1551,44 @@ button:hover {
   }
 }
 
+.leaderboardHistoryList{
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 420px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.leaderboardHistoryRow{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(82, 103, 146, 0.6);
+  background: rgba(10, 8, 22, 0.75);
+}
+
+.leaderboardHistoryName{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.leaderboardHistoryRank{
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+
+.leaderboardHistoryPoints{
+  font-weight: 700;
+  color: var(--accent);
+}
+
 
 @media (max-width: 900px) {
   .challengeLayout {

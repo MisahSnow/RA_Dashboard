@@ -235,6 +235,12 @@ const chartTabButtons = document.querySelectorAll(".chartTab");
 const leaderboardPointsNoteEl = document.getElementById("leaderboardPointsNote");
 const leaderboardTitleEl = document.getElementById("leaderboardTitle");
 const leaderboardTabButtons = document.querySelectorAll(".leaderboardTab");
+const leaderboardHistoryBtn = document.getElementById("leaderboardHistoryBtn");
+const leaderboardHistoryModal = document.getElementById("leaderboardHistoryModal");
+const leaderboardHistoryCloseBtn = document.getElementById("leaderboardHistoryCloseBtn");
+const leaderboardHistoryMonth = document.getElementById("leaderboardHistoryMonth");
+const leaderboardHistoryList = document.getElementById("leaderboardHistoryList");
+const leaderboardHistoryStatus = document.getElementById("leaderboardHistoryStatus");
 const leaderboardScopeFriendsBtn = document.getElementById("leaderboardScopeFriends");
 const leaderboardScopeGroupBtn = document.getElementById("leaderboardScopeGroup");
 const leaderboardGroupSelect = document.getElementById("leaderboardGroupSelect");
@@ -2240,6 +2246,55 @@ function updateLeaderboardRangeNote() {
   if (leaderboardPointsNoteEl) leaderboardPointsNoteEl.textContent = note;
 }
 
+function getLastCompleteMonthKey(now = new Date()) {
+  const d = new Date(now.getFullYear(), now.getMonth(), 1);
+  d.setMonth(d.getMonth() - 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function buildMonthOptions(count = 12, now = new Date()) {
+  const options = [];
+  const start = new Date(now.getFullYear(), now.getMonth(), 1);
+  start.setMonth(start.getMonth() - 1);
+  for (let i = 0; i < count; i++) {
+    const d = new Date(start);
+    d.setMonth(start.getMonth() - i);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    const label = d.toLocaleString(undefined, { month: "long", year: "numeric" });
+    options.push({ key, label });
+  }
+  return options;
+}
+
+function renderLeaderboardHistoryList(rows) {
+  if (!leaderboardHistoryList) return;
+  const items = Array.isArray(rows) ? rows : [];
+  if (!items.length) {
+    leaderboardHistoryList.innerHTML = `<div class="meta">No data yet for this month.</div>`;
+    return;
+  }
+  const frag = document.createDocumentFragment();
+  items.forEach((row, idx) => {
+    const div = document.createElement("div");
+    div.className = "leaderboardHistoryRow";
+    const nameWrap = document.createElement("div");
+    nameWrap.className = "leaderboardHistoryName";
+    const rank = document.createElement("span");
+    rank.className = "leaderboardHistoryRank";
+    rank.textContent = `${idx + 1}.`;
+    const name = document.createElement("span");
+    name.textContent = row.username || "";
+    nameWrap.append(rank, name);
+    const pts = document.createElement("div");
+    pts.className = "leaderboardHistoryPoints";
+    pts.textContent = String(Math.round(Number(row.points || 0)));
+    div.append(nameWrap, pts);
+    frag.appendChild(div);
+  });
+  leaderboardHistoryList.innerHTML = "";
+  leaderboardHistoryList.appendChild(frag);
+}
+
 function updateChallengeFormState() {
   const opponent = clampUsername(challengeOpponentInput?.value || "");
   const hours = Number(challengeDurationInput?.value || 0);
@@ -2707,6 +2762,16 @@ async function renderSocialTrendingGames() {
 // --- API helpers (client <-> server) ---
 async function fetchDaily(username) {
   return fetchJson(`/api/daily/${encodeURIComponent(username)}`);
+}
+
+async function fetchLeaderboardHistory(monthKey, users, mode = "hc") {
+  const list = Array.isArray(users) ? users.map(clampUsername).filter(Boolean) : [];
+  if (!list.length) return { results: [] };
+  const params = new URLSearchParams();
+  params.set("month", monthKey);
+  params.set("users", list.join(","));
+  params.set("mode", mode);
+  return fetchServerJson(`/api/leaderboard-history?${params.toString()}`, { silent: true, immediate: true });
 }
 
 async function fetchGroups() {
@@ -8678,6 +8743,59 @@ tabButtons.forEach(btn => {
 if (leaderboardScopeFriendsBtn) {
   leaderboardScopeFriendsBtn.addEventListener("click", () => setLeaderboardScope("friends"));
 }
+
+async function loadLeaderboardHistory(monthKey) {
+  if (!leaderboardHistoryList) return;
+  const ensured = ensureUsername({ prompt: false });
+  if (!ensured) {
+    leaderboardHistoryList.innerHTML = `<div class="meta">Set your username first.</div>`;
+    return;
+  }
+  const { users } = await getLeaderboardUsers();
+  if (!users.length) {
+    leaderboardHistoryList.innerHTML = `<div class="meta">No users to show.</div>`;
+    return;
+  }
+  if (leaderboardHistoryStatus) leaderboardHistoryStatus.textContent = "Loading history...";
+  try {
+    const data = await fetchLeaderboardHistory(monthKey, users, "hc");
+    const rows = Array.isArray(data?.results) ? data.results : [];
+    const sorted = rows
+      .map(r => ({ username: r.username || "", points: Number(r.points || 0) }))
+      .sort((a, b) => b.points - a.points || a.username.localeCompare(b.username));
+    renderLeaderboardHistoryList(sorted);
+    if (leaderboardHistoryStatus) leaderboardHistoryStatus.textContent = "";
+  } catch (err) {
+    if (leaderboardHistoryStatus) leaderboardHistoryStatus.textContent = String(err?.message || "Failed to load history.");
+    leaderboardHistoryList.innerHTML = `<div class="meta">Failed to load history.</div>`;
+  }
+}
+
+function openLeaderboardHistory() {
+  if (!leaderboardHistoryModal) return;
+  const options = buildMonthOptions(12);
+  if (leaderboardHistoryMonth) {
+    leaderboardHistoryMonth.innerHTML = "";
+    options.forEach((opt) => {
+      const el = document.createElement("option");
+      el.value = opt.key;
+      el.textContent = opt.label;
+      leaderboardHistoryMonth.appendChild(el);
+    });
+    const defaultKey = getLastCompleteMonthKey();
+    leaderboardHistoryMonth.value = options.some(o => o.key === defaultKey) ? defaultKey : options[0]?.key || "";
+  }
+  leaderboardHistoryModal.hidden = false;
+  const selected = leaderboardHistoryMonth?.value || getLastCompleteMonthKey();
+  if (selected) loadLeaderboardHistory(selected);
+}
+
+function closeLeaderboardHistory() {
+  if (!leaderboardHistoryModal) return;
+  leaderboardHistoryModal.hidden = true;
+  if (leaderboardHistoryList) leaderboardHistoryList.innerHTML = "";
+  if (leaderboardHistoryStatus) leaderboardHistoryStatus.textContent = "";
+}
 if (leaderboardScopeGroupBtn) {
   leaderboardScopeGroupBtn.addEventListener("click", () => setLeaderboardScope("group"));
 }
@@ -9308,6 +9426,21 @@ if (groupPostBtn) {
     } catch (err) {
       setGroupPostStatus(String(err?.message || "Failed to post."));
     }
+  });
+}
+
+if (leaderboardHistoryBtn) {
+  leaderboardHistoryBtn.addEventListener("click", openLeaderboardHistory);
+}
+
+if (leaderboardHistoryCloseBtn) {
+  leaderboardHistoryCloseBtn.addEventListener("click", closeLeaderboardHistory);
+}
+
+if (leaderboardHistoryMonth) {
+  leaderboardHistoryMonth.addEventListener("change", () => {
+    const key = leaderboardHistoryMonth.value;
+    if (key) loadLeaderboardHistory(key);
   });
 }
 
