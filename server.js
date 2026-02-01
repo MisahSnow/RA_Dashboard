@@ -3353,12 +3353,72 @@ app.get("/api/leaderboard-history", requireAuth, async (req, res) => {
           `,
           [missing, modeList, startKey, endKey]
         );
-        const pointsByUser = new Map();
-        sumsRes.rows.forEach((row) => {
-          pointsByUser.set(normalizeUsername(row.username), Number(row.points || 0));
-        });
-        for (const username of missing) {
-          const points = pointsByUser.get(normalizeUsername(username)) || 0;
+        if (sumsRes.rows.length) {
+          const pointsByUser = new Map();
+          sumsRes.rows.forEach((row) => {
+            pointsByUser.set(normalizeUsername(row.username), Number(row.points || 0));
+          });
+          for (const username of missing) {
+            const points = pointsByUser.get(normalizeUsername(username)) || 0;
+            await pool.query(
+              `
+                INSERT INTO leaderboard_history (username, month_start, mode, points, created_at, updated_at)
+                VALUES ($1, $2, $3, $4, NOW(), NOW())
+                ON CONFLICT (username, month_start, mode)
+                DO UPDATE SET points = EXCLUDED.points, updated_at = NOW()
+              `,
+              [username, startKey, mode, points]
+            );
+            byUser.set(normalizeUsername(username), points);
+          }
+        } else {
+          const apiKey = requireApiKey(req, res);
+          if (!apiKey) return;
+          for (const username of missing) {
+            let points = 0;
+            try {
+              const data = await computeMonthlyPoints(username, apiKey, {
+                fromDate: range.start,
+                toDate: range.end,
+                includeSoftcore: mode === "all"
+              });
+              points = Number(data?.points || 0);
+            } catch {
+              points = 0;
+            }
+            await pool.query(
+              `
+                INSERT INTO leaderboard_history (username, month_start, mode, points, created_at, updated_at)
+                VALUES ($1, $2, $3, $4, NOW(), NOW())
+                ON CONFLICT (username, month_start, mode)
+                DO UPDATE SET points = EXCLUDED.points, updated_at = NOW()
+              `,
+              [username, startKey, mode, points]
+            );
+            byUser.set(normalizeUsername(username), points);
+          }
+        }
+      }
+      const hasAnyDaily = await pool.query(
+        "SELECT 1 FROM daily_points WHERE day >= $1 AND day < $2 LIMIT 1",
+        [startKey, endKey]
+      );
+      const allZero = users.every((u) => Number(byUser.get(normalizeUsername(u)) || 0) === 0);
+      if (!missing.length && allZero && hasAnyDaily.rows.length === 0) {
+        const apiKey = requireApiKey(req, res);
+        if (!apiKey) return;
+        for (const username of users) {
+          let points = 0;
+          try {
+            const data = await computeMonthlyPoints(username, apiKey, {
+              fromDate: range.start,
+              toDate: range.end,
+              includeSoftcore: mode === "all"
+            });
+            points = Number(data?.points || 0);
+          } catch {
+            points = 0;
+          }
           await pool.query(
             `
               INSERT INTO leaderboard_history (username, month_start, mode, points, created_at, updated_at)
@@ -3380,6 +3440,44 @@ app.get("/api/leaderboard-history", requireAuth, async (req, res) => {
     res.json({ month: range.key, mode, results });
   } catch (err) {
     res.status(500).json({ error: err?.message || "Failed to load leaderboard history" });
+  }
+});
+
+// Leaderboard history months (non-zero only)
+app.get("/api/leaderboard-history-months", requireAuth, async (req, res) => {
+  try {
+    if (!pool) return res.status(500).json({ error: "Database unavailable" });
+    const usersParam = typeof req.query.users === "string" ? req.query.users : "";
+    const users = usersParam
+      .split(",")
+      .map(normalizeUsername)
+      .filter(Boolean)
+      .slice(0, 50);
+    if (!users.length) return res.status(400).json({ error: "Missing users" });
+
+    const modeQ = typeof req.query.mode === "string" ? req.query.mode.toLowerCase() : "hc";
+    const mode = modeQ === "all" ? "all" : "hc";
+
+    const result = await pool.query(
+      `
+        SELECT month_start, SUM(points) AS points
+        FROM leaderboard_history
+        WHERE username = ANY($1) AND mode = $2
+        GROUP BY month_start
+        HAVING SUM(points) > 0
+        ORDER BY month_start DESC
+      `,
+      [users, mode]
+    );
+
+    const months = result.rows.map((row) => {
+      const date = row.month_start instanceof Date ? row.month_start : new Date(row.month_start);
+      return date.toISOString().slice(0, 7);
+    });
+
+    res.json({ mode, months });
+  } catch (err) {
+    res.status(500).json({ error: err?.message || "Failed to load leaderboard history months" });
   }
 });
 

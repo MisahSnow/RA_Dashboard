@@ -242,6 +242,7 @@ const leaderboardHistoryYear = document.getElementById("leaderboardHistoryYear")
 const leaderboardHistoryMonth = document.getElementById("leaderboardHistoryMonth");
 const leaderboardHistoryList = document.getElementById("leaderboardHistoryList");
 const leaderboardHistoryStatus = document.getElementById("leaderboardHistoryStatus");
+let leaderboardHistoryAvailableMonths = [];
 const leaderboardScopeFriendsBtn = document.getElementById("leaderboardScopeFriends");
 const leaderboardScopeGroupBtn = document.getElementById("leaderboardScopeGroup");
 const leaderboardGroupSelect = document.getElementById("leaderboardGroupSelect");
@@ -2260,31 +2261,26 @@ function parseMonthKey(key) {
   return { year, monthIndex };
 }
 
-function buildHistoryMonths(count = 24, now = new Date()) {
-  const months = [];
-  const start = new Date(now.getFullYear(), now.getMonth(), 1);
-  start.setMonth(start.getMonth() - 1);
-  for (let i = 0; i < count; i++) {
-    const d = new Date(start);
-    d.setMonth(start.getMonth() - i);
-    const year = d.getFullYear();
-    const monthIndex = d.getMonth();
-    const key = `${year}-${String(monthIndex + 1).padStart(2, "0")}`;
-    const label = d.toLocaleString(undefined, { month: "long", year: "numeric" });
-    const monthLabel = d.toLocaleString(undefined, { month: "long" });
-    months.push({ key, year, monthIndex, label, monthLabel });
-  }
-  return months;
-}
-
-function buildHistoryYearOptions(months) {
-  const years = Array.from(new Set(months.map(item => item.year)));
+function buildHistoryYearOptionsFromAvailable(months) {
+  const years = Array.from(new Set((months || []).map((key) => {
+    const parsed = parseMonthKey(key);
+    return parsed.year;
+  }).filter(Number.isFinite)));
   years.sort((a, b) => b - a);
   return years;
 }
 
-function buildHistoryMonthOptions(months, year) {
-  return months.filter(item => item.year === year);
+function buildHistoryMonthOptionsFromAvailable(months, year) {
+  const items = (months || [])
+    .map((key) => {
+      const parsed = parseMonthKey(key);
+      if (parsed.year !== year) return null;
+      const label = new Date(2000, parsed.monthIndex, 1).toLocaleString(undefined, { month: "long" });
+      return { key, monthIndex: parsed.monthIndex, label, monthLabel: label };
+    })
+    .filter(Boolean);
+  items.sort((a, b) => b.monthIndex - a.monthIndex);
+  return items;
 }
 
 function makeMonthKey(year, monthIndex) {
@@ -2322,8 +2318,7 @@ function renderLeaderboardHistoryList(rows) {
 
 function buildLeaderboardHistoryMonthSelect(year, preferredKey) {
   if (!leaderboardHistoryMonth) return "";
-  const options = buildHistoryMonths(24);
-  const monthsForYear = buildHistoryMonthOptions(options, year);
+  const monthsForYear = buildHistoryMonthOptionsFromAvailable(leaderboardHistoryAvailableMonths, year);
   leaderboardHistoryMonth.innerHTML = "";
   monthsForYear.forEach((opt) => {
     const el = document.createElement("option");
@@ -2816,6 +2811,15 @@ async function fetchLeaderboardHistory(monthKey, users, mode = "hc") {
   params.set("users", list.join(","));
   params.set("mode", mode);
   return fetchServerJson(`/api/leaderboard-history?${params.toString()}`, { silent: true, immediate: true });
+}
+
+async function fetchLeaderboardHistoryMonths(users, mode = "hc") {
+  const list = Array.isArray(users) ? users.map(clampUsername).filter(Boolean) : [];
+  if (!list.length) return { months: [] };
+  const params = new URLSearchParams();
+  params.set("users", list.join(","));
+  params.set("mode", mode);
+  return fetchServerJson(`/api/leaderboard-history-months?${params.toString()}`, { silent: true, immediate: true });
 }
 
 async function fetchGroups() {
@@ -8817,26 +8821,52 @@ async function loadLeaderboardHistory(monthKey) {
 
 function openLeaderboardHistory() {
   if (!leaderboardHistoryModal) return;
-  const defaultKey = getLastCompleteMonthKey();
-  const parsedDefault = parseMonthKey(defaultKey);
-  if (leaderboardHistoryYear) {
-    const options = buildHistoryMonths(24);
-    const years = buildHistoryYearOptions(options);
-    leaderboardHistoryYear.innerHTML = "";
-    years.forEach((year) => {
-      const el = document.createElement("option");
-      el.value = String(year);
-      el.textContent = String(year);
-      leaderboardHistoryYear.appendChild(el);
-    });
-    const defaultYear = years.includes(parsedDefault.year) ? parsedDefault.year : years[0];
-    leaderboardHistoryYear.value = String(defaultYear);
-  }
-  const selectedYear = Number(leaderboardHistoryYear?.value || parsedDefault.year);
-  const monthKey = makeMonthKey(selectedYear, parsedDefault.monthIndex);
-  const selected = buildLeaderboardHistoryMonthSelect(selectedYear, monthKey) || getLastCompleteMonthKey();
   leaderboardHistoryModal.hidden = false;
-  if (selected) loadLeaderboardHistory(selected);
+  if (leaderboardHistoryStatus) leaderboardHistoryStatus.textContent = "Loading history...";
+  (async () => {
+    try {
+      const defaultKey = getLastCompleteMonthKey();
+      const parsedDefault = parseMonthKey(defaultKey);
+      const { users } = await getLeaderboardUsers();
+      if (!users.length) {
+        if (leaderboardHistoryYear) leaderboardHistoryYear.innerHTML = "";
+        if (leaderboardHistoryMonth) leaderboardHistoryMonth.innerHTML = "";
+        if (leaderboardHistoryStatus) leaderboardHistoryStatus.textContent = "No users to show.";
+        return;
+      }
+      const monthsData = await fetchLeaderboardHistoryMonths(users, "hc");
+      leaderboardHistoryAvailableMonths = Array.isArray(monthsData?.months) ? monthsData.months : [];
+      if (!leaderboardHistoryAvailableMonths.length) {
+        if (leaderboardHistoryYear) leaderboardHistoryYear.innerHTML = "";
+        if (leaderboardHistoryMonth) leaderboardHistoryMonth.innerHTML = "";
+        if (leaderboardHistoryStatus) leaderboardHistoryStatus.textContent = "No history available.";
+        return;
+      }
+      if (leaderboardHistoryStatus) leaderboardHistoryStatus.textContent = "";
+      if (leaderboardHistoryYear) {
+        const years = buildHistoryYearOptionsFromAvailable(leaderboardHistoryAvailableMonths);
+        leaderboardHistoryYear.innerHTML = "";
+        years.forEach((year) => {
+          const el = document.createElement("option");
+          el.value = String(year);
+          el.textContent = String(year);
+          leaderboardHistoryYear.appendChild(el);
+        });
+        const defaultYear = years.includes(parsedDefault.year) ? parsedDefault.year : years[0];
+        leaderboardHistoryYear.value = String(defaultYear);
+      }
+      const selectedYear = Number(leaderboardHistoryYear?.value || parsedDefault.year);
+      const monthKey = makeMonthKey(selectedYear, parsedDefault.monthIndex);
+      const selected = buildLeaderboardHistoryMonthSelect(selectedYear, monthKey)
+        || leaderboardHistoryAvailableMonths[0]
+        || getLastCompleteMonthKey();
+      if (selected) loadLeaderboardHistory(selected);
+    } catch (err) {
+      if (leaderboardHistoryStatus) {
+        leaderboardHistoryStatus.textContent = String(err?.message || "Failed to load history.");
+      }
+    }
+  })();
 }
 
 function closeLeaderboardHistory() {
