@@ -3530,7 +3530,11 @@ function setStatus(msg) {
   if (lowered.includes("ra api error 429") || lowered.includes("too many attempts") || lowered.includes("too_many_requests")) {
     return;
   }
-  statusEl.textContent = text;
+  if (statusEl) {
+    statusEl.textContent = text;
+  } else if (text) {
+    console.warn("Status element not found; message:", text);
+  }
 }
 
 function setLoading(el, isLoading) {
