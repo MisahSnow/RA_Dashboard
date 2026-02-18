@@ -6,3 +6,4 @@
 - 2026-01-25 21:06: Close other dropdowns when opening friends, notifications, or avatar menus.
 - 2026-01-25 22:40: Add in-page game compare mode and link profile/leaderboard game clicks to the new find-game view.
 - 2026-01-25 23:24: Remove legacy compare/self-game panels and normalize main page card widths.
+- 2026-02-18: Fix missing closing modal container in `web/index.html` so Add Friend modal is no longer hidden by Leaderboard History modal nesting.
