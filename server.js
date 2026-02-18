@@ -4113,15 +4113,14 @@ app.get("/api/game-players", async (req, res) => {
 
 app.get("/api/game-players-refresh", async (req, res) => {
   try {
-    const apiKey = requireApiKey(req, res);
-    if (!apiKey) return;
+    if (!RA_API_KEY) return res.status(400).json({ error: "Missing RA API key" });
 
     const gameId = Number(req.query.gameId || 0);
     if (!Number.isFinite(gameId) || gameId <= 0) {
       return res.status(400).json({ error: "Missing gameId" });
     }
 
-    const meta = await refreshGameMeta(gameId, apiKey);
+    const meta = await refreshGameMeta(gameId, RA_API_KEY);
     res.json({ gameId, numDistinctPlayers: meta?.numDistinctPlayers ?? null });
   } catch (err) {
     const status = err?.status || 500;
@@ -4632,5 +4631,4 @@ if (pool) {
 } else {
   startServer();
 }
-
 
