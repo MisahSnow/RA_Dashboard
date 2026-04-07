@@ -1,4 +1,6 @@
-﻿// RetroRivals client logic: UI state, API calls, and rendering helpers.
+﻿import './style.css'
+
+// RetroRivals client logic: UI state, API calls, and rendering helpers.
 function safeText(v){ return (v === null || v === undefined) ? "" : String(v); }
 
 function sleep(ms) {
