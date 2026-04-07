@@ -4578,11 +4578,20 @@ app.get("/api/now-playing/:username", async (req, res) => {
     }
   });
 
-// --- static site ---
-const webPath = path.join(__dirname, "web");
-const indexPath = path.join(webPath, "index.html");
-const stylePath = path.join(webPath, "style.css");
-const editorPath = path.join(webPath, "editor.html");
+// --- built frontend ---
+const webDistPath = path.join(__dirname, "web", "dist");
+const indexPath = path.join(webDistPath, "index.html");
+
+// Serve built assets
+app.use(express.static(webDistPath));
+
+// Main app
+app.get("/", (_req, res) => res.sendFile(indexPath));
+
+// SPA fallback for non-API routes
+app.get(/^\/(?!api).*/, (_req, res) => {
+  res.sendFile(indexPath);
+});
 
 app.get("/api/editor/content", (_req, res) => {
   try {
