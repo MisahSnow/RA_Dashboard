@@ -4617,7 +4617,6 @@ app.post("/api/editor/save", (req, res) => {
   }
 });
 
-app.use(express.static(webPath));
 app.get("/", (_req, res) => res.sendFile(indexPath));
 app.get("/editor", (_req, res) => res.sendFile(editorPath));
 
